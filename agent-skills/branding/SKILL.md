@@ -18,6 +18,7 @@ hashtags: ["#DiBoCham"]        # 1–5, chỉ chữ/số/_ sau dấu #
 banned_words: ["sốc", "không thể tin nổi"]
 music_mood: [calm, warm]       # 1–5 mood; Studio chọn nhạc trong kho theo mood
 look: natural                  # màu hình của mọi video: none | natural | vivid | warm | cinematic (tuỳ chọn)
+color_match: true              # khớp màu các clip với nhau khi render (tuỳ chọn, mặc định false)
 text_look:                     # chữ trên video vẽ đúng như vậy
   text_color: "#FFFFFF"
   outline_color: "#1A1A1A"     # viền chữ
@@ -70,6 +71,10 @@ Font khác (không có trong danh sách) không dùng được.
 Màu hình (`look`) áp cho mọi clip khi render: `none` giữ nguyên như quay; `natural` tăng nhẹ tương phản và màu (an toàn cho
 mọi kênh); `vivid` màu rực (ẩm thực, lễ hội); `warm` ấm, vàng nhẹ (du lịch chậm, hoàng hôn); `cinematic` tương phản mềm,
 bóng xanh, sáng ấm (phim tài liệu, cảm xúc). Một video có thể đổi riêng bằng `look` trong kế hoạch dựng.
+
+Khớp màu (`color_match: true`): máy render đo độ sáng, tương phản và ám màu từng clip rồi kéo các clip về gần nhau, sau
+`look`. Bật cho kênh có footage từ nhiều máy, nhiều người quay; kênh quay một máy một buổi thì không cần. Một video có
+thể đổi riêng bằng `color_match` trong kế hoạch dựng.
 
 ## Thân file
 - **Giọng văn**: 2–6 tính từ; nên/không nên viết thế nào (xưng hô, độ dài câu); câu cửa miệng.

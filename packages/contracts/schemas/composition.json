@@ -700,6 +700,9 @@
             "cinematic"
           ]
         },
+        "color_even": {
+          "type": "boolean"
+        },
         "warnings": {
           "type": "array",
           "items": {

@@ -549,6 +549,12 @@ export function setLook(t: TimelineV4, look: VideoLook): TimelineV4 {
   return look === "none" ? rest : { ...rest, look };
 }
 
+/** The clips' colour matched to one another (`color_match`), or each as filmed again. Timeline v4 only. */
+export function setColorMatch(t: TimelineV4, match: boolean): TimelineV4 {
+  const { color_match: _was, ...rest } = requireV4(t, "Khớp màu");
+  return match ? { ...rest, color_match: true } : rest;
+}
+
 /** Burnt-in subtitles from the narration. Timeline v4 only. */
 export function setCaptions(t: TimelineV4, mode: CaptionMode): TimelineV4 {
   return { ...requireV4(t, "Phụ đề"), captions: { mode } };
@@ -622,6 +628,7 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
     case "setSourceEven": return setSourceEven(requireV4(t, "Đều tiếng gốc"), op.even) as T;
     case "setMusicEnvelope": return setMusicEnvelope(requireV4(t, "Đường âm lượng nhạc"), op.points) as T;
     case "setLook": return setLook(requireV4(t, "Màu"), op.look) as T;
+    case "setColorMatch": return setColorMatch(requireV4(t, "Khớp màu"), op.match) as T;
   }
 }
 

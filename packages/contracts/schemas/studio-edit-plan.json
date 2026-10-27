@@ -397,6 +397,9 @@
             "warm",
             "cinematic"
           ]
+        },
+        "color_match": {
+          "type": "boolean"
         }
       },
       "required": [

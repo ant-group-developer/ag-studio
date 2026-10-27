@@ -270,6 +270,16 @@ describe("timelineToComposition on v4", () => {
     expect(() => downgradeTimelineV4({ ...warm, edit_style: "whole" })).toThrow(/look/);
   });
 
+  it("item 6 (2026-10-27): matching the clips' colour reaches the composition; off is each as filmed", () => {
+    const matched = applyTimelineOps(cut(), [{ op: "setColorMatch", match: true }], {});
+    expect(matched.color_match).toBe(true);
+    expect(timelineToComposition(matched).color_even).toBe(true);
+    const off = applyTimelineOps(matched, [{ op: "setColorMatch", match: false }], {});
+    expect("color_match" in off).toBe(false);
+    expect("color_even" in timelineToComposition(off)).toBe(false);
+    expect(() => downgradeTimelineV4({ ...matched, edit_style: "whole" })).toThrow(/color_match/);
+  });
+
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {
     const t = cut();
     t.narration = { voice: "original", lead_seconds: 0.3, lines: [] };

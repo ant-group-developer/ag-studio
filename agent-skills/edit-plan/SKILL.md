@@ -94,6 +94,10 @@ của `survey.json`, thiếu thì mở khung để xem).
   nên shot dài khoảng bội số của 2 s); nhạc chưa phân tích thì Studio tự phân tích lúc dựng. Đừng tự chỉnh `out` cho
   khớp giây của phách.
 - `look` (tuỳ chọn): màu hình của video này thay cho `look` của branding — none | natural | vivid | warm | cinematic.
+- `color_match` (tuỳ chọn): `true` để máy render đo độ sáng, độ tương phản và ám màu của từng clip rồi kéo các clip lại
+  gần nhau (một phần đường, có giới hạn: cảnh đêm không bị làm sáng như ban trưa). Dùng khi footage quay bằng nhiều máy
+  hoặc nhiều giờ khác nhau và nhảy màu ở chỗ cắt; `false` giữ từng clip như quay. Thay cho `color_match` của branding.
+  `look` vẫn áp như thường: khớp màu chạy sau `look`.
 - `text_look` (tuỳ chọn): kiểu chữ riêng của video thay cho `text_look` của branding (cùng các khoá: màu, `size`,
   `shadow`, `font`).
 - `target_seconds` theo brief (10–3600).

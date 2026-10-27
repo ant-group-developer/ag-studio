@@ -68,6 +68,12 @@ describe("compositionFeatureLevel", () => {
     expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), look: "none" }))).toBe(0);
   });
 
+  it("is 9 for clips whose colour is matched", () => {
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), color_match: true }))).toBe(9);
+    expect(timelineToComposition({ ...timeline(null), color_match: true }).color_even).toBe(true);
+    expect(timelineToComposition(timeline(null)).color_even).toBeUndefined();
+  });
+
   it("never asks for more than this build renders", () => {
     expect(compositionFeatureLevel(timelineToComposition(timeline({ track: "library:m.mp3", gain_db: -30, ducking: false })))).toBeLessThanOrEqual(RENDER_FEATURE_LEVEL);
   });

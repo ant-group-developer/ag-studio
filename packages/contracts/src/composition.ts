@@ -377,6 +377,12 @@ export const CompositionSchema = z.object({
   source_even: z.boolean().optional(),
   /** Feedback-vps §4.6: the colour grade of every segment (`VIDEO_LOOKS`, never `none`). Absent = as filmed. Level 6. */
   look: z.enum(VIDEO_LOOKS).optional(),
+  /**
+   * Feedback 2026-10-27 item 6: the render worker measures each segment's picture (`signalstats` of its mezzanine, cached
+   * with it) and brings its luma spread, level and colour cast part of the way to the median of them, after `look`.
+   * Absent = as filmed. Needs render level 9.
+   */
+  color_even: z.boolean().optional(),
   warnings: z.array(z.string()),
 }).strict();
 

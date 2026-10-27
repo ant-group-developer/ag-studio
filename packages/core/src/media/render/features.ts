@@ -18,9 +18,10 @@ import { LEVEL1_TRANSITIONS, type Composition, type TextEvent, type TextFont } f
  * - 7: a Premiere export scales each clip to the sequence as the render fits it (Basic Motion), so a sequence larger
  *   than the proxies (4K) is filled;
  * - 8: the fonts of `TEXT_FONTS` after the first six (batch 1 of the fonts sheet, 2026-10-27), and the transitions
- *   after `LEVEL1_TRANSITIONS` (dip to white, wipes, slides, zoom, smooth wipe).
+ *   after `LEVEL1_TRANSITIONS` (dip to white, wipes, slides, zoom, smooth wipe);
+ * - 9: `color_even`, each segment's colour matched to the others (`color-even.ts`).
  */
-export const RENDER_FEATURE_LEVEL = 8;
+export const RENDER_FEATURE_LEVEL = 9;
 
 /** The fonts render level 4 ships; any other font of `TEXT_FONTS` needs `RENDER_FONT_BATCH1_LEVEL`. */
 const LEVEL4_FONTS: ReadonlySet<TextFont> = new Set<TextFont>(["Arial", "Be Vietnam Pro", "Noto Sans JP", "Noto Sans KR", "Noto Serif", "Playfair Display"]);
@@ -30,6 +31,9 @@ export const RENDER_FONT_BATCH1_LEVEL = 8;
 
 /** The level that draws the transitions after `LEVEL1_TRANSITIONS`. */
 export const RENDER_TRANSITIONS_LEVEL = 8;
+
+/** The level that matches the segments' colour (`color_even`). */
+export const RENDER_COLOR_LEVEL = 9;
 
 /** The level that reads a segment's gain, evens the source sound and draws the music's volume line. */
 export const RENDER_AUDIO_LEVEL = 5;
@@ -59,6 +63,7 @@ export function compositionFeatureLevel(c: Composition): number {
     c.segments.some((s) => s.gain_db !== undefined) || c.source_even !== undefined || c.music?.envelope !== undefined ? RENDER_AUDIO_LEVEL : 0,
     c.look !== undefined ? RENDER_LOOK_LEVEL : 0,
     c.segments.some((s) => !LEVEL1_TRANSITIONS.includes(s.transition_out.kind)) ? RENDER_TRANSITIONS_LEVEL : 0,
+    c.color_even !== undefined ? RENDER_COLOR_LEVEL : 0,
   ];
   return Math.max(...needs);
 }

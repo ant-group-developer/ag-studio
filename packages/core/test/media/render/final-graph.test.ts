@@ -118,6 +118,22 @@ describe("finalArgs", () => {
     expect(joined).toContain("fade=t=in:st=0:d=0.2:color=white");
   });
 
+  it("corrects the colour of a segment's body and its tail alike, before it is brought to length", () => {
+    const composition = baseComposition({
+      segments: [segment(0, 0, 5, { kind: "dissolve", seconds: 0.4, tail_available: true }), segment(1, 5, 10)],
+    });
+    const mezz = [
+      { order: 0, body: "/m/b0.mp4", tail: "/m/b0-tail.mp4" },
+      { order: 1, body: "/m/b1.mp4", tail: null },
+    ];
+    const fix = { gain: 1.1, offset: -4, u: 1.5, v: -2 };
+    const joined = finalArgs(baseInput({ composition, mezz, colorFix: new Map([[0, fix]]) })).argv.join(" ");
+    const lut = "lutyuv=y='clip(val*1.1-4,minval,maxval)':u='clip(val+1.5,minval,maxval)':v='clip(val-2,minval,maxval)'";
+    expect(joined).toContain(`[0:v]${lut},tpad=`);
+    expect(joined).toContain(`[1:v]${lut},tpad=`);
+    expect(joined).toContain("[2:v]tpad=");
+  });
+
   it("encodes the video as the final tier by default and lighter for a preview, the audio alike", () => {
     const composition = baseComposition({ segments: [segment(0, 0, 5), segment(1, 5, 10)] });
     const mezz = [

@@ -5,6 +5,7 @@
 import { DIP_TRANSITIONS, HarnessError, isTailTransition, XFADE_TRANSITIONS, type Composition } from "@harness/contracts";
 import { round3 } from "../time.js";
 import { audioGraph, type LoudnormMeasured } from "./audio-graph.js";
+import { colorFixFilter, type ColorFix } from "./color-even.js";
 import { videoEncoderArgs, type EncoderChoice, type OutputTier } from "./encoder.js";
 
 export interface FinalGraphInput {
@@ -23,6 +24,9 @@ export interface FinalGraphInput {
   limit?: number | null;
   /** `composition.source_even`: each segment's even-level gain (dB, by order), measured by the runner. */
   evenGainDb?: ReadonlyMap<number, number>;
+  /** `composition.color_even`: the colour correction of each segment that has one (by order), measured by the runner;
+   * its tail takes the same, being the same shot. */
+  colorFix?: ReadonlyMap<number, ColorFix>;
   out_path: string;
   /** `true` for the loudnorm measurement pass: same inputs, audio-only filtergraph, `-f null -`. */
   measureOnly: boolean;
@@ -193,12 +197,14 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
     const seg = segs[k]!;
     const bodyIdx = bodyIndexByOrder.get(seg.order)!;
     let label = `v${k}b`;
-    videoParts.push(`[${bodyIdx}:v]${exactLength(segLen[k]!)}[${label}]`);
+    const fix = p.colorFix?.get(seg.order);
+    const graded = fix ? `${colorFixFilter(fix)},` : "";
+    videoParts.push(`[${bodyIdx}:v]${graded}${exactLength(segLen[k]!)}[${label}]`);
 
     if (isTailTransition(seg.transition_out.kind) && seg.transition_out.tail_available) {
       const tailIdx = tailIndexByOrder.get(seg.order)!;
       const tail = `v${k}t`;
-      videoParts.push(`[${tailIdx}:v]${exactLength(seg.transition_out.seconds)}[${tail}]`);
+      videoParts.push(`[${tailIdx}:v]${graded}${exactLength(seg.transition_out.seconds)}[${tail}]`);
       const out = `v${k}c`;
       videoParts.push(`[${label}][${tail}]concat=n=2:v=1:a=0[${out}]`);
       label = out;

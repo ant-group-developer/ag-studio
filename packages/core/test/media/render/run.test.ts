@@ -8,6 +8,7 @@ import { Readable } from "node:stream";
 import { CompositionSchema, newId, type Composition, type MediaProbe, type MediaProber } from "@harness/contracts";
 import { filterGraphFileOption, probeNvenc, renderComposition, stderrSummary, type RenderDeps, type RenderInput, type SpawnFn } from "../../../src/media/render/run.js";
 import { hasFfmpeg } from "../../../../../tests/media.js";
+import { parseSignalstats } from "../../../src/media/render/color-even.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
 const SRC_B = "src_01JBBBBBBBBBBBBBBBBBBBBBBB";
@@ -1184,6 +1185,42 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
       colours.add(frameMean(res.episodePath));
     }
     expect(colours.size).toBe(5);
+  }, 240_000);
+
+  it("item 6 (2026-10-27): even colour brings a dark, red clip and two plain ones closer, measured once and kept in the cache", async () => {
+    const srcDir = tempDir("render-src-ce-");
+    const plain = join(srcDir, "plain.mp4");
+    const dark = join(srcDir, "dark.mp4");
+    for (const [path, vf] of [[plain, "null"], [dark, "eq=brightness=-0.15:contrast=0.8,colorbalance=rm=0.15:gm=-0.05"]] as const) {
+      run(ffmpegPath(), ["-hide_banner", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-t", "2", "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", path]);
+    }
+    const comp = (even: boolean) => composition({
+      output: { width: 320, height: 180, fps: 25, codec: "h264" }, total_seconds: 6, voice: "none",
+      segments: [
+        segment({ order: 0, source_id: SRC_A, source_path: plain, in: 0, out: 2, start: 0, end: 2, has_audio: false }),
+        segment({ order: 1, source_id: SRC_B, source_path: dark, in: 0, out: 2, start: 2, end: 4, has_audio: false }),
+        segment({ order: 2, source_id: SRC_A, source_path: plain, in: 0, out: 2, start: 4, end: 6, has_audio: false }),
+      ],
+      ...(even ? { color_even: true } : {}),
+    });
+    const stats = (file: string, ss: number) => {
+      const r = spawnSync(ffmpegPath(), ["-hide_banner", "-nostats", "-ss", String(ss), "-t", "1", "-i", file, "-vf", "signalstats,metadata=mode=print", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+      return parseSignalstats(r.stderr)!;
+    };
+    const checksums = new Map([[SRC_A, "sha256:" + "5".repeat(64)], [SRC_B, "sha256:" + "6".repeat(64)]]);
+    const cacheDir = join(tempDir("render-cache-ce-"), "mezz");
+    const gaps = async (c: Composition) => {
+      const res = await renderComposition(deps(cacheDir), input({ composition: c, outDir: join(tempDir("render-out-ce-"), "out"), sourceChecksums: checksums }));
+      const [a, b] = [stats(res.episodePath, 0.5), stats(res.episodePath, 2.5)];
+      return { y: Math.abs(a.y - b.y), spread: Math.abs((a.high - a.low) - (b.high - b.low)), v: Math.abs(a.v - b.v) };
+    };
+    const before = await gaps(comp(false));
+    const after = await gaps(comp(true));
+    expect(after.y).toBeLessThan(before.y * 0.6);
+    expect(after.spread).toBeLessThan(before.spread * 0.7);
+    expect(after.v).toBeLessThan(before.v);
+    const sidecars = readdirSync(cacheDir).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(readFileSync(join(cacheDir, n), "utf8")) as { color?: unknown });
+    expect(sidecars.filter((s) => s.color && typeof s.color === "object")).toHaveLength(2);
   }, 240_000);
 
   it("a segment whose source_id has no checksum is a CONFIG_INVALID, before any ffmpeg runs", async () => {

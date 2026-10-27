@@ -150,6 +150,8 @@ export const TimelineOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("setMusicEnvelope"), points: z.array(MusicEnvelopePointSchema).max(MUSIC_ENVELOPE_MAX_POINTS) }).strict(),
   /** Timeline v4 only: the colour of the picture (`none` = as filmed). */
   z.object({ op: z.literal("setLook"), look: z.enum(VIDEO_LOOKS) }).strict(),
+  /** Timeline v4 only: the clips' colour matched to one another (or each as filmed again). */
+  z.object({ op: z.literal("setColorMatch"), match: z.boolean() }).strict(),
 ]);
 export type TimelineOp = z.infer<typeof TimelineOpSchema>;
 

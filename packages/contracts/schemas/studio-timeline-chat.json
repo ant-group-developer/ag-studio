@@ -592,6 +592,23 @@
                   "look"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setColorMatch"
+                  },
+                  "match": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "match"
+                ],
+                "additionalProperties": false
               }
             ]
           },

@@ -7,6 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import { basename, extname, join } from "node:path";
 import { z } from "zod";
 import { HarnessError } from "@harness/contracts";
+import type { ColorStats } from "./color-even.js";
 
 export interface MezzCache {
   /** Flat directory holding `<key>.mp4` + `<key>.json` pairs; created on demand. */
@@ -23,6 +24,8 @@ const sidecarSchema = z.object({
   last_used_at: z.string().min(1),
   /** The mezzanine's integrated loudness (`even.ts`), measured once when a render needs it; null = silent. */
   lufs: z.number().nullable().optional(),
+  /** The mezzanine's picture stats (`color-even.ts`), measured once when a render needs them; null = no frame measured. */
+  color: z.object({ y: z.number(), low: z.number(), high: z.number(), u: z.number(), v: z.number() }).strict().nullable().optional(),
 }).strict();
 
 export type MezzCacheSidecar = z.infer<typeof sidecarSchema>;
@@ -111,6 +114,25 @@ export function cacheSetLufs(c: MezzCache, key: string, lufs: number | null): vo
   try {
     const parsed = sidecarSchema.parse(JSON.parse(readFileSync(sidecarPath(c, key), "utf8")));
     writeFileSync(sidecarPath(c, key), JSON.stringify({ ...parsed, lufs }));
+  } catch {
+    // measured again next time
+  }
+}
+
+/** The picture stats recorded for an entry: stats, null (nothing measured), or undefined when never measured. */
+export function cacheColor(c: MezzCache, key: string): ColorStats | null | undefined {
+  try {
+    return sidecarSchema.parse(JSON.parse(readFileSync(sidecarPath(c, key), "utf8"))).color;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Records an entry's picture stats in its sidecar (a sidecar that cannot be read or written is left as it is). */
+export function cacheSetColor(c: MezzCache, key: string, color: ColorStats | null): void {
+  try {
+    const parsed = sidecarSchema.parse(JSON.parse(readFileSync(sidecarPath(c, key), "utf8")));
+    writeFileSync(sidecarPath(c, key), JSON.stringify({ ...parsed, color }));
   } catch {
     // measured again next time
   }

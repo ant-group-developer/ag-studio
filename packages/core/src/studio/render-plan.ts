@@ -176,6 +176,7 @@ export function timelineToComposition(t: AnyTimeline, opts: { silentAssets?: Rea
     text_dropped: [],
     ...(v4?.source_audio.even ? { source_even: true } : {}),
     ...(v4?.look && v4.look !== "none" ? { look: v4.look } : {}),
+    ...(v4?.color_match ? { color_even: true } : {}),
     warnings,
   };
 }

@@ -817,6 +817,11 @@ export const TimelineV4Schema = z.object({
   text_style: TextLookSchema.optional(),
   /** Feedback-vps §4.6: the colour of the picture (`VIDEO_LOOKS`). Absent = `none`, as filmed. */
   look: z.enum(VIDEO_LOOKS).optional(),
+  /**
+   * Feedback 2026-10-27 item 6: the clips' brightness, contrast and colour cast brought part of the way to one another (the
+   * render worker measures each clip). Absent = each clip as filmed.
+   */
+  color_match: z.boolean().optional(),
 }).strict();
 export type TimelineV4 = z.infer<typeof TimelineV4Schema>;
 export type TimelineClipV4 = TimelineV4["clips"][number];
@@ -873,6 +878,7 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
   if (t.captions.mode !== "none") lost.push("captions");
   if (t.text_style) lost.push("text_style");
   if (t.look !== undefined) lost.push("look");
+  if (t.color_match !== undefined) lost.push("color_match");
   if (lost.length > 0) throw new TimelineVersionError(`a v3 timeline cannot hold: ${lost.join(", ")}`);
   return {
     schema_version: "studio.timeline/v3",
@@ -1087,6 +1093,8 @@ export const EditPlanSchema = z.object({
   text_look: TextLookSchema.optional(),
   /** Feedback-vps §4.6: the colour of the picture instead of the branding's `look`. */
   look: z.enum(VIDEO_LOOKS).optional(),
+  /** Feedback 2026-10-27 item 6: the clips' colour matched to one another (`color_match`), instead of the branding's. */
+  color_match: z.boolean().optional(),
 }).strict();
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 

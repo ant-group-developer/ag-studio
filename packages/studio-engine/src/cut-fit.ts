@@ -44,6 +44,8 @@ export interface FitCutInput {
   textStyle?: TextLook | null;
   /** Feedback-vps §4.6: the colour of the picture (the plan's, else the branding's). */
   look?: VideoLook | null;
+  /** Feedback 2026-10-27 item 6: the clips' colour matched to one another (the plan's, else the branding's). */
+  colorMatch?: boolean;
   /** Feedback-vps §4.7: the music's beats, for the plan's shots with `snap`; null: none known (those cuts stay). */
   beats?: BeatGrid | null;
 }
@@ -189,6 +191,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     alternates: [],
     ...(p.textStyle ? { text_style: p.textStyle } : {}),
     ...(p.look && p.look !== "none" ? { look: p.look } : {}),
+    ...(p.colorMatch ? { color_match: true } : {}),
   });
   return { timeline, report: fitted.report, snap };
 }

@@ -23,7 +23,8 @@ import { basename, join, resolve } from "node:path";
 import { HarnessError, isHarnessError, isTailTransition, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../child-env.js";
 import { round3 } from "../time.js";
-import { cacheCommit, cacheEvict, cacheLookup, cacheLufs, cacheSetLufs, type MezzCache } from "./cache.js";
+import { cacheColor, cacheCommit, cacheEvict, cacheLookup, cacheLufs, cacheSetColor, cacheSetLufs, type MezzCache } from "./cache.js";
+import { colorFixes, parseSignalstats, signalstatsArgs, type ColorFix, type ColorStats } from "./color-even.js";
 import { ebur128Args, evenGains, parseEbur128Integrated } from "./even.js";
 import { NVENC_PROBE_ARGS, resolveEncoder, type EncoderChoice, type OutputTier } from "./encoder.js";
 import { peakLimit } from "./audio-graph.js";
@@ -375,7 +376,7 @@ export interface RenderTimings {
   mezz_s: number;
   /** Of `mezz_s`, the time mezzanine slots sat idle waiting for `sourceFor` (a source still downloading). */
   source_wait_s: number;
-  /** The even-source-sound measurement (0 when the composition does not ask for it). */
+  /** The even-source-sound and even-colour measurements (0 when the composition asks for neither). */
   even_s: number;
   /** The loudnorm measurement pass, or both of them when the peak needed a limiter. */
   loudnorm_s: number;
@@ -689,6 +690,29 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     timings.even_s = secondsSince(evenStarted);
   }
 
+  // ---- 3c) even colour: each segment's picture, measured once per mezzanine and kept in its sidecar ----
+  let colorFix: Map<number, ColorFix> | undefined;
+  if (composition.color_even) {
+    reportProgress(MEZZ_SHARE, "even");
+    const colorStarted = Date.now();
+    const stats: (ColorStats | null)[] = [];
+    for (const seg of segs) {
+      const body = mezz.find((m) => m.order === seg.order)!.body;
+      const key = basename(body, ".mp4");
+      let c = cacheColor(d.cache, key);
+      if (c === undefined) {
+        const pass = await runProcess(spawnFn, signalstatsArgs(d.ffmpeg, body), remaining(), `colour ${seg.order}`, false, { signal });
+        c = parseSignalstats(pass.stderr);
+        cacheSetColor(d.cache, key, c);
+      }
+      stats.push(c);
+    }
+    const fixes = colorFixes(stats);
+    colorFix = new Map(segs.flatMap((s, k) => (fixes[k] ? [[s.order, fixes[k]!] as const] : [])));
+    log(`even colour: ${colorFix.size}/${segs.length} segments corrected`);
+    timings.even_s = round3(timings.even_s + secondsSince(colorStarted));
+  }
+
   // ---- 4) loudnorm measurement pass ----
   // Both final passes run in `tmp/in`, where the mezzanines have short names, and read their filtergraph from a
   // file: the command line stays short however many segments the episode has.
@@ -701,6 +725,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     assPath: p.assPath !== null ? resolve(p.assPath) : null, fontsDir: fontsDir !== null ? resolve(fontsDir) : null,
     out_path: resolve(episodePath), tier: p.tier ?? "final",
     ...(evenGainDb ? { evenGainDb } : {}),
+    ...(colorFix?.size ? { colorFix } : {}),
     ...(p.safe_margin_px !== undefined ? { safe_margin_px: p.safe_margin_px } : {}),
     ...(p.decodeThreads !== undefined ? { decodeThreads: p.decodeThreads } : {}),
   };
