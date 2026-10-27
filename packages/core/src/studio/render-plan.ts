@@ -134,7 +134,8 @@ export function timelineToComposition(t: AnyTimeline, opts: { silentAssets?: Rea
           ...(t.music.ducking ? {} : { enabled: false }),
           windows: t.music.ducking ? duckWindows(spoken) : [],
           gain_db: -8,
-          attack_ms: 200,
+          // the music dips under a line's first word, not 200 ms into it
+          attack_ms: 50,
           release_ms: 500,
         },
       }

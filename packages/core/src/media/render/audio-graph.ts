@@ -97,7 +97,8 @@ function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) =>
       const i = narrationIndex(n.line_id);
       const ms = Math.round(n.start * 1000);
       const label = `n_${idx}`;
-      parts.push(`[${i}:a]adelay=${ms}|${ms}[${label}]`);
+      // a 10 ms fade-in: a wav that opens on a sample far from zero (a cut one) would click where the line starts
+      parts.push(`[${i}:a]afade=t=in:d=0.01,adelay=${ms}|${ms}[${label}]`);
       labels.push(`[${label}]`);
     });
     // `amix ... duration=longest` ends at the last narration line, not `total_seconds` -- with a trailing
