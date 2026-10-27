@@ -327,14 +327,19 @@ export async function queueFollowUp(db: StudioDb, threadId: string, now: string)
   });
 }
 
-/** How many turns jobs, actions or a timed out turn may start in a row before a person speaks again. */
+/** How many turns jobs or actions may start in a row before a person speaks again. */
 export const AUTO_TURNS_IN_A_ROW = 3;
+/** How many times a turn out of time may go on by itself before a person speaks again (its own budget, apart from jobs'). */
+export const TIMEOUT_TURNS_IN_A_ROW = 3;
 
-/** Turns started by jobs or actions in a row since the last person's message (auto-continue stops at a few). */
-export async function automaticTurnsInARow(db: StudioDb, threadId: string): Promise<number> {
+/**
+ * Turns started by themselves since the last person's message (auto-continue stops at a few): `jobs` counts the ones
+ * jobs, actions or Studio's checks started, `timeout` the ones a turn out of time started — each against its own budget.
+ */
+export async function automaticTurnsInARow(db: StudioDb, threadId: string, budget: "jobs" | "timeout" = "jobs"): Promise<number> {
   const lastUser = (await db.get<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM agent_messages WHERE thread_id = ? AND role = 'user'", [threadId]))?.seq ?? 0;
   return (await db.get<{ n: number }>(
-    "SELECT COUNT(*) AS n FROM agent_messages WHERE thread_id = ? AND role = 'assistant' AND seq > ? AND trigger <> 'user'",
+    `SELECT COUNT(*) AS n FROM agent_messages WHERE thread_id = ? AND role = 'assistant' AND seq > ? AND ${budget === "timeout" ? "trigger = 'timeout'" : "trigger NOT IN ('user', 'timeout')"}`,
     [threadId, lastUser],
   ))?.n ?? 0;
 }

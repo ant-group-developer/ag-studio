@@ -2,7 +2,8 @@
  * One turn of a Studio agent in a project workspace (spec 2026-10-10 agent-workspace §3.2, ADR-0001 item 182):
  * `claude -p --output-format stream-json --restricted …` with cwd = the workspace, the prompt on stdin, a session kept
  * across turns (`--session-id` the first time, `--resume` after). The stream is read as it comes so the web sees the
- * agent's text and tool calls live; the whole process tree is killed on a deadline or a stop.
+ * agent's text and tool calls live; the whole process tree is killed when the CLI goes quiet for too long, on a hard
+ * deadline, or on a stop.
  */
 import { spawn } from "node:child_process";
 import { agentChildEnv, isRateLimitMessage, RUNTIME_COMMANDS } from "./cli-agent-runtime.js";
@@ -33,7 +34,10 @@ export interface AgentTurnOptions {
   baseEnv: Record<string, string | undefined>;
   /** A config folder for agent sessions only (no host plugins, hooks or memory). */
   configDir: string;
+  /** Hard cap of the turn, however busy the CLI is. */
   deadlineMs: number;
+  /** The turn stops after this long without output on stdout (each chunk restarts the wait); none or 0: only the deadline. */
+  idleMs?: number;
   signal?: AbortSignal;
   /** Called whenever what a person would see changed (throttle on the caller's side). */
   onUpdate?: (state: AgentTurnState, text: string) => void;
@@ -50,6 +54,8 @@ export interface AgentTurnOutcome {
   /** The end of stderr (for logs; never shown raw to people). */
   stderr: string;
   error: string | null;
+  /** Which limit ended a `timeout`: the CLI went quiet (`idle`) or the hard cap (`deadline`); else null. */
+  timeout: "idle" | "deadline" | null;
 }
 
 /** Env vars the agent CLI may see beyond the base allow-list (OAuth token; test knobs for the fake). */
@@ -82,17 +88,25 @@ export function runAgentTurn(o: AgentTurnOptions): Promise<AgentTurnOutcome> {
   });
   let stderr = "";
   let stopped: "cancelled" | "timeout" | null = null;
-  const stop = (why: "cancelled" | "timeout") => {
+  let timeout: "idle" | "deadline" | null = null;
+  const stop = (why: "cancelled" | "timeout", limit: "idle" | "deadline" | null = null) => {
     if (stopped) return;
     stopped = why;
+    timeout = limit;
     if (child.pid) killTree(child.pid);
   };
-  const timer = setTimeout(() => stop("timeout"), Math.max(1000, o.deadlineMs));
+  const timer = setTimeout(() => stop("timeout", "deadline"), Math.max(1000, o.deadlineMs));
+  const idleMs = o.idleMs ? Math.max(1000, o.idleMs) : null;
+  const onIdle = () => stop("timeout", "idle");
+  let idleTimer = idleMs === null ? null : setTimeout(onIdle, idleMs);
   const onAbort = () => stop("cancelled");
   if (o.signal?.aborted) onAbort(); else o.signal?.addEventListener("abort", onAbort, { once: true });
 
   child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (d: string) => { if (reader.push(d)) o.onUpdate?.(reader.state, reader.text); });
+  child.stdout.on("data", (d: string) => {
+    if (idleTimer && !stopped) { clearTimeout(idleTimer); idleTimer = setTimeout(onIdle, idleMs!); }
+    if (reader.push(d)) o.onUpdate?.(reader.state, reader.text);
+  });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (d: string) => { stderr = (stderr + d).slice(-8000); });
   child.stdin.on("error", () => { /* the CLI exited before reading all of it */ });
@@ -104,6 +118,7 @@ export function runAgentTurn(o: AgentTurnOptions): Promise<AgentTurnOutcome> {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      if (idleTimer) clearTimeout(idleTimer);
       o.signal?.removeEventListener("abort", onAbort);
       if (reader.end()) o.onUpdate?.(reader.state, reader.text);
       const result = reader.state.result;
@@ -117,7 +132,7 @@ export function runAgentTurn(o: AgentTurnOptions): Promise<AgentTurnOutcome> {
       else if (result?.subtype === "error_max_turns") { status = "max_turns"; error = "max_turns"; }
       else if (result && !result.is_error && code === 0) status = "done";
       else { status = "failed"; error = result?.errors[0] ?? (stderr.trim().split("\n").at(-1) || `exit ${code}`); }
-      resolve({ status, state: reader.state, text: reader.text, exitCode: code, stderr: stderr.slice(-4000), error });
+      resolve({ status, state: reader.state, text: reader.text, exitCode: code, stderr: stderr.slice(-4000), error, timeout });
     };
     child.on("error", (e) => finish(null, e.message));
     child.on("close", (code) => finish(code, null));
