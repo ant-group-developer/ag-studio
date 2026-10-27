@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { TEXT_LOOK_SIZES, TextLookSchema, VIDEO_LOOKS } from "./composition.js";
+import { TEXT_LOOK_SIZES, TextLookSchema, TRANSITION_KINDS, VIDEO_LOOKS } from "./composition.js";
 import { surveyIndexSchemaV2 } from "./library.js";
 
 /**
@@ -734,7 +734,7 @@ export type TimelineText = TimelineV3["texts"][number];
  * A v3 document reads as v4 through `upgradeTimelineV3` (`in: 0`, `out: null`, cuts, no narration, no captions);
  * an episode whose timeline was v3 keeps being stored as v3 (`downgradeTimelineV4`), never rewritten.
  */
-export const TIMELINE_TRANSITIONS = ["cut", "dissolve", "dip_black"] as const;
+export const TIMELINE_TRANSITIONS = TRANSITION_KINDS;
 export type TimelineTransitionKind = (typeof TIMELINE_TRANSITIONS)[number];
 export const CAPTION_MODES = ["none", "burn-in", "karaoke"] as const;
 export type CaptionMode = (typeof CAPTION_MODES)[number];
@@ -1030,9 +1030,9 @@ export const EditPlanSchema = z.object({
     in: z.number().min(0),
     out: z.number().positive(),
     line_id: z.string().regex(/^L\d{3}$/).nullable(),
-    /** Into the next shot. Feedback-vps §4.4: also `dip_black`, the same as the timeline's. */
+    /** Into the next shot: one of the timeline's transitions (`TIMELINE_TRANSITIONS`; feedback-vps §4.4, round 2026-10-27). */
     transition: z.enum(TIMELINE_TRANSITIONS),
-    /** Seconds of the transition (default: dissolve 0.4, dip to black 0.6). */
+    /** Seconds of the transition (default: dips 0.6, the others 0.4). */
     transition_s: z.number().min(0.2).max(1).optional(),
     section_title: z.string().min(1).max(100).nullable(),
     note: z.string().max(300),

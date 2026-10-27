@@ -93,6 +93,31 @@ describe("finalArgs", () => {
     expect(joined).toContain("fade=t=in:st=0:d=0.2");
   });
 
+  it("wipes, slides and zooms are xfades over the tail, by xfade's name; a dip to white fades through white", () => {
+    const composition = baseComposition({
+      segments: [
+        segment(0, 0, 5, { kind: "wipe_left", seconds: 0.4, tail_available: true }),
+        segment(1, 5, 10, { kind: "dip_white", seconds: 0.4, tail_available: false }),
+        segment(2, 10, 15, { kind: "zoom_in", seconds: 0.5, tail_available: true }),
+        segment(3, 15, 20),
+      ],
+      total_seconds: 20,
+    });
+    const mezz = [
+      { order: 0, body: "/m/b0.mp4", tail: "/m/b0-tail.mp4" },
+      { order: 1, body: "/m/b1.mp4", tail: null },
+      { order: 2, body: "/m/b2.mp4", tail: "/m/b2-tail.mp4" },
+      { order: 3, body: "/m/b3.mp4", tail: null },
+    ];
+    const { argv, inputs } = finalArgs(baseInput({ composition, mezz }));
+    const joined = argv.join(" ");
+    expect(inputs.filter((i) => i.kind === "tail").map((i) => i.path)).toEqual(["/m/b0-tail.mp4", "/m/b2-tail.mp4"]);
+    expect(joined).toContain("xfade=transition=wipeleft:duration=0.4:offset=5");
+    expect(joined).toContain("xfade=transition=zoomin:duration=0.5:offset=15");
+    expect(joined).toContain("fade=t=out:st=4.8:d=0.2:color=white");
+    expect(joined).toContain("fade=t=in:st=0:d=0.2:color=white");
+  });
+
   it("encodes the video as the final tier by default and lighter for a preview, the audio alike", () => {
     const composition = baseComposition({ segments: [segment(0, 0, 5), segment(1, 5, 10)] });
     const mezz = [
@@ -251,6 +276,12 @@ describe("finalSlices", () => {
   it("a split at a dip_black: the next slice fades in from black over the second half", () => {
     const slices = finalSlices(episode([cut, dip, cut, cut]), 2);
     expect(slices.map((s) => [s.orders, s.dipIn])).toEqual([[[0, 1], 0], [[2, 3], 1]]);
+  });
+
+  it("never splits a slide over its tail, nor a dip to white (the next slice could only start from black)", () => {
+    const slide = { kind: "slide_left", seconds: 0.5, tail_available: true } as const;
+    const white = { kind: "dip_white", seconds: 1, tail_available: false } as const;
+    expect(finalSlices(episode([cut, slide, cut, white, cut, cut]), 1).map((s) => s.orders)).toEqual([[0], [1, 2], [3, 4], [5]]);
   });
 
   it("no slice shorter than minSeconds: a short one runs on, and the last one takes what is left", () => {

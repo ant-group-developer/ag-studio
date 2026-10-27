@@ -963,6 +963,28 @@ describe.skipIf(!hasFfmpeg())("renderComposition (needs ffmpeg)", () => {
     expect(Math.abs(((await d.prober.probe(join(res.clipSetDir, "000.mp4")))?.duration_seconds ?? 0) - 2)).toBeLessThanOrEqual(0.05);
   }, 240_000);
 
+  it("a slide, then a dip to white: the slide plays over the tail, every stream lands on total_seconds", async () => {
+    const srcDir = tempDir("render-src-sl-");
+    const a = join(srcDir, "a.mp4");
+    const b = join(srcDir, "b.mp4");
+    makeClip(a, 3, true);
+    makeClip(b, 3, true);
+    const comp = composition({
+      total_seconds: 6,
+      segments: [
+        segment({ order: 0, source_id: SRC_A, source_path: a, in: 0, out: 2, start: 0, end: 2, has_audio: true, transition_out: { kind: "slide_left", seconds: 0.4, tail_available: true } }),
+        segment({ order: 1, source_id: SRC_B, source_path: b, in: 0, out: 2, start: 2, end: 4, has_audio: true, transition_out: { kind: "dip_white", seconds: 0.6, tail_available: false } }),
+        segment({ order: 2, source_id: SRC_A, source_path: a, in: 0.5, out: 2.5, start: 4, end: 6, has_audio: true }),
+      ],
+      transitions: { requested: 2, applied: 2, downgraded: [] },
+    });
+    const checksums = new Map([[SRC_A, "sha256:" + "c".repeat(64)], [SRC_B, "sha256:" + "d".repeat(64)]]);
+    const d = deps(join(tempDir("render-cache-sl-"), "mezz"));
+    const res = await renderComposition(d, input({ composition: comp, outDir: join(tempDir("render-out-sl-"), "out"), sourceChecksums: checksums }));
+    expect(Math.abs(((await d.prober.probe(res.episodePath))?.duration_seconds ?? 0) - 6)).toBeLessThanOrEqual(0.1);
+    expect(res.report.transitions.applied).toBe(2);
+  }, 240_000);
+
   it("an episode in three slices (a dissolve inside one, a dip_black between two) keeps every frame, its length and its sound", async () => {
     const srcDir = tempDir("render-src-sl-");
     const files = [0, 1, 2, 3].map((k) => join(srcDir, `${k}.mp4`));

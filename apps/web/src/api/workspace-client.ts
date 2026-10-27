@@ -454,7 +454,7 @@ export interface AgGoProjectAccess { projectId: string; state: AgGoAddability; a
 
 export interface TimelineClipRow {
   clip_id: string; at: number; length: number; asset: string; asset_id: string; in: number; out: number | null; shot_id: string | null;
-  line_id: string | null; section_title: string | null; transition: "cut" | "dissolve"; muted?: boolean;
+  line_id: string | null; section_title: string | null; transition: string; muted?: boolean;
 }
 export interface TimelineSummary {
   revision: number;

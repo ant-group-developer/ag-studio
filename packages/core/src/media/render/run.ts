@@ -20,7 +20,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { HarnessError, isHarnessError, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
+import { HarnessError, isHarnessError, isTailTransition, RenderReportSchema, type Clock, type Composition, type MediaProber, type RenderReport } from "@harness/contracts";
 import { childEnvWithoutSecrets } from "../child-env.js";
 import { round3 } from "../time.js";
 import { cacheCommit, cacheEvict, cacheLookup, cacheLufs, cacheSetLufs, type MezzCache } from "./cache.js";
@@ -550,8 +550,8 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     return job;
   };
 
-  /** Seconds of mezzanine the plan needs (bodies + dissolve tails), to weight the mezzanine phase. */
-  const planSeconds = segs.reduce((sum, s) => sum + (s.out - s.in) + (s.transition_out.kind === "dissolve" && s.transition_out.tail_available ? s.transition_out.seconds : 0), 0);
+  /** Seconds of mezzanine the plan needs (bodies + transition tails), to weight the mezzanine phase. */
+  const planSeconds = segs.reduce((sum, s) => sum + (s.out - s.in) + (isTailTransition(s.transition_out.kind) && s.transition_out.tail_available ? s.transition_out.seconds : 0), 0);
   /** Seconds of mezzanine done so far, per segment order: several segments move at once. */
   const doneByOrder = new Map<number, number>();
   const mezzProgress = (order: number, doneSeconds: number): void => {
@@ -592,7 +592,7 @@ async function renderCompositionInner(d: RenderDeps, p: RenderInput): Promise<{ 
     mezzProgress(seg.order, seconds);
 
     let tail: { path: string; seconds: number; cached: boolean } | null = null;
-    if (seg.transition_out.kind === "dissolve" && seg.transition_out.tail_available) {
+    if (isTailTransition(seg.transition_out.kind) && seg.transition_out.tail_available) {
       const tailSeconds = seg.transition_out.seconds;
       // The tail carries `tail_seconds` in its own key, so changing the transition length (or the transition
       // kind) never invalidates the body it belongs to.

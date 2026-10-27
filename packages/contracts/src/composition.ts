@@ -10,8 +10,32 @@ export type OverlayKind = (typeof OVERLAY_KINDS)[number];
  * `packages/contracts/src/interfaces.ts` already exports a `TransitionKind` type for the control-plane
  * `transition()` call ("run" | "stage_run" | ...); both are wildcard-re-exported from `index.ts`, so reusing
  * the name would collide. Fixed as an obvious bug in the brief -- see task-1-report.md. */
-export const TRANSITION_KINDS = ["cut", "dissolve", "dip_black"] as const;
+export const TRANSITION_KINDS = [
+  "cut", "dissolve", "dip_black",
+  // render level 8 (2026-10-27)
+  "dip_white", "wipe_left", "wipe_right", "slide_left", "slide_right", "zoom_in", "smooth_left",
+] as const;
 export type CompositionTransitionKind = (typeof TRANSITION_KINDS)[number];
+
+/**
+ * The transitions ffmpeg's `xfade` draws, by its name for them: the outgoing clip plays on into a tail of its source
+ * (`tail_available`) while the next one comes in over it, as a dissolve always has.
+ */
+export const XFADE_TRANSITIONS: Partial<Record<CompositionTransitionKind, string>> = {
+  dissolve: "fade", wipe_left: "wipeleft", wipe_right: "wiperight", slide_left: "slideleft", slide_right: "slideright",
+  zoom_in: "zoomin", smooth_left: "smoothleft",
+};
+
+/** The transitions that dip through a flat colour: the outgoing clip fades out to it, the next fades in from it. */
+export const DIP_TRANSITIONS: Partial<Record<CompositionTransitionKind, "black" | "white">> = { dip_black: "black", dip_white: "white" };
+
+/** The transitions an older render worker (level < 8) draws. */
+export const LEVEL1_TRANSITIONS: readonly CompositionTransitionKind[] = ["cut", "dissolve", "dip_black"];
+
+/** A transition played over a tail of the outgoing clip (`XFADE_TRANSITIONS`). */
+export function isTailTransition(kind: CompositionTransitionKind): boolean {
+  return XFADE_TRANSITIONS[kind] !== undefined;
+}
 
 export const TEXT_POSITIONS = ["top_left", "top_center", "top_right", "center", "bottom_left", "bottom_center", "bottom_right"] as const;
 export type TextPosition = (typeof TEXT_POSITIONS)[number];

@@ -10,6 +10,7 @@
  * timeline and an edit returns the same version it was given, so a v3 episode stays v3 (ADR-0001 item 151).
  */
 import {
+  isTailTransition,
   upgradeTimelineV3,
   type CaptionMode, type EpisodeAsset, type MusicEnvelopePoint, type VideoLook, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
   type StoredTimeline, type TimelineTransitionKind, type TimelineV4,
@@ -159,9 +160,10 @@ export interface ResolvedTransition {
 }
 
 /**
- * What actually plays across each cut, same rules as the harness `assignTransitions`: a dissolve needs a tail on the
- * outgoing asset (`out + seconds <= duration`) and a next clip at least `2 × seconds` long; a dip to black needs both
- * clips at least `seconds` long; anything else becomes a cut. The last clip always cuts. Never moves a clip.
+ * What actually plays across each cut, same rules as the harness `assignTransitions`: a dissolve (and every transition
+ * `xfade` draws, `isTailTransition`) needs a tail on the outgoing asset (`out + seconds <= duration`) and a next clip at
+ * least `2 × seconds` long; a dip needs both clips at least `seconds` long; anything else becomes a cut. The last clip
+ * always cuts. Never moves a clip.
  */
 export function resolveTransitions(layout: TimelineLayout): ResolvedTransition[] {
   return layout.clips.map((c, k) => {
@@ -169,7 +171,7 @@ export function resolveTransitions(layout: TimelineLayout): ResolvedTransition[]
     const next = layout.clips[k + 1];
     if (!next || kind === "cut") return { kind: "cut", seconds, tail_available: false, downgraded: null };
     const cut = (downgraded: TransitionDowngrade): ResolvedTransition => ({ kind: "cut", seconds, tail_available: false, downgraded });
-    if (kind === "dissolve") {
+    if (isTailTransition(kind)) {
       const assetDuration = layout.assetSeconds[c.asset_id];
       if (assetDuration === undefined || c.source_out + seconds > assetDuration + EPS) return cut("no_tail");
       if (next.duration < 2 * seconds - EPS) return cut("next_too_short");

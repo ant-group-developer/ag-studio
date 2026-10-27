@@ -1,7 +1,7 @@
 /** Per-segment transition assignment: never moves the timeline (`start`/`end`/`in`/`out` stay whatever
  * `timeline.video[]` already says), only decides what happens across each cut -- sub-project 5B Task 4, spec
  * §4.3. Pure: no I/O, no clock, no randomness. */
-import type { BrandProfile, Composition, CompositionSegment, CompositionTransitionKind, Overlays, Timeline } from "@harness/contracts";
+import { DIP_TRANSITIONS, isTailTransition, type BrandProfile, type Composition, type CompositionSegment, type CompositionTransitionKind, type Overlays, type Timeline } from "@harness/contracts";
 import { EPS } from "./time.js";
 
 /**
@@ -11,9 +11,9 @@ import { EPS } from "./time.js";
  * The last segment is always `{ kind: "cut", seconds, tail_available: false }` and never counts toward
  * `requested`.
  *
- * `dissolve` needs a real tail on the outgoing source (`out + seconds <= duration(source)`, a missing
+ * `dissolve` (and every kind `xfade` draws, `isTailTransition`) needs a real tail on the outgoing source (`out + seconds <= duration(source)`, a missing
  * duration counts as no tail -> `"no_tail"`) and a long-enough incoming segment (`next duration >= 2 *
- * seconds` -> otherwise `"next_too_short"`); either failing downgrades to `cut`. `dip_black` needs both
+ * seconds` -> otherwise `"next_too_short"`); either failing downgrades to `cut`. A dip (`dip_black`, `dip_white`) needs both
  * segments at least `seconds` long -> otherwise downgrades to `cut` with reason `"too_short"`. `applied =
  * requested - downgraded.length`.
  */
@@ -45,7 +45,7 @@ export function assignTransitions(p: {
     let kind: CompositionTransitionKind = requestedKind;
     let tailAvailable = false;
 
-    if (requestedKind === "dissolve") {
+    if (isTailTransition(requestedKind)) {
       const sourceDuration = sourceDurations.get(seg.source_id);
       const hasTail = sourceDuration !== undefined && seg.out + seconds <= sourceDuration + EPS;
       const nextLongEnough = next.end - next.start >= 2 * seconds - EPS;
@@ -58,7 +58,7 @@ export function assignTransitions(p: {
       } else {
         tailAvailable = true;
       }
-    } else if (requestedKind === "dip_black") {
+    } else if (DIP_TRANSITIONS[requestedKind]) {
       const curLongEnough = seg.end - seg.start >= seconds - EPS;
       const nextLongEnough = next.end - next.start >= seconds - EPS;
       if (!curLongEnough || !nextLongEnough) {

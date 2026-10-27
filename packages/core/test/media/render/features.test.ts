@@ -46,6 +46,16 @@ describe("compositionFeatureLevel", () => {
     expect(RENDER_FEATURE_LEVEL).toBeGreaterThanOrEqual(8);
   });
 
+  it("is 8 for a transition after cut, dissolve and dip to black", () => {
+    const t = timeline(null);
+    const two = (kind: TimelineV4["clips"][number]["transition_out"]["kind"]): TimelineV4 => ({
+      ...t, clips: [{ ...t.clips[0]!, out: 4, transition_out: { kind, seconds: 0.5 } }, { ...t.clips[0]!, clip_id: "C002", in: 5, out: 9 }],
+    });
+    expect(compositionFeatureLevel(timelineToComposition(two("dip_black")))).toBe(0);
+    expect(compositionFeatureLevel(timelineToComposition(two("dip_white")))).toBe(8);
+    expect(compositionFeatureLevel(timelineToComposition(two("slide_left")))).toBe(8);
+  });
+
   it("is 5 for a clip's gain, even source sound or a music volume line", () => {
     const t = timeline({ track: "library:m.mp3", gain_db: -18, ducking: true });
     expect(compositionFeatureLevel(timelineToComposition({ ...t, clips: [{ ...t.clips[0]!, gain_db: -6 }] }))).toBe(5);

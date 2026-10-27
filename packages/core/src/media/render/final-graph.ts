@@ -1,8 +1,8 @@
-/** Final-render ffmpeg argv: video chain (dissolve/dip_black/cut transitions, ASS burn-in, logo overlay) plus
+/** Final-render ffmpeg argv: video chain (xfade transitions over a tail, dips through black or white, cuts, ASS burn-in, logo overlay) plus
  * the audio graph from `audio-graph.ts` -- sub-project 5B Task 6, spec §5.2/§5.3. Pure: no I/O, no clock, no
  * randomness. Task 7 resolves `ffmpeg`, mezzanine paths, `assPath`/`fontsDir` and `loudnorm` (two ffmpeg
  * passes: `measureOnly: true` to measure, then `false` with the measured values) and spawns the result. */
-import { HarnessError, type Composition } from "@harness/contracts";
+import { DIP_TRANSITIONS, HarnessError, isTailTransition, XFADE_TRANSITIONS, type Composition } from "@harness/contracts";
 import { round3 } from "../time.js";
 import { audioGraph, type LoudnormMeasured } from "./audio-graph.js";
 import { videoEncoderArgs, type EncoderChoice, type OutputTier } from "./encoder.js";
@@ -11,7 +11,7 @@ export interface FinalGraphInput {
   ffmpeg: string;
   composition: Composition;
   /** One entry per `composition.segments[]`, by `order`; `tail` is required whenever that segment's
-   * `transition_out.kind === "dissolve"` (always true together with `tail_available` in a valid composition). */
+   * transition plays over a tail (`isTailTransition`, always together with `tail_available` in a valid composition). */
   mezz: { order: number; body: string; tail: string | null }[];
   assPath: string | null;
   fontsDir: string | null;
@@ -116,8 +116,8 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
     inputs.push({ kind: "body", path: m.body, index: idx });
     bodyIndexByOrder.set(seg.order, idx);
     idx++;
-    if ((keepAll || wantVideo) && seg.transition_out.kind === "dissolve" && seg.transition_out.tail_available) {
-      if (m.tail === null) throw new Error(`finalArgs: segment order ${seg.order} has a dissolve transition but no tail mezzanine`);
+    if ((keepAll || wantVideo) && isTailTransition(seg.transition_out.kind) && seg.transition_out.tail_available) {
+      if (m.tail === null) throw new Error(`finalArgs: segment order ${seg.order} has a ${seg.transition_out.kind} transition but no tail mezzanine`);
       inputs.push({ kind: "tail", path: m.tail, index: idx });
       tailIndexByOrder.set(seg.order, idx);
       idx++;
@@ -185,7 +185,7 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
   // ---- video chain ----
   const videoParts: string[] = [];
   /** Bare (unbracketed) label reference for each segment's own resolved video stream, after its own
-   * dissolve-concat and any dip_black fades touching it. */
+   * tail-concat and any dip fades touching it. */
   const segLabel: string[] = [];
   const segLen: number[] = segs.map((seg) => seg.end - seg.start);
 
@@ -195,7 +195,7 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
     let label = `v${k}b`;
     videoParts.push(`[${bodyIdx}:v]${exactLength(segLen[k]!)}[${label}]`);
 
-    if (seg.transition_out.kind === "dissolve" && seg.transition_out.tail_available) {
+    if (isTailTransition(seg.transition_out.kind) && seg.transition_out.tail_available) {
       const tailIdx = tailIndexByOrder.get(seg.order)!;
       const tail = `v${k}t`;
       videoParts.push(`[${tailIdx}:v]${exactLength(seg.transition_out.seconds)}[${tail}]`);
@@ -204,32 +204,36 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
       label = out;
     }
 
-    // This segment is the outgoing side of a dip_black into k+1.
-    if (seg.transition_out.kind === "dip_black") {
+    // This segment is the outgoing side of a dip into k+1.
+    const dipOut = DIP_TRANSITIONS[seg.transition_out.kind];
+    if (dipOut) {
       const s = seg.transition_out.seconds;
       const out = `v${k}fo`;
-      videoParts.push(`[${label}]fade=t=out:st=${fmt(segLen[k]! - s / 2)}:d=${fmt(s / 2)}[${out}]`);
+      videoParts.push(`[${label}]fade=t=out:st=${fmt(segLen[k]! - s / 2)}:d=${fmt(s / 2)}${dipColor(dipOut)}[${out}]`);
       label = out;
     }
 
-    // This segment is the incoming side of a dip_black from k-1 (or, first in a slice, from the slice before).
-    const dipIn = k > 0 ? (segs[k - 1]!.transition_out.kind === "dip_black" ? segs[k - 1]!.transition_out.seconds : 0) : (p.dipInSeconds ?? 0);
-    if (dipIn > 0) {
+    // This segment is the incoming side of a dip from k-1 (or, first in a slice, from the slice before: always black,
+    // `finalSlices` never ends a slice on another colour).
+    const before = k > 0 ? segs[k - 1]!.transition_out : null;
+    const dipInColor = before ? DIP_TRANSITIONS[before.kind] : "black";
+    const dipIn = before ? (dipInColor ? before.seconds : 0) : (p.dipInSeconds ?? 0);
+    if (dipIn > 0 && dipInColor) {
       const s = dipIn;
       const out = `v${k}fi`;
-      videoParts.push(`[${label}]fade=t=in:st=0:d=${fmt(s / 2)}[${out}]`);
+      videoParts.push(`[${label}]fade=t=in:st=0:d=${fmt(s / 2)}${dipColor(dipInColor)}[${out}]`);
       label = out;
     }
 
     segLabel.push(label);
   }
 
-  // Group into blocks split at every dissolve boundary; concat within a block, xfade between blocks.
+  // Group into blocks split at every xfade boundary; concat within a block, xfade between blocks.
   const blocks: number[][] = [];
   let current: number[] = [];
   for (let k = 0; k < segs.length; k++) {
     current.push(k);
-    if (segs[k]!.transition_out.kind === "dissolve" && segs[k]!.transition_out.tail_available) {
+    if (isTailTransition(segs[k]!.transition_out.kind) && segs[k]!.transition_out.tail_available) {
       blocks.push(current);
       current = [];
     }
@@ -259,7 +263,8 @@ export function finalArgs(p: FinalGraphInput): { argv: string[]; inputs: { kind:
     videoParts.push(`[${accLabel}]${cfr}[${leftTb}]`);
     videoParts.push(`[${blockLabel[j]!}]${cfr}[${rightTb}]`);
     const out = `xf${j}`;
-    videoParts.push(`[${leftTb}][${rightTb}]xfade=transition=fade:duration=${fmt(s)}:offset=${fmt(accLen)}[${out}]`);
+    const name = XFADE_TRANSITIONS[boundarySeg.transition_out.kind] ?? "fade";
+    videoParts.push(`[${leftTb}][${rightTb}]xfade=transition=${name}:duration=${fmt(s)}:offset=${fmt(accLen)}[${out}]`);
     accLabel = out;
     accLen += blocks[j]!.reduce((sum, k) => sum + segLen[k]!, 0);
   }
@@ -307,9 +312,15 @@ function segmentSeconds(seg: Composition["segments"][number]): number {
   return seg.end - seg.start;
 }
 
-/** A slice may end after this segment: its picture is not carried on into the next one by a dissolve tail. */
+/** `fade`'s colour option for a dip: none for black, its default. */
+function dipColor(color: "black" | "white"): string {
+  return color === "black" ? "" : `:color=${color}`;
+}
+
+/** A slice may end after this segment: its picture is not carried on into the next one by a tail, and the next slice
+ * starts from black (`dipInSeconds`), not from another colour. */
 function canSplitAfter(seg: Composition["segments"][number]): boolean {
-  return !(seg.transition_out.kind === "dissolve" && seg.transition_out.tail_available);
+  return !(isTailTransition(seg.transition_out.kind) && seg.transition_out.tail_available) && seg.transition_out.kind !== "dip_white";
 }
 
 /**

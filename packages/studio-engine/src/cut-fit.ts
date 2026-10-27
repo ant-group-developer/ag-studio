@@ -8,7 +8,7 @@
 import {
   DEFAULT_NARRATION_LEAD_SECONDS, EdlSchema, NarrationTimingSchema, TimelineV4Schema,
   type EditPlan, type EpisodeAsset, type FitReport, type NarrationTiming, type ShotsIndex, type StudioCanvas, type StudioMusic,
-  type StudioSurvey, type TextLook, type TimelineClipV4, type TimelineV4, type Transcript, type VideoLook,
+  type StudioSurvey, type TextLook, type TimelineClipV4, type TimelineTransitionKind, type TimelineV4, type Transcript, type VideoLook,
 } from "@harness/contracts";
 import { buildTimeline, fitEdl, narrationCps, snapCuts, type BeatGrid, type SnapMove, type SnapSkip } from "@harness/core";
 
@@ -54,8 +54,8 @@ export interface FitSnapReport {
   skipped: (SnapSkip & { clip_id: string })[];
 }
 
-/** A transition's length when the plan gives none: a dissolve the harness brand default, a dip to black a little longer. */
-const TRANSITION_SECONDS = { dissolve: 0.4, dip_black: 0.6 } as const;
+/** A transition's length when the plan gives none: the harness brand default, a dip a little longer. */
+const transitionSeconds = (kind: TimelineTransitionKind): number => (kind === "dip_black" || kind === "dip_white" ? 0.6 : 0.4);
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /** The shot of `source_id` holding the middle of `[in, out)` (an appended piece is not one of the plan's shots). */
@@ -139,7 +139,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     const origin = fromPlan.get(v.order);
     const kind = origin?.shot.transition;
     const transition = origin?.last && kind && kind !== "cut" && i < video.length - 1
-      ? { kind, seconds: origin.shot.transition_s ?? TRANSITION_SECONDS[kind] } : { kind: "cut" as const, seconds: 0 };
+      ? { kind, seconds: origin.shot.transition_s ?? transitionSeconds(kind) } : { kind: "cut" as const, seconds: 0 };
     const assetId = assetOf.get(v.source_id);
     if (!assetId) throw new Error(`fitted entry ${v.order} is on an unknown source ${v.source_id}`);
     return {

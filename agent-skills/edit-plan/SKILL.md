@@ -52,8 +52,19 @@ của `survey.json`, thiếu thì mở khung để xem).
 - `narration`: `tts` (Studio đọc `lines` bằng giọng của dự án), `original` (giữ tiếng nói gốc), `none`.
   Mỗi câu `L001`, `L002`… gắn vào shot nó bắt đầu (`line_id`); câu không gắn shot thì không được đọc. Studio kéo dài hình
   cho vừa lời ("hình theo lời"), nên đừng cố khớp giây.
-- `transition`: `cut`, `dissolve` hoặc `dip_black` (tối dần rồi sáng lại) sang shot sau; `transition_s` (0.2–1, tuỳ chọn;
-  mặc định dissolve 0.4, dip_black 0.6). `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc, người lạ nói);
+- `transition` sang shot sau, `transition_s` (0.2–1, tuỳ chọn; mặc định 0.4, hai kiểu dip 0.6):
+  - `cut`: mặc định, dùng cho gần hết video. Nhịp nhanh, không làm người xem chú ý tới việc cắt.
+  - `dissolve`: hai cảnh hoà vào nhau. Dùng khi thời gian trôi qua hoặc đổi nơi chốn nhẹ nhàng (sáng sang chiều, ngoài sang
+    trong). Không dùng liên tục, mỗi đoạn vài lần là đủ.
+  - `dip_black` (tối dần rồi sáng lại): kết thúc một chương hoặc đổi ngày. `dip_white` (trắng rồi sáng lại): hồi tưởng,
+    giấc mơ, hoặc mở đầu một phần sáng sủa. Hiếm dùng hơn `dip_black`.
+  - `wipe_left`, `wipe_right` (lau ngang), `slide_left`, `slide_right` (trượt ngang), `smooth_left` (lau mềm): chuyển
+    hướng đi trên bản đồ hay một hành trình (sang trái là đi tiếp). Hợp video du lịch nhịp vừa. Chọn một kiểu cho cả
+    video, đừng trộn nhiều kiểu.
+  - `zoom_in`: lao vào một chi tiết (từ toàn cảnh chợ vào một món ăn). Rất hiếm, tối đa một hai lần mỗi video.
+  - Chuyển cảnh đặt ở chỗ đổi ý hoặc đổi đoạn, không đặt giữa câu dẫn. Cùng một đoạn thì dùng cùng một kiểu. Kiểu nào
+    cũng cần shot trước có thêm hình sau `out` (đuôi) và shot sau đủ dài, không đủ thì Studio đổi thành `cut` và báo.
+  `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc, người lạ nói);
   `source_muted: true` (cấp kế hoạch) tắt tiếng gốc của mọi clip.
 - Âm lượng (tuỳ chọn): `gain_db` của shot (-30..20 dB) cho tiếng gốc to/nhỏ hơn (người nói nhỏ: +6; phố ồn: -8);
   `source_even: true` để máy render đo tiếng gốc từng clip và kéo về cùng một mức (bù tối đa ±12 dB, trước `gain_db`);
