@@ -129,6 +129,15 @@ export const wsEn: Messages<typeof wsVi> = {
     videos: "Videos",
     noVideos: "No videos yet. Press “New video” to start.",
   },
+  rename: {
+    action: "Rename",
+    more: "Actions for “{{name}}”",
+    project: "Rename the project",
+    projectLabel: "Project name",
+    chatLabel: "Chat name",
+    videoLabel: "Video name",
+    failed: "Could not rename",
+  },
   video: {
     timeline: "Timeline",
     fit: "Rebuild from the plan",

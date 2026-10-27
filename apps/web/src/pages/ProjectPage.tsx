@@ -18,6 +18,7 @@ import { StepRail } from "../modules/playbook/StepRail";
 import { useStepText } from "../modules/playbook/step-text";
 import { ProductTour } from "../modules/onboarding/ProductTour";
 import { ColumnResizer, useColumnWidths } from "../modules/workspace/ColumnResizer";
+import { CHANNEL_THREAD_TITLE } from "../modules/workspace/InlineRename";
 import { ProjectNav, VideoStatusBadge } from "../modules/workspace/ProjectNav";
 import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel";
 import { useTeamRole } from "../modules/workspace/use-team-role";
@@ -49,7 +50,7 @@ export function ProjectPage() {
   useProjectEvents(projectId || null);
 
   // the chat in the middle: the video's thread, the one in the URL, or the channel's first thread
-  const channelThread = threads?.threads.find((x) => x.kind === "project" && x.title === "Kênh") ?? threads?.threads.find((x) => x.kind === "project");
+  const channelThread = threads?.threads.find((x) => x.kind === "project" && x.title === CHANNEL_THREAD_TITLE) ?? threads?.threads.find((x) => x.kind === "project");
   const threadId = videoId ? video?.threadId ?? null : routeThread ?? channelThread?.id ?? null;
   const { data: thread } = useThread(threadId);
   const { data: playbook } = useQuery({
@@ -112,7 +113,8 @@ export function ProjectPage() {
   return (
     <WorkspaceShell teamId={project.teamId} project={project} crumbs={crumbs} actions={<ActivityButton projectId={project.id} />}>
       <div className="ws-body" ref={body} style={style}>
-        <ProjectNav project={project} videos={project.videos} current={{ threadId: videoId ? undefined : threadId ?? undefined, videoId }} canCreate={atLeast("editor")} />
+        <ProjectNav project={project} videos={project.videos} current={{ threadId: videoId ? undefined : threadId ?? undefined, videoId }} canCreate={atLeast("editor")}
+          canRename={atLeast("editor")} canRenameProject={atLeast("producer")} />
         <main className="ws-main">
           {currentVideo ? (
             <div className="ws-main__head">

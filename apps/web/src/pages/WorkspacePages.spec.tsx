@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App as AntApp } from "antd";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -67,6 +67,8 @@ const ws = {
   openThreadEvents: vi.fn(() => new Promise(() => {})),
   openProjectEvents: vi.fn(() => new Promise(() => {})),
   setLearning: vi.fn(),
+  renameThread: vi.fn(),
+  updateVideo: vi.fn(),
   createThread: vi.fn(),
   getPlaybook: vi.fn(),
   markStep: vi.fn().mockResolvedValue({}),
@@ -300,6 +302,96 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "Dự án" }, { timeout: 5000 }));
     fireEvent.click(await screen.findByRole("button", { name: "Mọi dự án của nhóm" }));
     expect(await screen.findByRole("heading", { name: "Dự án" })).toBeInTheDocument();
+  });
+
+  describe("renaming in place", () => {
+    const nav = async () => screen.findByRole("navigation", { name: "Video của dự án" }, { timeout: 5000 });
+
+    it("renames a chat from its ⋯: Enter saves and the nav shows the new name at once", async () => {
+      let done!: (x: unknown) => void;
+      ws.renameThread.mockReturnValue(new Promise((r) => { done = r; }));
+      mount("/p/p1");
+      const n = await nav();
+      await within(n).findByText("Ý tưởng tháng 11");
+      // the channel's chat keeps its name
+      expect(within(n).queryByRole("button", { name: "Thao tác với “Kênh”" })).toBeNull();
+      fireEvent.click(within(n).getByRole("button", { name: "Thao tác với “Ý tưởng tháng 11”" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: /Đổi tên/ }));
+      const box = within(n).getByRole("textbox", { name: "Tên chat" });
+      expect(box).toHaveValue("Ý tưởng tháng 11");
+      fireEvent.change(box, { target: { value: "  Ý tưởng tháng 12 " } });
+      fireEvent.keyDown(box, { key: "Enter" });
+      await waitFor(() => expect(ws.renameThread).toHaveBeenCalledWith("t-free", "Ý tưởng tháng 12"));
+      expect(await within(n).findByText("Ý tưởng tháng 12")).toBeInTheDocument();
+      expect(ws.renameThread).toHaveBeenCalledTimes(1);
+      done({});
+    });
+
+    it("Esc and an empty name save nothing", async () => {
+      mount("/p/p1");
+      const n = await nav();
+      fireEvent.doubleClick(await within(n).findByText("Ý tưởng tháng 11"));
+      let box = within(n).getByRole("textbox", { name: "Tên chat" });
+      fireEvent.change(box, { target: { value: "Khác" } });
+      fireEvent.keyDown(box, { key: "Escape" });
+      expect(within(n).queryByRole("textbox")).toBeNull();
+      fireEvent.doubleClick(within(n).getByText("Ý tưởng tháng 11"));
+      box = within(n).getByRole("textbox", { name: "Tên chat" });
+      fireEvent.change(box, { target: { value: "   " } });
+      fireEvent.blur(box);
+      expect(within(n).getByText("Ý tưởng tháng 11")).toBeInTheDocument();
+      expect(ws.renameThread).not.toHaveBeenCalled();
+    });
+
+    it("renames a video on double-click, saved on leaving the box; refused, the old name comes back with a toast", async () => {
+      ws.updateVideo.mockRejectedValueOnce(new StudioHttpError(403, { code: "forbidden", message: "Bạn không có quyền đổi tên video" }));
+      mount("/p/p1");
+      const n = await nav();
+      fireEvent.doubleClick(await within(n).findByText("Huế mưa"));
+      const box = within(n).getByRole("textbox", { name: "Tên video" });
+      fireEvent.change(box, { target: { value: "Huế nắng" } });
+      fireEvent.blur(box);
+      await waitFor(() => expect(ws.updateVideo).toHaveBeenCalledWith("v2", { title: "Huế nắng" }));
+      expect(await screen.findByText("Bạn không có quyền đổi tên video")).toBeInTheDocument();
+      await waitFor(() => expect(within(n).getByText("Huế mưa")).toBeInTheDocument());
+      expect(within(n).queryByText("Huế nắng")).toBeNull();
+    });
+
+    it("a producer renames the project; the header's switch follows", async () => {
+      ws.updateProject.mockImplementationOnce(async () => {
+        ws.listProjects.mockResolvedValue({ projects: [{ ...project, name: "Đi chậm", videoCount: 2, lastActivityAt: NOW }] });
+        return { ...project, name: "Đi chậm" };
+      });
+      mount("/p/p1");
+      const n = await nav();
+      fireEvent.click(await within(n).findByRole("button", { name: "Đổi tên dự án" }));
+      const box = within(n).getByRole("textbox", { name: "Tên dự án" });
+      fireEvent.change(box, { target: { value: "Đi chậm" } });
+      fireEvent.keyDown(box, { key: "Enter" });
+      await waitFor(() => expect(ws.updateProject).toHaveBeenCalledWith("p1", { name: "Đi chậm" }));
+      expect(await within(n).findByText("Đi chậm")).toBeInTheDocument();
+      const crumbs = screen.getByRole("navigation", { name: "Vị trí" });
+      await waitFor(() => expect(within(crumbs).getByText("Đi chậm")).toBeInTheDocument());
+      ws.listProjects.mockResolvedValue({ projects: [{ ...project, videoCount: 2, lastActivityAt: NOW }] });
+    });
+
+    it("an editor renames chats and videos but not the project; a viewer renames nothing", async () => {
+      studio.getTeam.mockImplementation(async (id: string) => ({ ...TEAM_1, id, role: "editor" }));
+      mount("/p/p1");
+      let n = await nav();
+      expect(await within(n).findByRole("button", { name: "Thao tác với “Huế mưa”" })).toBeInTheDocument();
+      expect(within(n).queryByRole("button", { name: "Đổi tên dự án" })).toBeNull();
+      fireEvent.doubleClick(within(n).getByText("Du lịch chậm"));
+      expect(within(n).queryByRole("textbox")).toBeNull();
+      cleanup();
+      studio.getTeam.mockImplementation(async (id: string) => ({ ...TEAM_1, id, role: "viewer" }));
+      mount("/p/p1");
+      n = await nav();
+      await within(n).findByText("Huế mưa");
+      expect(within(n).queryByRole("button", { name: /Thao tác với/ })).toBeNull();
+      fireEvent.doubleClick(within(n).getByText("Huế mưa"));
+      expect(within(n).queryByRole("textbox")).toBeNull();
+    });
   });
 
   it("a new video's empty chat tells what to say, naming the AI", async () => {

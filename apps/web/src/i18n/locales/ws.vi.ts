@@ -126,6 +126,15 @@ export const wsVi = {
     videos: "Video",
     noVideos: "Chưa có video. Bấm “Video mới” để bắt đầu.",
   },
+  rename: {
+    action: "Đổi tên",
+    more: "Thao tác với “{{name}}”",
+    project: "Đổi tên dự án",
+    projectLabel: "Tên dự án",
+    chatLabel: "Tên chat",
+    videoLabel: "Tên video",
+    failed: "Không đổi được tên",
+  },
   video: {
     timeline: "Timeline",
     fit: "Dựng lại từ kế hoạch",
