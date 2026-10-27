@@ -35,8 +35,11 @@ describe("checks of a video's survey and edit plan", () => {
 
   it("a survey: its shots must be the video's, unscored shots are a warning", () => {
     const dir = workspace();
-    write(dir, "survey.json", { schema_version: "harness.survey-index/v2", shots: [row("s000-000", 0, 10)] });
+    write(dir, "survey.json", { schema_version: "harness.survey-index/v2", shots: [{ ...row("s000-000", 0, 10), size: "wide" }] });
     expect(validateWorkspaceFile(dir, `videos/${V}/survey.json`)).toEqual([{ level: "warning", code: "unscored", message: "1 cảnh chưa chấm (s000-001)" }]);
+    // what each shot is: asked for when most usable shots have no size
+    write(dir, "survey.json", { schema_version: "harness.survey-index/v2", shots: [row("s000-000", 0, 10)] });
+    expect(validateWorkspaceFile(dir, `videos/${V}/survey.json`).map((i) => i.code)).toEqual(["unscored", "no_shot_meta"]);
     write(dir, "survey.json", { schema_version: "harness.survey-index/v2", shots: [row("s000-007", 0, 10)] });
     expect(validateWorkspaceFile(dir, `videos/${V}/survey.json`)[0]).toMatchObject({ level: "error", code: "unknown_shot" });
     write(dir, "survey.json", { schema_version: "harness.survey-index/v2", shots: [{ shot_id: "x" }] });

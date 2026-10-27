@@ -135,6 +135,16 @@ export const surveyIndexSchema = z.object({
   }).strict()).min(1),
 }).strict();
 
+/** How much of the scene a shot shows (feedback 2026-10-27 item 9): the place, people at work, a face or hands, one detail. */
+export const SHOT_SIZES = ["wide", "medium", "close", "detail"] as const;
+/** How the camera moves through a shot. */
+export const CAMERA_MOTIONS = ["static", "pan_left", "pan_right", "tilt_up", "tilt_down", "push_in", "pull_out", "tracking", "handheld"] as const;
+/** Which way what moves in the picture goes (screen direction), when something does. */
+export const SCREEN_DIRECTIONS = ["left_to_right", "right_to_left", "toward", "away"] as const;
+export type ShotSize = (typeof SHOT_SIZES)[number];
+export type CameraMotion = (typeof CAMERA_MOTIONS)[number];
+export type ScreenDirection = (typeof SCREEN_DIRECTIONS)[number];
+
 /** `survey.json` v2 (sub-project 5A): per-shot usability scoring across multiple sources, keyed by
  * `shot_id` against a `shots.json` (`ShotsIndexSchema`) instead of the single-source `in`/`out` list of v1. */
 export const surveyIndexSchemaV2 = z.object({
@@ -149,6 +159,10 @@ export const surveyIndexSchemaV2 = z.object({
     usable: z.boolean(),
     note: z.string().default(""),
     speech: z.enum(["none", "talking", "ambient"]),
+    /** Feedback 2026-10-27 item 9 (what the shot is, for the edit to cut between): its size, camera move, screen direction. */
+    size: z.enum(SHOT_SIZES).optional(),
+    motion: z.enum(CAMERA_MOTIONS).optional(),
+    direction: z.enum(SCREEN_DIRECTIONS).optional(),
   }).strict()).min(1),
 }).strict();
 

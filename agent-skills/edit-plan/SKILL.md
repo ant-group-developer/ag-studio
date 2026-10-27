@@ -10,8 +10,9 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
 `channel/branding.md` (giọng văn, `music_mood`), `channel/style.md` nếu có. Dùng cảnh `usable: true`, điểm cao.
 
 ## Ngữ pháp dựng — chọn shot theo luật, không theo điểm
-Điểm chỉ nói shot đẹp hay không; thứ tự và chỗ cắt theo các luật dưới đây (cỡ shot, hướng chuyển động lấy từ `tags`
-của `survey.json`, thiếu thì mở khung để xem).
+Điểm chỉ nói shot đẹp hay không; thứ tự và chỗ cắt theo các luật dưới đây. Cỡ shot, chuyển động máy và hướng chuyển
+động lấy từ `size`, `motion`, `direction` của mỗi dòng `survey.json` (thiếu thì mở khung để xem rồi ghi bổ sung vào
+survey).
 - **Mở mỗi cảnh (mỗi nơi, mỗi phần) từ rộng tới gần:** toàn/establishing để người xem biết đang ở đâu, rồi trung, rồi
   cận và chi tiết. Sang nơi mới thì lại mở bằng một shot toàn.
 - **Mỗi cú cắt phải đổi rõ hình:** không đặt liền nhau hai shot cùng nguồn, cùng cỡ, cùng góc. Đổi cỡ (toàn → trung →
@@ -28,6 +29,10 @@ của `survey.json`, thiếu thì mở khung để xem).
 - **Cutaway** (chi tiết, biển hiệu, đồ ăn, mặt nước) là chỗ nối khi phải dùng tiếp cùng một nguồn hay cùng một cảnh.
 - Trong `note` của mỗi shot ghi ngắn vai trò của nó (`toàn mở cảnh`, `cận chi tiết`, `cutaway nối`) để người đọc và lần
   sửa sau hiểu vì sao shot nằm đó.
+- Studio kiểm các luật này bằng `size`/`motion`/`direction` của survey khi kiểm file (`validate_file`), cảnh báo không
+  chặn: `same_size_cut` (hai shot liền nhau cùng nguồn, cùng cỡ), `direction_flip` (đảo hướng trái↔phải ở chỗ cắt),
+  `pan_clash` (lia trái rồi lia phải), `opening_not_wide` (mở video bằng cận hay chi tiết), `size_monotony` (quá 5 shot
+  liền nhau cùng cỡ), cùng `jump_cut`. Khi dựng, bước lấp chỗ trống cũng tránh shot cùng cỡ với shot hai bên.
 
 ## `edit-plan.json` — Studio đọc khi dựng timeline
 ```json

@@ -96,9 +96,12 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
   });
   const voice = plan.narration;
   const tolerance = plan.target_seconds * 0.2;
+  // the size of each shot the scene selection gave one: the fill avoids cutting between two of the same size
+  const sizes = Object.fromEntries(p.survey.shots.flatMap((r) => (r.size ? [[r.shot_id, r.size] as const] : [])));
   const fitted = fitEdl({
     edl, timing, shots: p.shots, survey: p.survey, transcript: p.transcript, voice,
     target_duration_seconds: [Math.max(1, plan.target_seconds - tolerance), plan.target_seconds + tolerance],
+    ...(Object.keys(sizes).length ? { shot_sizes: sizes } : {}),
   });
   const laid = buildTimeline({ edl: fitted.edl, timing, transcript: p.transcript, voice, language: plan.language, orderMap: fitted.orderMap });
 

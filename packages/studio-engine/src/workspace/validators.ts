@@ -211,6 +211,12 @@ function againstVideoShots(dir: string, rel: string, kind: "survey" | "edit_plan
     const seen = new Set(rows.map((r) => r.shot_id));
     const unscored = [...known.keys()].filter((id) => !seen.has(id));
     if (unscored.length) issues.push({ level: "warning", code: "unscored", message: `${unscored.length} cảnh chưa chấm (${unscored.slice(0, 5).join(", ")}${unscored.length > 5 ? "…" : ""})` });
+    // what each shot is, for the edit to cut between (skill scene-selection)
+    const usable = (rows as { usable?: boolean; size?: string }[]).filter((r) => r.usable);
+    const unsized = usable.filter((r) => !r.size).length;
+    if (usable.length && unsized > usable.length / 2) {
+      issues.push({ level: "warning", code: "no_shot_meta", message: `${unsized}/${usable.length} cảnh dùng được chưa ghi size (wide|medium|close|detail): kế hoạch dựng và bước dựng dựa vào đó để không cắt giữa hai shot cùng cỡ` });
+    }
   }
   return issues.slice(0, 30);
 }
