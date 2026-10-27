@@ -116,6 +116,29 @@
             "null"
           ]
         },
+        "narration_onsets": {
+          "type": "object",
+          "properties": {
+            "alike": {
+              "type": "integer"
+            },
+            "lines": {
+              "type": "integer"
+            },
+            "start": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "alike",
+            "lines",
+            "start"
+          ],
+          "additionalProperties": false
+        },
         "sheets": {
           "type": "array",
           "items": {
@@ -190,6 +213,12 @@
               },
               "to_end": {
                 "type": "boolean"
+              },
+              "lines": {
+                "type": "integer"
+              },
+              "of_lines": {
+                "type": "integer"
               }
             },
             "required": [
