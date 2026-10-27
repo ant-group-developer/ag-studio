@@ -152,6 +152,10 @@ export function inspectionLines(inspection: RenderInspection, t: StoredTimeline,
         lines.push({ error, text: `clip ${label} ${i.delta_db < 0 ? "nhỏ" : "to"} hơn trung bình ${Math.round(Math.abs(i.delta_db))} dB` });
         break;
       }
+      case "repeated_onset":
+        if (i.lines === undefined) break;
+        lines.push({ error, text: `${i.lines}${i.of_lines !== undefined ? `/${i.of_lines}` : ""} câu lời dẫn mở đầu bằng cùng một tiếng (từ ${clockOf(i.start ?? 0)}): mẫu giọng có thể lọt vào câu, kiểm lại mẫu giọng và lời của nó` });
+        break;
       default:
         break;
     }

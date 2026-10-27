@@ -329,7 +329,7 @@ export const RenderReportSchema = z.object({
 const inspectSpanSchema = z.object({ start: z.number(), end: z.number() });
 
 /** What the inspection of a finished render can find (`inspectionIssues` in `@harness/core`). */
-export const RENDER_INSPECT_ISSUE_CODES = ["duration", "freeze", "black", "silence", "clip_loudness"] as const;
+export const RENDER_INSPECT_ISSUE_CODES = ["duration", "freeze", "black", "silence", "clip_loudness", "repeated_onset"] as const;
 export type RenderInspectIssueCode = (typeof RENDER_INSPECT_ISSUE_CODES)[number];
 
 export const RenderInspectIssueSchema = z.object({
@@ -348,6 +348,10 @@ export const RenderInspectIssueSchema = z.object({
   delta_db: z.number().optional(),
   /** `freeze`: the picture never moves again. */
   to_end: z.boolean().optional(),
+  /** `repeated_onset`: narration lines that open with the same sound (a voice sample leaking into the TTS), of the
+   * lines measured; `start` is the first such line's. */
+  lines: z.number().int().optional(),
+  of_lines: z.number().int().optional(),
 });
 export type RenderInspectIssue = z.infer<typeof RenderInspectIssueSchema>;
 
@@ -368,6 +372,8 @@ export const RenderInspectionSchema = z.object({
   /** Momentary loudness gated at -70 LUFS over each segment's window; null: silent or no audio. */
   segments: z.array(z.object({ order: z.number().int(), start: z.number(), end: z.number(), lufs: z.number().nullable() })),
   loudness_median_lufs: z.number().nullable(),
+  /** With narration: how many lines open with a sound alike to many other lines', of the lines measured. */
+  narration_onsets: z.object({ alike: z.number().int(), lines: z.number().int(), start: z.number().nullable() }).optional(),
   /** `sheet-NN.jpg`: `frames` tiles from `from_s`, one every `every_s` seconds, `columns` x `rows`, row by row. */
   sheets: z.array(z.object({
     file: z.string(),
