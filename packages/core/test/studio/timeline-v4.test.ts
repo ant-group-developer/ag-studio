@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
 import {
   addClip, applyTimelineOps, layoutTimeline, moveClip, removeClip, replaceClipAsset, resolveTransitions, setCaptions,
-  setTransition, timelineIssues, TimelineOpError, trimClip,
+  setTransition, timelineIssues, TimelineOpError, transitionUseIssues, trimClip,
 } from "../../src/studio/layout.js";
 
 const asset = (d: number) => ({ title: "Video", summary_vi: "Clip", duration_s: d, orientation: "landscape" as const });
@@ -162,6 +162,17 @@ describe("timelineIssues on v4", () => {
     expect(codes(trimClip(trimClip(cut(), "C001", 2, 2.6), "C002", 0, 1))).toContain("warning:narration_overrun");
     expect(codes(trimClip(cut(), "C002", 0, 9.5))).not.toContain("warning:narration_overrun");
     expect(codes(setTransition(trimClip(cut(), "C001", 2, 20), "C001", "dissolve", 0.4))).toContain("warning:transition_no_tail");
+  });
+
+  it("warns of transitions on most joins, of two wipe/slide styles in one video, and of zooms past two", () => {
+    const codesOf = (kinds: Parameters<typeof transitionUseIssues>[0]) => transitionUseIssues(kinds).map((i) => i.code);
+    expect(codesOf(["cut", "cut", "dissolve", "cut", "cut", "cut", "slide_left", "cut"])).toEqual([]);
+    expect(codesOf(["dissolve", "cut", "dissolve", "cut", "dissolve", "cut"])).toEqual(["transitions_overused"]);
+    // a short video may use one on most joins
+    expect(codesOf(["dissolve", "dissolve", "cut"])).toEqual([]);
+    expect(codesOf(["slide_left", "cut", "cut", "slide_right", "cut", "cut", "cut", "cut", "cut", "cut"])).toEqual([]);
+    expect(codesOf(["slide_left", "cut", "cut", "wipe_right", "cut", "cut", "cut", "cut", "cut", "cut"])).toEqual(["transitions_mixed"]);
+    expect(codesOf(["zoom_in", "cut", "zoom_in", "cut", "zoom_in", ...Array(10).fill("cut")])).toEqual(["zoom_overused"]);
   });
 });
 

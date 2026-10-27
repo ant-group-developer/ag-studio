@@ -8,7 +8,7 @@ import {
   type EditPlan, type ShotsIndex, type StudioStyle, type StudioSurvey, type SurveyOp,
 } from "@harness/contracts";
 import type { ZodError } from "zod";
-import { JUMP_CUT_SECONDS, jumpCutGap, narrationCps, TimelineOpError } from "./layout.js";
+import { JUMP_CUT_SECONDS, jumpCutGap, narrationCps, TimelineOpError, transitionUseIssues } from "./layout.js";
 import type { StudioProblem, StudioValidation } from "./validate.js";
 
 /** How far a row's or a shot's `in`/`out` may stray from the detected shot (rounding of the 0.1 s cut grid). */
@@ -109,6 +109,9 @@ export function validateEditPlan(
       message: `shot thứ ${a.order} và ${b.order} liền nhau trên cùng cảnh ${a.shot_id}, ${gap < 0 ? "chồng nhau" : "chỉ cách"} ${Math.abs(gap).toFixed(1)}s: hình bị giật (jump cut) — chèn một shot khác vào giữa (cutaway) hoặc lấy đoạn cách xa hơn ${JUMP_CUT_SECONDS}s`,
     });
   }
+
+  // How the plan uses its transitions: mostly cuts, one wipe/slide style, a zoom or two
+  for (const i of transitionUseIssues(plan.shots.slice(0, -1).map((s) => s.transition))) warnings.push({ code: i.code, message: i.message });
 
   // Narration
   const lineIds = new Set<string>();

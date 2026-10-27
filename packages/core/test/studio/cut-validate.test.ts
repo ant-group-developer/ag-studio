@@ -131,6 +131,14 @@ describe("validateEditPlan", () => {
     expect(codes(validateEditPlan(plan({ texts: [t, ...many] }), { survey: survey(), shots: shots() })).problems).toContain("too_many_texts");
   });
 
+  it("warns of two wipe/slide styles in one plan, without blocking it", () => {
+    const p = plan();
+    const mixed = plan({ shots: [{ ...p.shots[0]!, transition: "slide_left" }, { ...p.shots[1]!, transition: "wipe_right" }, p.shots[2]!] });
+    const v = validateEditPlan(mixed, { survey: survey(), shots: shots() });
+    expect(codes(v).warnings).toContain("transitions_mixed");
+    expect(v.ok).toBe(true);
+  });
+
   it("warns of a jump cut: two pieces of one shot back to back, under 2 s apart", () => {
     const p = plan();
     const second = (inS: number, out: number) => plan({ target_seconds: 11, shots: [p.shots[0]!, { ...p.shots[0]!, order: 2, in: inS, out, line_id: null }, { ...p.shots[2]!, order: 3 }] });

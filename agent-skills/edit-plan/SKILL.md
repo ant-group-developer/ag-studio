@@ -64,6 +64,11 @@ của `survey.json`, thiếu thì mở khung để xem).
   - `zoom_in`: lao vào một chi tiết (từ toàn cảnh chợ vào một món ăn). Rất hiếm, tối đa một hai lần mỗi video.
   - Chuyển cảnh đặt ở chỗ đổi ý hoặc đổi đoạn, không đặt giữa câu dẫn. Cùng một đoạn thì dùng cùng một kiểu. Kiểu nào
     cũng cần shot trước có thêm hình sau `out` (đuôi) và shot sau đủ dài, không đủ thì Studio đổi thành `cut` và báo.
+  - Studio tự kiểm khi kiểm file và sau mỗi lần dựng, rồi báo cảnh báo (không chặn):
+    - `transitions_overused`: hơn 30% chỗ nối là chuyển cảnh, với video từ 6 chỗ nối trở lên.
+    - `transitions_mixed`: trộn hai kiểu lau/trượt trong một video.
+    - `zoom_overused`: quá hai lần `zoom_in`.
+    Thấy cảnh báo nào thì sửa trước khi render.
   `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc, người lạ nói);
   `source_muted: true` (cấp kế hoạch) tắt tiếng gốc của mọi clip.
 - Âm lượng (tuỳ chọn): `gain_db` của shot (-30..20 dB) cho tiếng gốc to/nhỏ hơn (người nói nhỏ: +6; phố ồn: -8);

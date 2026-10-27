@@ -325,6 +325,33 @@ function shotIssues(t: TimelineV4, layout: TimelineLayout): TimelineIssue[] {
       issues.push({ severity: "warning", code: "transition_no_tail", message: `chuyển cảnh sau clip ${c.clip_id} sẽ thành cắt thẳng (${r.downgraded})`, clip_id: c.clip_id });
     }
   });
+  issues.push(...transitionUseIssues(t.clips.slice(0, -1).map((c) => c.transition_out.kind)));
+  return issues;
+}
+
+/** Transitions over this share of the joins, in a video with at least `TRANSITION_USE.min_joins`: too many. */
+const TRANSITION_USE = { min_joins: 6, max_share: 0.3, max_zoom: 2 } as const;
+/** The wipes and slides: one of them is a video's style, two read as a template. */
+const MOTION_TRANSITIONS: readonly TimelineTransitionKind[] = ["wipe_left", "wipe_right", "slide_left", "slide_right", "smooth_left"];
+
+/**
+ * How the video uses its transitions (edit-plan skill, round 2026-10-27): most joins should be cuts, one wipe/slide style
+ * per video (left and right of one count as one), a zoom only once or twice.
+ */
+export function transitionUseIssues(kinds: readonly TimelineTransitionKind[]): TimelineIssue[] {
+  const issues: TimelineIssue[] = [];
+  const used = kinds.filter((k) => k !== "cut");
+  if (kinds.length >= TRANSITION_USE.min_joins && used.length > TRANSITION_USE.max_share * kinds.length) {
+    issues.push({ severity: "warning", code: "transitions_overused", message: `${used.length}/${kinds.length} chỗ nối là chuyển cảnh: nhiều quá, phần lớn nên là cắt thẳng (tối đa khoảng ${Math.round(TRANSITION_USE.max_share * 100)}%)` });
+  }
+  const styles = new Set(used.filter((k) => MOTION_TRANSITIONS.includes(k)).map((k) => k.replace(/_(left|right)$/, "")));
+  if (styles.size > 1) {
+    issues.push({ severity: "warning", code: "transitions_mixed", message: `video trộn ${[...styles].join(", ")}: chọn một kiểu lau/trượt cho cả video` });
+  }
+  const zooms = used.filter((k) => k === "zoom_in").length;
+  if (zooms > TRANSITION_USE.max_zoom) {
+    issues.push({ severity: "warning", code: "zoom_overused", message: `${zooms} lần zoom_in: chỉ nên một hai lần mỗi video` });
+  }
   return issues;
 }
 
