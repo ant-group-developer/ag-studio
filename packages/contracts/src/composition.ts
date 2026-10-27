@@ -28,11 +28,81 @@ const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/);
 
 /**
  * The fonts a text look may name (feedback-vps §4.2): Arial, which every render machine has installed, and fonts under
- * the SIL Open Font License that the render worker ships in its release (`fonts/` of ag-render-worker). Noto Sans JP
- * and KR also draw Japanese and Korean words whatever the look's font is.
+ * the SIL Open Font License that the render worker ships in its release (`fonts/` of ag-render-worker). The first six
+ * since render level 4, the rest (fonts sheet 2026-10-27, batch 1) since level 8. Words in a script the look's font
+ * lacks are drawn in Noto Sans KR / JP or Be Vietnam Pro (`TEXT_FONT_INFO`).
  */
-export const TEXT_FONTS = ["Arial", "Be Vietnam Pro", "Noto Sans JP", "Noto Sans KR", "Noto Serif", "Playfair Display"] as const;
+export const TEXT_FONTS = [
+  "Arial", "Be Vietnam Pro", "Noto Sans JP", "Noto Sans KR", "Noto Serif", "Playfair Display",
+  // Latin
+  "Montserrat", "Oswald", "Bebas Neue", "Anton", "Inter", "Roboto", "Poppins", "Lato", "Raleway", "Josefin Sans", "Quicksand",
+  "Cormorant Garamond", "DM Serif Display", "Libre Baskerville", "Cinzel", "Great Vibes", "Pacifico", "Caveat",
+  // Japanese
+  "Noto Serif JP", "M PLUS Rounded 1c", "Zen Maru Gothic", "Zen Kaku Gothic New", "Shippori Mincho", "Dela Gothic One", "Kiwi Maru",
+  "Klee One", "RocknRoll One", "BIZ UDPGothic",
+  // Korean
+  "Noto Serif KR", "Nanum Gothic", "Nanum Myeongjo", "Nanum Pen Script", "Black Han Sans", "Do Hyeon", "Jua", "Gowun Dodum",
+  "Gowun Batang", "IBM Plex Sans KR",
+] as const;
 export type TextFont = (typeof TEXT_FONTS)[number];
+
+/** The scripts a text font draws (besides plain Latin, which all of them do). */
+export const TEXT_SCRIPTS = ["vietnamese", "japanese", "korean"] as const;
+export type TextScript = (typeof TEXT_SCRIPTS)[number];
+
+const V = "vietnamese";
+const J = "japanese";
+const K = "korean";
+/**
+ * Per font: the scripts it has glyphs for (read from the shipped files) and, when it differs from the name, the family
+ * name inside the file that libass matches (`face`).
+ */
+export const TEXT_FONT_INFO: Record<TextFont, { scripts: readonly TextScript[]; face?: string }> = {
+  "Arial": { scripts: [V] },
+  "Be Vietnam Pro": { scripts: [V] },
+  "Noto Sans JP": { scripts: [V, J] },
+  "Noto Sans KR": { scripts: [V, J, K] },
+  "Noto Serif": { scripts: [V] },
+  "Playfair Display": { scripts: [V] },
+  "Montserrat": { scripts: [V] },
+  "Oswald": { scripts: [V] },
+  "Bebas Neue": { scripts: [] },
+  "Anton": { scripts: [V] },
+  "Inter": { scripts: [V] },
+  "Roboto": { scripts: [V] },
+  "Poppins": { scripts: [] },
+  "Lato": { scripts: [V] },
+  "Raleway": { scripts: [V] },
+  "Josefin Sans": { scripts: [V] },
+  "Quicksand": { scripts: [V] },
+  "Cormorant Garamond": { scripts: [V] },
+  "DM Serif Display": { scripts: [] },
+  "Libre Baskerville": { scripts: [] },
+  "Cinzel": { scripts: [] },
+  "Great Vibes": { scripts: [V] },
+  "Pacifico": { scripts: [V] },
+  "Caveat": { scripts: [] },
+  "Noto Serif JP": { scripts: [V, J] },
+  "M PLUS Rounded 1c": { scripts: [V, J], face: "Rounded Mplus 1c" },
+  "Zen Maru Gothic": { scripts: [J] },
+  "Zen Kaku Gothic New": { scripts: [J] },
+  "Shippori Mincho": { scripts: [J] },
+  "Dela Gothic One": { scripts: [V, J] },
+  "Kiwi Maru": { scripts: [J] },
+  "Klee One": { scripts: [J] },
+  "RocknRoll One": { scripts: [J] },
+  "BIZ UDPGothic": { scripts: [J] },
+  "Noto Serif KR": { scripts: [V, J, K] },
+  "Nanum Gothic": { scripts: [K], face: "NanumGothic" },
+  "Nanum Myeongjo": { scripts: [K], face: "NanumMyeongjo" },
+  "Nanum Pen Script": { scripts: [K], face: "Nanum Pen" },
+  "Black Han Sans": { scripts: [K] },
+  "Do Hyeon": { scripts: [K] },
+  "Jua": { scripts: [K] },
+  "Gowun Dodum": { scripts: [V, K] },
+  "Gowun Batang": { scripts: [V, K] },
+  "IBM Plex Sans KR": { scripts: [K] },
+};
 
 /**
  * The colour of a video's picture (feedback-vps §4.6): a fixed grade applied to every clip when its mezzanine is made.
@@ -56,7 +126,7 @@ export const TextLookSchema = z.object({
   size: z.enum(TEXT_LOOK_SIZES),
   /** A soft shadow under texts and subtitles (feedback-vps §4.1). Absent = none. Needs render level 3. */
   shadow: z.boolean().optional(),
-  /** One of `TEXT_FONTS` (feedback-vps §4.2). Absent = Arial. Needs render level 4. */
+  /** One of `TEXT_FONTS` (feedback-vps §4.2). Absent = Arial. Needs render level 4 (the first six) or 8. */
   font: z.enum(TEXT_FONTS).optional(),
 }).strict();
 export type TextLook = z.infer<typeof TextLookSchema>;

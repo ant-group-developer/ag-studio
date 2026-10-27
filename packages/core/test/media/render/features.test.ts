@@ -39,6 +39,13 @@ describe("compositionFeatureLevel", () => {
     expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Arial", shadow: true } }))).toBe(4);
   });
 
+  it("is 8 for a font of batch 1 of the fonts sheet", () => {
+    const look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "m" as const };
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Montserrat" } }))).toBe(8);
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Nanum Gothic" } }))).toBe(8);
+    expect(RENDER_FEATURE_LEVEL).toBeGreaterThanOrEqual(8);
+  });
+
   it("is 5 for a clip's gain, even source sound or a music volume line", () => {
     const t = timeline({ track: "library:m.mp3", gain_db: -18, ducking: true });
     expect(compositionFeatureLevel(timelineToComposition({ ...t, clips: [{ ...t.clips[0]!, gain_db: -6 }] }))).toBe(5);

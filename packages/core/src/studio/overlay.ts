@@ -8,7 +8,7 @@
  * canvas, so the default brand scales them by the canvas' short edge: a 1080p or 9:16 render gets half. A callout is
  * drawn smaller than the harness's 160 px (`STUDIO_CALLOUT_PX`): at 80 px on 1080p it covered the picture.
  */
-import { BrandProfileSchema, type BrandProfile, type Composition, type TextFont, type TextLook } from "@harness/contracts";
+import { BrandProfileSchema, TEXT_FONT_INFO, type BrandProfile, type Composition, type TextFont, type TextLook, type TextScript } from "@harness/contracts";
 import { buildAss } from "../media/ass.js";
 
 export const STUDIO_DEFAULT_FONT = "Arial";
@@ -17,15 +17,26 @@ export const STUDIO_DEFAULT_FONT = "Arial";
 const HANGUL = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/;
 /** Kana, CJK ideographs, CJK punctuation and full-width forms. */
 const JAPANESE = /[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+/** Letters only Vietnamese uses: \u0103 \u00e2 \u0111 \u00ea \u00f4 \u01a1 \u01b0 and the stacked tone marks (Latin Extended Additional). */
+const VIETNAMESE = /[\u0103\u00e2\u0111\u00ea\u00f4\u01a1\u01b0\u0102\u00c2\u0110\u00ca\u00d4\u01a0\u01af\u1ea0-\u1ef9]/;
+
+/** The font that draws a script when the look's font has no glyphs for it. */
+const SCRIPT_FALLBACK: Record<TextScript, TextFont> = { korean: "Noto Sans KR", japanese: "Noto Sans JP", vietnamese: "Be Vietnam Pro" };
+
+/** The family name libass matches for a font: the name, unless the file calls itself otherwise (`TEXT_FONT_INFO.face`). */
+export function studioFontFace(font: TextFont): string {
+  return TEXT_FONT_INFO[font].face ?? font;
+}
 
 /**
- * The shipped font a text or subtitle is drawn in when it is Korean or Japanese (Arial and the Latin fonts have no such
- * glyphs: libass drew empty boxes), or null to keep the style's font. Korean wins over the CJK ranges it shares. A text
- * already set in that font keeps its style.
+ * The shipped font a text or subtitle is drawn in when its words are in a script the look's font lacks (Korean, Japanese,
+ * Vietnamese: libass drew empty boxes), or null to keep the style's font. Korean wins over the CJK ranges it shares,
+ * then Japanese, then Vietnamese.
  */
 export function studioScriptFont(text: string, lookFont: TextFont = STUDIO_DEFAULT_FONT): TextFont | null {
-  const want: TextFont | null = HANGUL.test(text) ? "Noto Sans KR" : JAPANESE.test(text) ? "Noto Sans JP" : null;
-  return want === lookFont ? null : want;
+  const need: TextScript | null = HANGUL.test(text) ? "korean" : JAPANESE.test(text) ? "japanese" : VIETNAMESE.test(text) ? "vietnamese" : null;
+  if (need === null || TEXT_FONT_INFO[lookFont].scripts.includes(need)) return null;
+  return SCRIPT_FALLBACK[need];
 }
 
 /** A callout's size on the design canvas (the harness default is 160 px). */
@@ -77,8 +88,8 @@ export function studioLookBrand(canvas: { width: number; height: number }, look:
   const boxed = look.box_color !== null;
   return BrandProfileSchema.parse({
     ...base,
-    // `buildAss` names a font after its file's base name, so the family name stands in for the file
-    ...(look.font ? { fonts: { ...base.fonts, regular: `${look.font}.ttf`, bold: `${look.font}.ttf`, origin: "licensed", origin_note: "font OFL đóng kèm ag-render-worker" } } : {}),
+    // `buildAss` names a font after its file's base name, so the family name libass matches stands in for the file
+    ...(look.font ? { fonts: { ...base.fonts, regular: `${studioFontFace(look.font)}.ttf`, bold: `${studioFontFace(look.font)}.ttf`, origin: "licensed", origin_note: "font OFL đóng kèm ag-render-worker" } } : {}),
     colors: { primary: look.text_color, text: look.text_color, text_outline: look.outline_color, box: `${look.box_color ?? "#000000"}${LOOK_BOX_ALPHA}` },
     text: {
       title: { ...base.text.title, size_px: px(base.text.title.size_px), box: boxed },
@@ -108,7 +119,10 @@ export function studioOverlayAss(c: Composition, o: { scriptFonts?: boolean } = 
     canvas,
     ...(c.text_style ? { boxColorInOutline: true } : {}),
     ...(c.text_style?.shadow ? { shadow: true } : {}),
-    ...(o.scriptFonts ? { scriptFont: (text: string) => studioScriptFont(text, c.text_style?.font) } : {}),
+    ...(o.scriptFonts ? { scriptFont: (text: string) => {
+      const f = studioScriptFont(text, c.text_style?.font);
+      return f ? studioFontFace(f) : null;
+    } } : {}),
   });
 }
 
