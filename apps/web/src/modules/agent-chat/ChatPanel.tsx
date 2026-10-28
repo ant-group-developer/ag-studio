@@ -13,6 +13,7 @@ import type { TeamRoleName } from "../../api/workspace-client";
 import { Composer } from "./Composer";
 import { chatRows, JobNotes, MessageItem } from "./MessageItem";
 import { useThread } from "./use-thread";
+import { useFollowHandoff } from "./handoff";
 
 /** The options of the agent's last `suggest_replies` call in the newest answer, to send with one click. */
 export function suggestionsOf(messages: ChatMessage[]): string[] {
@@ -50,6 +51,8 @@ export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile
   const qc = useQueryClient();
   const { data: thread, isLoading } = useThread(threadId);
   const messages = thread?.messages ?? [];
+  // a turn that hands a video's work to its own chat takes the page there
+  useFollowHandoff(messages, projectId);
   const lastUpdate = messages.at(-1)?.updatedAt ?? "";
   const signal = `${messages.length}:${lastUpdate}:${messages.at(-1)?.text.length ?? 0}`;
   const { ref, onScroll, atBottom, toBottom } = useStickToBottom(threadId, signal);

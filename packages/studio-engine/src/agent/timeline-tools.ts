@@ -23,6 +23,7 @@ import { musicBeatsStatus, queueMusicBeats } from "../workspace/music-beats.js";
 import { queueRender } from "../workspace/renders.js";
 import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
+import { requireVideoThread } from "./handoff.js";
 import type { AgentTool, AgentToolContext, ToolAnswer } from "./tools.js";
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
@@ -31,11 +32,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const waitS = z.number().int().min(0).max(60).optional();
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-async function videoOf(ctx: AgentToolContext, id: string | undefined) {
+/** The video a tool acts on; its work (`work`, not only reading it) runs only in its own thread (plan 2026-10-28 P4). */
+async function videoOf(ctx: AgentToolContext, id: string | undefined, opts: { work?: boolean } = {}) {
   const videoId = id ?? ctx.video?.id;
   if (!videoId) throw new StudioRunError("invalid", "luồng này không gắn với video nào: cho biết video_id", { code: "no_video" });
   const v = await requireVideo(ctx.db, videoId);
   if (v.project_id !== ctx.project.id) throw new StudioRunError("invalid", "video thuộc dự án khác", { code: "other_project" });
+  if (opts.work ?? true) requireVideoThread(ctx, v);
   return v;
 }
 
@@ -170,7 +173,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       to_s: z.number().positive().optional(),
     }).strict(),
     run: async (ctx, a) => {
-      const v = await videoOf(ctx, a.video_id);
+      const v = await videoOf(ctx, a.video_id, { work: false });
       const rev = a.revision ? await getVideoRevision(ctx.db, v.id, a.revision) : await latestVideoRevision(ctx.db, v.id);
       if (!rev) return { text: "Video chưa có timeline: dựng bằng timeline_from_edit_plan sau khi có edit-plan.json.", isError: true };
       if (a.from_s !== undefined && a.to_s !== undefined && a.to_s <= a.from_s) return { text: "to_s phải lớn hơn from_s.", isError: true };
@@ -328,7 +331,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     run: async (ctx, a) => {
       const scope = a.scope ?? "video";
       const videoId = a.video_id ?? ctx.video?.id;
-      const video = videoId ? await videoOf(ctx, videoId) : null;
+      const video = videoId ? await videoOf(ctx, videoId, { work: scope === "video" }) : null;
       if (scope === "video" && !video) return { text: "Luồng này không gắn với video nào: cho biết video_id, hoặc scope: project.", isError: true };
       const level = { ...(a.gain_db !== undefined ? { gainDb: a.gain_db } : {}), ...(a.ducking !== undefined ? { ducking: a.ducking } : {}) };
       try {

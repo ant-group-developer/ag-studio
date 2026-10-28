@@ -12,6 +12,7 @@ import { ASSET_ID } from "../workspace/prepare.js";
 import { assetState as stateOf, queuePrepare } from "../workspace/inputs.js";
 import { addSource, agGoProjectIds, isFootageKind, listSources, sourceView, type SourceRecord } from "../workspace/sources-db.js";
 import { writeVideoIndex, videoIndexPath } from "../workspace/video-index.js";
+import { requireVideoThread } from "./handoff.js";
 import type { AgentTool, AgentToolContext } from "./tools.js";
 
 /** One analysed ag-go video of the project's ag-go projects. */
@@ -50,11 +51,13 @@ async function footageOf(ctx: AgentToolContext & { footage?: ProjectFootage }): 
   return { footage: ctx.footage, projects: await agGoProjectIds(ctx.db, ctx.project.id) };
 }
 
+/** The video footage is added to: the thread's, and only in its own thread (plan 2026-10-28 P4). */
 async function targetVideo(ctx: AgentToolContext, videoId: string | undefined): Promise<string> {
   const id = videoId ?? ctx.video?.id;
   if (!id) throw new StudioRunError("invalid", "luồng này không gắn với video nào: cho biết video_id", { code: "no_video" });
   const v = await requireVideo(ctx.db, id);
   if (v.project_id !== ctx.project.id) throw new StudioRunError("invalid", "video thuộc dự án khác", { code: "other_project" });
+  requireVideoThread(ctx, v);
   return id;
 }
 

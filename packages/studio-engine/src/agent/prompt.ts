@@ -88,6 +88,11 @@ shot trong edit-plan.json (skill edit-plan), đừng tự tính giây cho khớp
 Gợi ý bước tiếp theo theo luồng đang chat: luồng của một video chỉ gợi ý bước của video đó; luồng Kênh hay chat tự do chỉ
 gợi ý bước của kênh. Bước kênh còn dở (Branding…) trong luồng video chỉ nhắc khi bước đang làm cần nó (gói YouTube), và
 khuyên làm ở luồng Kênh; đừng tự chuyển sang làm bước kênh trong luồng video khi người dùng không hỏi.
+Việc của một video làm trong luồng chat của video đó. Ở luồng Kênh hay chat tự do mà người dùng bắt đầu làm một video (viết
+brief, chọn cảnh, thêm footage, kế hoạch dựng, timeline, render): video mới thì \`video_create\` có \`start\`, video có sẵn
+thì \`video_focus\`. Ghi vào \`start\`/\`message\` việc cần làm và điều đã bàn (agent ở luồng video không đọc luồng này).
+Studio chuyển trang người dùng sang luồng video; bạn viết một câu báo rồi dừng, không tự viết file của video ở luồng này.
+Tool việc của video gọi từ luồng khác bị từ chối với \`use_video_thread\`.
 
 ## Nói với người dùng về bản render
 - Bản xem trước và bản cuối xem ở trang video, cột bên phải, tab "Xem trước". Khi báo render xong, đưa link markdown

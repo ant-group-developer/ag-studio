@@ -455,6 +455,26 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     localStorage.removeItem("studio.docs.view");
   });
 
+  it("a hand-over made while the chat is open takes the page to the video's chat; an older one stays a card", async () => {
+    const handoff = (id: string, endedAt: string) => ({
+      kind: "tool", id, name: "mcp__studio__video_focus", input: { video_id: "v2" }, started_at: NOW, ended_at: endedAt,
+      result: JSON.stringify({ handoff: { video_id: "v2", video_idx: 2, video_title: "Huế mưa", thread_id: "t-v2" }, next: "…" }),
+    });
+    ws.getThread.mockResolvedValue(thread([message({ id: "h-old", seq: 3, text: "Đã chuyển.", parts: [handoff("x-old", NOW), { kind: "text", text: "Đã chuyển." }] })]));
+    mount("/p/p1");
+    const card = await screen.findByRole("link", { name: /Việc đã chuyển sang chat của video #2 Huế mưa/ }, { timeout: 5000 });
+    expect(card).toHaveAttribute("href", "/p/p1/v/v2");
+    expect(screen.queryByRole("heading", { name: "Huế mưa", level: 1 })).toBeNull();
+    cleanup();
+    const later = new Date(Date.now() + 60_000).toISOString();
+    ws.getThread.mockImplementation(async (id: string) => (id === "t-v2"
+      ? { ...thread([]), id: "t-v2", videoId: "v2", kind: "video", title: "Huế mưa" }
+      : thread([message({ id: "h-new", seq: 3, status: "running", parts: [handoff("x-new", later)] })])));
+    mount("/p/p1");
+    expect(await screen.findByRole("heading", { name: "Huế mưa", level: 1 }, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText("Đã chuyển sang chat của video #2: Huế mưa")).toBeInTheDocument();
+  });
+
   it("adds a video with what it is about and what it learns from", async () => {
     mount("/p/p1");
     fireEvent.click(await screen.findByRole("button", { name: /Video mới/ }));
