@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { App as AntApp, Button, ColorPicker, Segmented, Select, Spin, Switch } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Film, Sparkles } from "lucide-react";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type LookSource, type OwnLook, type TextLook, type VideoLook, type VideoLookView } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
+import { useThumbnailUrl } from "../inputs/ag-go-projects/ProjectGridView";
 import "./style.css";
 
 /** Studio's own look for the words when neither the video, its plan nor the branding says (white, black outline, m). */
@@ -12,39 +13,83 @@ const STUDIO_TEXT: TextLook = { text_color: "#FFFFFF", outline_color: "#000000",
 const PREVIEW_PX = { s: 20, m: 26, l: 34 } as const;
 const STYLE_FILE = "channel/style.md";
 const BRANDING_FILE = "channel/branding.md";
+/**
+ * The picture looks as the browser can show them: close to the render's ffmpeg grades (`lookFilter` of @harness/core),
+ * mild on purpose like them. A preview, not the render.
+ */
+const LOOK_CSS: Record<VideoLook, string> = {
+  none: "none",
+  natural: "contrast(1.04) saturate(1.1) brightness(1.01)",
+  vivid: "contrast(1.1) saturate(1.35)",
+  warm: "sepia(0.14) saturate(1.12) hue-rotate(-6deg)",
+  cinematic: "contrast(1.1) saturate(0.86) brightness(0.97) hue-rotate(-4deg)",
+};
 
-/** The font drawn in the preview: the render machines' fonts are Google Fonts (OFL), Arial is the computer's. */
-function useFontLoaded(font: string | undefined) {
+/**
+ * The font the preview draws: the render machines' fonts are Google Fonts (OFL), Arial is the computer's. Until the
+ * new one has loaded the preview keeps the last, so changing the font never flashes a fallback.
+ */
+function useLoadedFont(font: string): string {
+  const [shown, setShown] = useState(font);
   useEffect(() => {
-    if (!font || font === "Arial") return;
+    if (font === "Arial" || typeof document === "undefined") { setShown(font); return; }
     const id = `studio-font-${font.replace(/\s+/g, "-")}`;
-    if (document.getElementById(id)) return;
-    const link = document.createElement("link");
-    link.id = id;
-    link.rel = "stylesheet";
-    link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(font).replace(/%20/g, "+")}&display=swap`;
-    document.head.appendChild(link);
+    if (!document.getElementById(id)) {
+      const link = document.createElement("link");
+      link.id = id;
+      link.rel = "stylesheet";
+      link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(font).replace(/%20/g, "+")}&display=block`;
+      document.head.appendChild(link);
+    }
+    let alive = true;
+    const ready = () => { if (alive) setShown(font); };
+    // the stylesheet first, then the face itself; a font that cannot load still shows (in the fallback) after a while
+    const wait = setTimeout(ready, 2500);
+    const tryLoad = (n: number) => {
+      if (!document.fonts?.load) return ready();
+      void document.fonts.load(`20px "${font}"`).then((faces) => (faces.length || n > 10 ? ready() : setTimeout(() => tryLoad(n + 1), 150)), ready);
+    };
+    tryLoad(0);
+    return () => { alive = false; clearTimeout(wait); };
   }, [font]);
+  return shown;
 }
 
 const hex = (c: { toHexString: () => string }) => c.toHexString().slice(0, 7).toUpperCase();
 
-/** The video's words as they will look on a frame: font, size, colours, outline, box, shadow. */
-function TextPreview({ look, text }: { look: TextLook; text: string }) {
-  useFontLoaded(look.font);
+/** A frame of the video's footage (its first ag-go video's thumbnail), else a plain scene. */
+function useFrameUrl(projectId: string, videoId: string): string | undefined {
+  const client = useWorkspaceClient();
+  const { data } = useQuery({ queryKey: ["sources", projectId, videoId], queryFn: () => client.listSources(projectId, videoId) });
+  const asset = data?.sources.find((s) => s.kind === "ag_go_asset" && s.videoId === videoId)?.ref;
+  return useThumbnailUrl(asset);
+}
+
+function Frame({ url, look, className, children }: { url?: string | undefined; look: VideoLook; className?: string; children?: ReactNode }) {
+  return (
+    <div className={`ws-style__frame${className ? ` ${className}` : ""}`}>
+      <div className="ws-style__picture" style={{ filter: LOOK_CSS[look], ...(url ? { backgroundImage: `url("${url}")` } : {}) }} aria-hidden />
+      {children}
+    </div>
+  );
+}
+
+/** The video's words as they will look on a frame: font, size, colours, outline, box, shadow, over the picture's look. */
+function TextPreview({ look, picture, url, text }: { look: TextLook; picture: VideoLook; url?: string | undefined; text: string }) {
+  const font = useLoadedFont(look.font ?? "Arial");
   const o = look.outline_color;
   const shadows = [`1px 1px 0 ${o}`, `-1px -1px 0 ${o}`, `1px -1px 0 ${o}`, `-1px 1px 0 ${o}`, `0 0 2px ${o}`, ...(look.shadow ? ["0 3px 10px rgba(0,0,0,0.65)"] : [])];
   const style: CSSProperties = {
-    fontFamily: `"${look.font ?? "Arial"}", Arial, sans-serif`, fontSize: PREVIEW_PX[look.size], color: look.text_color, textShadow: shadows.join(", "),
+    fontFamily: `"${font}", Arial, sans-serif`, fontSize: PREVIEW_PX[look.size], color: look.text_color, textShadow: shadows.join(", "),
     ...(look.box_color ? { background: look.box_color, padding: "4px 12px", borderRadius: 4 } : {}),
   };
-  return <div className="ws-style__frame" aria-hidden><span style={style}>{text}</span></div>;
+  return <Frame url={url} look={picture} className="ws-style__frame--big"><span className="ws-style__words" style={style}>{text}</span></Frame>;
 }
 
 /**
  * The Style tab (plan 2026-10-28 P3). In a video: the words on screen (font, size, colours, box, shadow) and the
- * picture (look, colour matching) picked for this video, over its edit plan and the channel's branding, saved onto its
- * latest timeline. Everywhere: the channel's edit style, its reference videos, and asking the agent to learn one.
+ * picture's tone and colour matching picked for this video, over its edit plan and the channel's branding, saved onto
+ * its latest timeline. Everywhere: the channel's edit style, its reference videos, and asking the agent to learn one.
  */
 export function StylePanel({ projectId, video, canEdit, onOpenFile, onPrompt, onReferences }: {
   projectId: string;
@@ -62,11 +107,11 @@ export function StylePanel({ projectId, video, canEdit, onOpenFile, onPrompt, on
   const has = (path: string) => !!files.data?.entries.some((e) => e.path === path);
   return (
     <div className="ws-style">
-      {video ? <VideoLookForm videoId={video.id} title={video.title} canEdit={canEdit} /> : (
+      {video ? <VideoLookForm projectId={projectId} videoId={video.id} title={video.title} canEdit={canEdit} /> : (
         <section className="ws-style__section" aria-label={t("ws.style.textTitle")}>
           <h4 className="ws-style__h">{t("ws.style.textTitle")}</h4>
           <p className="ws-hint">{t("ws.style.perVideo")}</p>
-          {has(BRANDING_FILE) ? <Button size="small" icon={<FileText size={14} />} onClick={() => onOpenFile(BRANDING_FILE)}>{t("ws.style.openBranding")}</Button> : null}
+          {has(BRANDING_FILE) ? <div><Button size="small" icon={<FileText size={14} />} onClick={() => onOpenFile(BRANDING_FILE)}>{t("ws.style.openBranding")}</Button></div> : null}
         </section>
       )}
       <section className="ws-style__section" aria-label={t("ws.style.editTitle")}>
@@ -82,11 +127,12 @@ export function StylePanel({ projectId, video, canEdit, onOpenFile, onPrompt, on
   );
 }
 
-function VideoLookForm({ videoId, title, canEdit }: { videoId: string; title: string; canEdit: boolean }) {
+function VideoLookForm({ projectId, videoId, title, canEdit }: { projectId: string; videoId: string; title: string; canEdit: boolean }) {
   const { t } = useAiTranslation();
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
   const qc = useQueryClient();
+  const frame = useFrameUrl(projectId, videoId);
   const { data, isLoading } = useQuery({ queryKey: ["videoLook", videoId], queryFn: () => client.getVideoLook(videoId) });
   const [text, setText] = useState<TextLook>(STUDIO_TEXT);
   const [look, setLook] = useState<VideoLook>("none");
@@ -114,7 +160,7 @@ function VideoLookForm({ videoId, title, canEdit }: { videoId: string; title: st
     const group = (f: (typeof fonts)[number]) => (f.scripts.includes("korean") ? "korean" : f.scripts.includes("japanese") ? "japanese" : "latin");
     return (["latin", "japanese", "korean"] as const).map((g) => ({
       label: t(`ws.style.fontGroup.${g}`),
-      options: fonts.filter((f) => group(f) === g).map((f) => ({ value: f.name, label: f.scripts.includes("vietnamese") ? `${f.name} (VN)` : f.name })),
+      options: fonts.filter((f) => group(f) === g).map((f) => ({ value: f.name, label: f.scripts.includes("vietnamese") ? `${f.name} · ${t("ws.style.hasVietnamese")}` : f.name })),
     })).filter((g) => g.options.length);
   }, [data, t]);
 
@@ -129,9 +175,9 @@ function VideoLookForm({ videoId, title, canEdit }: { videoId: string; title: st
     <>
       <section className="ws-style__section" aria-label={t("ws.style.textTitle")}>
         <div className="ws-style__head"><h4 className="ws-style__h">{t("ws.style.textTitle")}</h4>{dirty.text ? null : from(data.effective.from.text_look)}</div>
-        <TextPreview look={text} text={title} />
+        <TextPreview look={text} picture={look} url={frame} text={title} />
         <label className="ws-style__row">{t("ws.style.font")}
-          <Select size="small" showSearch value={text.font ?? "Arial"} disabled={ro} options={fontOptions} style={{ width: 210 }} aria-label={t("ws.style.font")}
+          <Select size="small" showSearch value={text.font ?? "Arial"} disabled={ro} options={fontOptions} style={{ width: 230 }} aria-label={t("ws.style.font")}
             onChange={(font: string) => edit({ font })} />
         </label>
         <div className="ws-style__row">{t("ws.style.size")}
@@ -156,12 +202,17 @@ function VideoLookForm({ videoId, title, canEdit }: { videoId: string; title: st
       </section>
 
       <section className="ws-style__section" aria-label={t("ws.style.pictureTitle")}>
-        <h4 className="ws-style__h">{t("ws.style.pictureTitle")}</h4>
-        <label className="ws-style__row"><span>{t("ws.style.look")} {dirty.look ? null : from(data.effective.from.look)}</span>
-          <Select size="small" value={look} disabled={ro} style={{ width: 150 }} aria-label={t("ws.style.look")}
-            onChange={(v: VideoLook) => { setLook(v); setDirty((d) => ({ ...d, look: true })); }}
-            options={data.choices.looks.map((l) => ({ value: l, label: t(`ws.style.looks.${l}`) }))} />
-        </label>
+        <div className="ws-style__head"><h4 className="ws-style__h">{t("ws.style.pictureTitle")}</h4>{dirty.look ? null : from(data.effective.from.look)}</div>
+        <div className="ws-style__looks" role="radiogroup" aria-label={t("ws.style.pictureTitle")}>
+          {data.choices.looks.map((l) => (
+            <button key={l} type="button" role="radio" aria-checked={look === l} disabled={ro} className="ws-style__look"
+              onClick={() => { setLook(l); setDirty((d) => ({ ...d, look: true })); }}>
+              <Frame url={frame} look={l} />
+              <span>{t(`ws.style.looks.${l}`)}</span>
+            </button>
+          ))}
+        </div>
+        <p className="ws-hint">{t(`ws.style.lookHint.${look}`)}</p>
         <div className="ws-style__row"><span>{t("ws.style.colorMatch")} {dirty.match ? null : from(data.effective.from.color_match)}</span>
           <Switch size="small" checked={match} disabled={ro} onChange={(v) => { setMatch(v); setDirty((d) => ({ ...d, match: true })); }} aria-label={t("ws.style.colorMatch")} />
         </div>

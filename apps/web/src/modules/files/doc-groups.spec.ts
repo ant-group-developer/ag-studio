@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceEntry } from "../../api/workspace-client";
-import { docGroups } from "./doc-groups";
+import { docGroups, newDocPath } from "./doc-groups";
 
 const V1 = "11111111-1111-4111-8111-111111111111";
 const V2 = "22222222-2222-4222-8222-222222222222";
@@ -54,5 +54,13 @@ describe("docGroups", () => {
     const groups = docGroups([file("channel/strategy.md")], [...VIDEOS, { id: "v3", idx: 3, title: "Mới" }], { currentVideoId: "v3" });
     expect(groups.map((g) => g.key)).toEqual(["video:v3", "channel", "research"]);
     expect(groups[0]!.items).toEqual([]);
+  });
+});
+
+describe("newDocPath", () => {
+  it("names a new document as it was typed, beside the others", () => {
+    expect(newDocPath("Ghi chú khán giả", "context", new Set())).toBe("context/Ghi chú khán giả.md");
+    expect(newDocPath(" Đường đi: Bái Đính?  ", "videos/v1", new Set(["videos/v1/Đường đi Bái Đính.md"]))).toBe("videos/v1/Đường đi Bái Đính (2).md");
+    expect(newDocPath("???", "context", new Set())).toBe("context/Tài liệu.md");
   });
 });

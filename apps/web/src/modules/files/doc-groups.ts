@@ -116,3 +116,19 @@ export function docGroups(entries: WorkspaceEntry[], videos: VideoRef[], opts: {
   // a video's group shows even while empty (its documents come as work goes on); the others only with something in them
   return groups.filter((g) => g.items.length || (g.video && g.video === current) || g.key === "research");
 }
+
+/** Characters a path segment cannot hold (`normalizeRelPath` of the engine), and control characters. */
+const NOT_IN_NAME = /[<>:"|?*\\/]|\p{Cc}/gu;
+
+/**
+ * Where a new document named `title` goes in `folder`: the name as written (accents kept, so the list shows it as
+ * typed), without what a path cannot hold, as markdown (`Ghi chú khán giả` → `Ghi chú khán giả.md`); ` (2)`, ` (3)`…
+ * when that name is `taken`.
+ */
+export function newDocPath(title: string, folder: string, taken: Set<string>): string {
+  const name = title.normalize("NFC").replace(NOT_IN_NAME, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "").slice(0, 80).trim() || "Tài liệu";
+  for (let n = 1; ; n++) {
+    const path = `${folder}/${name}${n > 1 ? ` (${n})` : ""}.md`;
+    if (!taken.has(path)) return path;
+  }
+}

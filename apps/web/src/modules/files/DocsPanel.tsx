@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import { Button, Modal, Segmented, Spin, Tooltip } from "antd";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { Button, Input, Modal, Radio, Segmented, Spin, Tooltip } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Braces, ChevronDown, ChevronRight, FilePlus, FileText, Film, Image as ImageIcon, Music, RefreshCw, TrendingUp, Upload } from "lucide-react";
 import { useStudioClient } from "../../api/studio-client";
@@ -7,10 +7,10 @@ import { useWorkspaceClient } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
 import { ResearchPanel } from "../research/ResearchPanel";
 import { relativeTime } from "../workspace/time";
-import { docGroups, type DocGroup, type DocItem, type DocKind } from "./doc-groups";
+import { docGroups, newDocPath, type DocGroup, type DocItem, type DocKind } from "./doc-groups";
 import { FilesPanel } from "./FilesPanel";
 import { FileView } from "./FileView";
-import { NewFileModal, useFileActions } from "./use-file-actions";
+import { useFileActions } from "./use-file-actions";
 
 const ICON: Record<DocKind, typeof FileText> = { doc: FileText, image: ImageIcon, audio: Music, video: Film, data: Braces };
 /** An admin's choice of the documents or the whole folder, kept in this browser. */
@@ -19,6 +19,40 @@ type View = "docs" | "tree";
 
 function readView(): View {
   try { return localStorage.getItem(VIEW_KEY) === "tree" ? "tree" : "docs"; } catch { return "docs"; }
+}
+
+/**
+ * A new document by its name alone: for the whole channel (`context/`, every chat reads it) or, in a video, for that
+ * video (its folder). The file name comes from the name; it opens to be written.
+ */
+function NewDocModal({ open, video, taken, busy, onCreate, onClose }: {
+  open: boolean;
+  video?: { id: string; idx: number; title: string } | undefined;
+  taken: Set<string>;
+  busy: boolean;
+  onCreate: (path: string, title: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useAiTranslation();
+  const [title, setTitle] = useState("");
+  const [where, setWhere] = useState<"channel" | "video">("channel");
+  useEffect(() => { if (open) { setTitle(""); setWhere(video ? "video" : "channel"); } }, [open, video]);
+  const name = title.trim();
+  const make = () => { if (name) onCreate(newDocPath(name, where === "video" && video ? `videos/${video.id}` : "context", taken), name); };
+  return (
+    <Modal open={open} title={t("ws.docs.newDoc")} okText={t("common.create")} cancelText={t("common.cancel")} okButtonProps={{ disabled: !name }}
+      onOk={make} onCancel={onClose} confirmLoading={busy} destroyOnHidden>
+      <Input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onPressEnter={make} maxLength={120}
+        placeholder={t("ws.docs.newDocPlaceholder")} aria-label={t("ws.docs.newDocName")} />
+      {video ? (
+        <Radio.Group className="ws-docs__where" value={where} onChange={(e) => setWhere(e.target.value as "channel" | "video")} aria-label={t("ws.docs.newDocWhere")}>
+          <Radio value="video">{t("ws.docs.forVideo", { idx: video.idx, title: video.title })}</Radio>
+          <Radio value="channel">{t("ws.docs.forChannel")}</Radio>
+        </Radio.Group>
+      ) : null}
+      <p className="ws-hint">{t(where === "video" && video ? "ws.docs.forVideoHint" : "ws.docs.forChannelHint")}</p>
+    </Modal>
+  );
 }
 
 /**
@@ -56,6 +90,19 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
   const [researching, setResearching] = useState(false);
   const uploadInput = useRef<HTMLInputElement>(null);
   const { create, upload, uploading } = useFileActions(projectId, (path) => { setCreating(false); onOpen(path); });
+  const [dropping, setDropping] = useState(false);
+  const uploadFiles = (list: File[]) => {
+    if (!list.length) return;
+    // what is uploaded lands in "Added files": show it there
+    setFolded((f) => { const next = new Set(f); next.delete("context"); return next; });
+    upload.mutate({ files: list, folder: "context" });
+  };
+  const drag = canEdit ? {
+    onDragOver: (e: DragEvent) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDropping(true); } },
+    onDragLeave: (e: DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false); },
+    onDrop: (e: DragEvent) => { e.preventDefault(); setDropping(false); uploadFiles([...e.dataTransfer.files]); },
+  } : {};
+  const currentVideo = videos.find((v) => v.id === currentVideoId);
 
   const nameOf = (x: DocItem) => (x.nameKey ? t(`ws.docs.name.${x.nameKey}`, x.params ?? {}) : x.name);
   const titleOf = (g: DocGroup) => (g.video ? t("ws.docs.group.video", { idx: g.video.idx, title: g.video.title }) : t(`ws.docs.group.${g.key}`));
@@ -88,7 +135,8 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
   }
 
   return (
-    <div className="ws-docs">
+    <div className={`ws-docs${dropping ? " ws-docs--dropping" : ""}`} {...drag}>
+      {dropping ? <div className="ws-docs__drop" aria-hidden><Upload size={20} />{t("ws.docs.dropHere")}</div> : null}
       <div className="ws-docs__bar">
         {viewSwitch}
         <span className="ws-spacer" />
@@ -100,7 +148,7 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
               </Button>
             </Tooltip>
             <input ref={uploadInput} type="file" multiple hidden aria-label={t("ws.docs.add")}
-              onChange={(e) => { const list = [...(e.target.files ?? [])]; e.target.value = ""; if (list.length) upload.mutate({ files: list, folder: "context" }); }} />
+              onChange={(e) => { const list = [...(e.target.files ?? [])]; e.target.value = ""; uploadFiles(list); }} />
             <Button size="small" icon={<FilePlus size={14} />} onClick={() => setCreating(true)}>{t("ws.docs.newDoc")}</Button>
           </>
         ) : null}
@@ -149,7 +197,10 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
           })}
         </div>
       )}
-      <NewFileModal open={creating} initial="context/ghi-chu.md" busy={create.isPending} onCreate={(path) => create.mutate(path)} onClose={() => setCreating(false)} />
+      <NewDocModal open={creating} video={currentVideo} taken={new Set((files.data?.entries ?? []).map((e) => e.path))} busy={create.isPending}
+        onCreate={(path, title) => create.mutate({ path, content: `# ${title}
+
+` })} onClose={() => setCreating(false)} />
       <Modal open={researching} title={t("ws.docs.runResearch")} footer={null} onCancel={() => setResearching(false)} width={640} destroyOnHidden>
         <ResearchPanel projectId={projectId} canRun={canRun} showFiles={false} onOpenFile={(path) => { setResearching(false); onOpen(path); }} />
       </Modal>

@@ -16,7 +16,7 @@ export function useFileActions(projectId: string, onOpen: (path: string) => void
   const client = useWorkspaceClient();
   const qc = useQueryClient();
   const create = useMutation({
-    mutationFn: (path: string) => client.writeFile(projectId, { path, content: "", baseSha256: null }),
+    mutationFn: ({ path, content = "" }: { path: string; content?: string }) => client.writeFile(projectId, { path, content, baseSha256: null }),
     onSuccess: (saved) => {
       void qc.invalidateQueries({ queryKey: ["files", projectId] });
       onOpen(saved.path);

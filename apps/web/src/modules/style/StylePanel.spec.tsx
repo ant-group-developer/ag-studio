@@ -22,8 +22,10 @@ const ws = {
   getVideoLook: vi.fn(),
   setVideoLook: vi.fn(),
   listFiles: vi.fn(),
+  listSources: vi.fn().mockResolvedValue({ sources: [] }),
 };
 vi.mock("../../api/workspace-client", async (orig) => ({ ...(await orig<object>()), useWorkspaceClient: () => ws }));
+vi.mock("../inputs/ag-go-projects/ProjectGridView", () => ({ useThumbnailUrl: () => undefined }));
 const { StylePanel } = await import("./StylePanel");
 
 function mount(video?: { id: string; title: string }) {
@@ -51,18 +53,21 @@ describe("Style tab", { timeout: 20_000 }, () => {
   it("shows where the video's words and picture come from, and saves only what was changed", async () => {
     mount({ id: "v1", title: "Tràng An buổi sáng" });
     const text = await screen.findByRole("region", { name: "Chữ trên video" });
-    expect(within(text).getByText("Theo Branding kênh")).toBeInTheDocument();
-    expect(within(text).getByText("Tràng An buổi sáng")).toHaveStyle({ fontFamily: '"Be Vietnam Pro", Arial, sans-serif' });
-    expect(screen.getByRole("region", { name: "Màu hình" })).toHaveTextContent("Theo kế hoạch dựng");
+    expect(within(text).getByText("Theo Branding")).toBeInTheDocument();
+    await waitFor(() => expect(within(text).getByText("Tràng An buổi sáng")).toHaveStyle({ fontFamily: '"Be Vietnam Pro", Arial, sans-serif' }));
+    expect(screen.getByRole("region", { name: "Tông màu" })).toHaveTextContent("Theo kế hoạch dựng");
     expect(screen.getByRole("button", { name: "Lưu cho video này" })).toBeDisabled();
+    // the tones show as frames to pick
+    expect(within(screen.getByRole("radiogroup", { name: "Tông màu" })).getAllByRole("radio").map((r) => r.textContent)).toEqual(["Giữ nguyên", "Tự nhiên", "Rực rỡ", "Ấm áp", "Điện ảnh"]);
+    expect(screen.getByRole("radio", { name: "Rực rỡ" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(within(text).getByText("Lớn"));
-    expect(within(text).queryByText("Theo Branding kênh")).toBeNull();
+    expect(within(text).queryByText("Theo Branding")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Lưu cho video này" }));
     // the words become the video's own; the picture keeps following the plan
     await waitFor(() => expect(ws.setVideoLook).toHaveBeenCalledWith("v1", { text_look: { ...CHANNEL, size: "l" }, look: null, color_match: null }));
-    expect(await screen.findByText("Đã lưu vào timeline. Bản xem trước kế tiếp dùng chữ và màu mới.")).toBeInTheDocument();
+    expect(await screen.findByText("Đã lưu vào timeline. Bản xem trước tiếp theo sẽ có chữ và màu mới.")).toBeInTheDocument();
     expect(await within(text).findByText("Riêng video này")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Bỏ lựa chọn riêng" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dùng lại mặc định của kênh" }));
     await waitFor(() => expect(ws.setVideoLook).toHaveBeenLastCalledWith("v1", NONE));
   });
 
@@ -70,9 +75,9 @@ describe("Style tab", { timeout: 20_000 }, () => {
     const h = mount();
     expect(await screen.findByText(/chọn riêng cho từng video/)).toBeInTheDocument();
     expect(ws.getVideoLook).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole("button", { name: /Mở Phong cách dựng/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Xem phong cách dựng/ }));
     expect(h.onOpenFile).toHaveBeenCalledWith("channel/style.md");
-    fireEvent.click(screen.getByRole("button", { name: /Video mẫu/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Video tham khảo/ }));
     expect(h.onReferences).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /học phong cách/ }));
     expect(h.onPrompt).toHaveBeenCalledWith(expect.stringContaining("channel/style.md"));

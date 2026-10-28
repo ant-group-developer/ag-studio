@@ -436,6 +436,25 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     expect(within(aside).queryByRole("list", { name: "Tệp của dự án" })).toBeNull();
   });
 
+  it("makes a new document from its name alone, for the video or the whole channel", async () => {
+    ws.writeFile.mockResolvedValue({ path: "videos/v2/Đường đi.md", sha256: "c".repeat(64), size: 1, versionId: "v" });
+    ws.getThread.mockResolvedValue({ ...thread([]), id: "t-v2", videoId: "v2", kind: "video", title: "Huế mưa" });
+    mount("/p/p1/v/v2?tab=files");
+    fireEvent.click(await screen.findByRole("button", { name: /Tài liệu mới/ }, { timeout: 5000 }));
+    const dialog = await screen.findByRole("dialog", { name: "Tài liệu mới" });
+    expect(within(dialog).getByRole("radio", { name: "Video #2 Huế mưa" })).toBeChecked();
+    fireEvent.change(within(dialog).getByLabelText("Tên tài liệu"), { target: { value: "Đường đi" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tạo" }));
+    await waitFor(() => expect(ws.writeFile).toHaveBeenCalledWith("p1", { path: "videos/v2/Đường đi.md", content: "# Đường đi\n\n", baseSha256: null }));
+    fireEvent.click(await screen.findByRole("button", { name: "Quay lại danh sách tệp" }));
+    fireEvent.click(screen.getByRole("button", { name: /Tài liệu mới/ }));
+    const again = await screen.findByRole("dialog", { name: "Tài liệu mới" });
+    fireEvent.click(within(again).getByRole("radio", { name: "Cả kênh" }));
+    fireEvent.change(within(again).getByLabelText("Tên tài liệu"), { target: { value: "Ghi chú khán giả" } });
+    fireEvent.click(within(again).getByRole("button", { name: "Tạo" }));
+    await waitFor(() => expect(ws.writeFile).toHaveBeenLastCalledWith("p1", { path: "context/Ghi chú khán giả.md", content: "# Ghi chú khán giả\n\n", baseSha256: null }));
+  });
+
   it("an admin keeps the folder tree beside an open file: the file is marked, another opens from it, the tree hides", async () => {
     studio.getMe.mockResolvedValue({ userId: "admin", isAdmin: true });
     localStorage.removeItem("studio.files.tree");

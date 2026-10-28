@@ -161,7 +161,7 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
         </Tooltip>
       </div>
       {treeList}
-      <NewFileModal open={creating !== null} initial={creating ?? ""} busy={create.isPending} onCreate={(path) => create.mutate(path)} onClose={() => setCreating(null)} />
+      <NewFileModal open={creating !== null} initial={creating ?? ""} busy={create.isPending} onCreate={(path) => create.mutate({ path })} onClose={() => setCreating(null)} />
     </div>
   );
 }

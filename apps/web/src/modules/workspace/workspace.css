@@ -115,7 +115,19 @@
 .ws-nav__row > .ws-nav__item, .ws-nav__row > .ws-nav__project-name { flex: 1; min-width: 0; }
 .ws-nav__more { flex-shrink: 0; min-height: 28px; padding: 0 6px; opacity: 0; }
 .ws-nav__row:hover > .ws-nav__more, .ws-nav__more:focus-visible, .ws-nav__more[aria-expanded="true"] { opacity: 1; }
-@media (hover: none) { .ws-nav__more { opacity: 1; } }
+/* a chat's or a video's ⋯ takes no column: it lies over the row's end, which makes room (the badge moves left) when it shows */
+.ws-nav__row:has(> .ws-nav__item) { position: relative; }
+.ws-nav__row > .ws-nav__item ~ .ws-nav__more { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); pointer-events: none; }
+.ws-nav__row:hover > .ws-nav__item ~ .ws-nav__more, .ws-nav__row > .ws-nav__item ~ .ws-nav__more:focus-visible,
+.ws-nav__row > .ws-nav__item ~ .ws-nav__more[aria-expanded="true"] { pointer-events: auto; }
+.ws-nav__row:has(> .ws-nav__more):hover > .ws-nav__item,
+.ws-nav__row:has(> .ws-nav__more:focus-visible) > .ws-nav__item,
+.ws-nav__row:has(> .ws-nav__more[aria-expanded="true"]) > .ws-nav__item { padding-right: 36px; }
+@media (hover: none) {
+  .ws-nav__more { opacity: 1; }
+  .ws-nav__row > .ws-nav__item ~ .ws-nav__more { pointer-events: auto; }
+  .ws-nav__row:has(> .ws-nav__more) > .ws-nav__item { padding-right: 36px; }
+}
 .ws-nav__item--editing { flex: 1; min-width: 0; }
 .ws-rename { flex: 1; min-width: 0; font-weight: 500; }
 .ws-nav__foot { flex-shrink: 0; padding: 8px; border-top: 1px solid var(--ws-line); display: flex; flex-direction: column; gap: 2px; }
@@ -228,7 +240,13 @@
 .ws-tree__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-tree__hint { flex-shrink: 0; font-size: 11px; color: var(--ws-faint); }
 /* The Documents tab: groups of named documents (the tree stays an admin's view) */
-.ws-docs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ws-docs { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ws-docs__drop {
+  position: absolute; inset: 6px; z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  border: 2px dashed var(--ws-accent); border-radius: 10px; background: color-mix(in srgb, var(--ws-accent-soft) 92%, transparent);
+  color: var(--ws-accent); font-size: 13px; font-weight: 500; pointer-events: none;
+}
+.ws-docs__where { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
 .ws-docs__bar { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--ws-line); }
 .ws-docs__bar .ws-spacer { flex: 1; }
 .ws-docs--tree > .ws-files { min-height: 0; }
