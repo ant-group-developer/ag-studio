@@ -51,6 +51,8 @@ const ws = {
     { path: "videos/v2/timeline.json", kind: "file", size: 10, mtime: "", access: "read" },
   ] }),
   listResearch: vi.fn().mockResolvedValue({ files: [] }),
+  uploadFile: vi.fn(),
+  uploadFootage: vi.fn(),
   readFile: vi.fn(async (_p: string, path: string) => ({
     path, size: 10, sha256: "a".repeat(64), mtime: new Date().toISOString(), mime: "text/markdown", binary: false,
     text: path === "CLAUDE.md" ? "# Du lịch chậm\n\nKênh đi bộ." : "# Ghi chú\n\nmột dòng",
@@ -453,6 +455,25 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     fireEvent.change(within(again).getByLabelText("Tên tài liệu"), { target: { value: "Ghi chú khán giả" } });
     fireEvent.click(within(again).getByRole("button", { name: "Tạo" }));
     await waitFor(() => expect(ws.writeFile).toHaveBeenLastCalledWith("p1", { path: "context/Ghi chú khán giả.md", content: "# Ghi chú khán giả\n\n", baseSha256: null }));
+  });
+
+  it("asks what a video dropped on the documents is for: footage of this video by default, else a plain file", async () => {
+    ws.uploadFootage.mockResolvedValue({ source: {}, prepare: { state: "queued" } });
+    ws.uploadFile.mockResolvedValue({ path: "context/notes 2.md", sha256: "c".repeat(64), size: 1, versionId: "v" });
+    ws.getThread.mockResolvedValue({ ...thread([]), id: "t-v2", videoId: "v2", kind: "video", title: "Huế mưa" });
+    mount("/p/p1/v/v2?tab=files");
+    const input = await screen.findByLabelText("Tải tệp lên", { selector: "input" }, { timeout: 5000 });
+    const clip = new File(["x"], "mưa.mp4", { type: "video/mp4" });
+    const note = new File(["x"], "notes 2.md", { type: "text/markdown" });
+    fireEvent.change(input, { target: { files: [clip, note] } });
+    // the note goes as a file at once; the video waits for its answer
+    await waitFor(() => expect(ws.uploadFile).toHaveBeenCalledWith("p1", note, "context", expect.any(Function)));
+    const dialog = await screen.findByRole("dialog", { name: "Dùng 1 tệp này làm gì?" });
+    expect(within(dialog).getByRole("radio", { name: /Footage cho video/ })).toBeChecked();
+    expect(within(dialog).getByRole("combobox", { name: "Chọn video" }).closest(".ant-select")).toHaveTextContent("#2 Huế mưa");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tải lên" }));
+    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", clip, "v2", expect.any(Function)));
+    expect(ws.uploadFile).toHaveBeenCalledTimes(1);
   });
 
   it("an admin keeps the folder tree beside an open file: the file is marked, another opens from it, the tree hides", async () => {

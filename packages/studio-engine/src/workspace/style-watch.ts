@@ -57,7 +57,7 @@ const REASON_MAX = 200;
 const YOUTUBE_ID = /^[\w-]{11}$/;
 
 /** What to offer when YouTube will not give a reference video. */
-export const STYLE_INSTEAD = "Cách khác: tải video mẫu lên tab Nguồn (mục Video mẫu) rồi nhờ agent học phong cách từ file đó, hoặc tả phong cách dựng bằng lời.";
+export const STYLE_INSTEAD = "Cách khác: tải video mẫu lên tab Nguồn (mục Video tham khảo) rồi nhờ agent học phong cách từ file đó, hoặc tả phong cách dựng bằng lời.";
 
 /** Said to the thread when YouTube blocks the server and nothing could be watched. */
 export const YOUTUBE_BLOCKED_MESSAGE = `${YT_FAILURE_REASON.youtube_blocked}, nên chưa tải được video mẫu nào. `

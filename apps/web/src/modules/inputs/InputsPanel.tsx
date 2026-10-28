@@ -11,12 +11,10 @@ import { JobList, JobsLine } from "./JobList";
 import { AudioCard, UseAudioButtons, VideoMusicCard } from "./AudioControls";
 import { useUploadProgress } from "../common/upload-progress";
 import { AgGoProjectList, countAssets, FootageAssets, SummaryBar, type StateFilter } from "./FootageAssets";
+import { FOOTAGE_ACCEPT, MediaUploadModal, REFERENCE_ACCEPT, useMediaUpload } from "./media-upload";
 import "./inputs.css";
 
 const UPLOAD_ACCEPT = ".md,.txt,.pdf,.csv,.json,.srt,.vtt,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.m4a,.aac,.ogg,.flac";
-const REFERENCE_ACCEPT = ".mp4,.mov,.m4v,.mkv,.webm,.avi";
-/** Footage from the computer: the API's `FOOTAGE_VIDEO_EXTS` and `FOOTAGE_IMAGE_EXTS`. */
-const FOOTAGE_ACCEPT = ".mp4,.mov,.m4v,.mkv,.webm,.avi,.mts,.m2ts,.jpg,.jpeg,.png,.webp";
 const KIND_ICON = { document: FileText, image: ImageIcon, audio: Music, video: Film, mixed: FolderKanban } as const;
 /** The sub-section last shown (footage or files), remembered in this browser. */
 const SECTION_KEY = "studio.inputs.section";
@@ -112,6 +110,12 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
     onError: fail(t("ws.inputs.uploadFailed")),
   });
   const uploadingFootage = useUploadProgress();
+  // footage from the computer on the project page: into the video picked (or a new one), or straight into a group's video
+  const media = useMediaUpload(projectId);
+  const channelFootageInput = useRef<HTMLInputElement>(null);
+  const groupFootageInput = useRef<HTMLInputElement>(null);
+  const uploadInto = useRef<string | null>(null);
+  const [picked, setPicked] = useState<File[] | null>(null);
   const uploadFootage = useMutation({
     mutationFn: (files: File[]) => {
       const progress = uploadingFootage.start(files);
@@ -186,7 +190,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                   : <p className="ws-hint">{t("ws.inputs.noProjectYet")}</p>}
               </section>
 
-              {videoId || videoAssets.length ? (
+              {videoId || videoAssets.length || canEdit ? (
                 <section aria-label={videoId ? t("ws.inputs.videoFootage") : t("ws.inputs.preparedFootage")}>
                   <div className="ws-inputs__head">
                     <h4 className="ws-inputs__h">{videoId ? t("ws.inputs.videoFootage") : t("ws.inputs.preparedFootage")}</h4>
@@ -200,11 +204,26 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                           onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) uploadFootage.mutate(files); }} />
                       </span>
                     ) : null}
+                    {!videoId && canEdit ? (
+                      <span className="ws-inputs__actions">
+                        <Button size="small" icon={<Upload size={14} />} loading={media.upload.isPending} title={t("ws.inputs.uploadFootageHint")} onClick={() => channelFootageInput.current?.click()}>
+                          {media.percent !== null ? t("common.uploading", { pct: media.percent }) : t("ws.inputs.uploadFootage")}
+                        </Button>
+                        <input ref={channelFootageInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadFootage")}
+                          onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) setPicked(files); }} />
+                        <input ref={groupFootageInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadToVideo")}
+                          onChange={(e) => {
+                            const files = [...(e.target.files ?? [])]; e.target.value = "";
+                            if (files.length && uploadInto.current) media.upload.mutate({ files, use: "footage", target: { videoId: uploadInto.current } });
+                          }} />
+                      </span>
+                    ) : null}
                   </div>
                   {videoAssets.length ? (
                     <FootageAssets assets={videoAssets} videos={videos.data?.videos ?? []} grouped={!videoId} filter={filter} onFilter={setFilter} canEdit={canEdit}
                       onOpenFile={onOpenFile} onPrepare={(assetId, again) => prepare.mutate({ assetId, again })} onRemove={(x) => remove.mutate({ source: x })}
-                      onBulk={(ids) => bulk.mutate(ids)} bulkBusy={bulk.isPending} />
+                      onBulk={(ids) => bulk.mutate(ids)} bulkBusy={bulk.isPending}
+                      onUploadTo={videoId ? undefined : (id) => { uploadInto.current = id; groupFootageInput.current?.click(); }} />
                   ) : <p className="ws-hint">{agGoProjects.length || videoId ? t("ws.inputs.noVideoYet") : t("ws.inputs.addProjectFirst")}</p>}
                 </section>
               ) : null}
@@ -273,6 +292,9 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
         </>
       )}
 
+      <MediaUploadModal open={!!picked} files={picked ?? []} videos={videos.data?.videos ?? []} uses={["footage"]} busy={media.upload.isPending}
+        onCancel={() => setPicked(null)}
+        onConfirm={(use, target) => { const files = picked ?? []; setPicked(null); media.upload.mutate({ files, use, ...(target ? { target } : {}) }); }} />
       <AgGoProjectDrawer projectId={projectId} picked={all} open={projectPicker} onClose={() => setProjectPicker(false)} />
       {videoId ? <FootagePicker projectId={projectId} videoId={videoId} sources={all} open={footagePicker} onClose={() => setFootagePicker(false)} /> : null}
     </div>

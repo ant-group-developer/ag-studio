@@ -5,6 +5,7 @@ import { Braces, ChevronDown, ChevronRight, FilePlus, FileText, Film, Image as I
 import { useStudioClient } from "../../api/studio-client";
 import { useWorkspaceClient } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
+import { isFootageFile, MediaUploadModal, useMediaUpload } from "../inputs/media-upload";
 import { ResearchPanel } from "../research/ResearchPanel";
 import { relativeTime } from "../workspace/time";
 import { docGroups, newDocPath, type DocGroup, type DocItem, type DocKind } from "./doc-groups";
@@ -91,11 +92,18 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
   const uploadInput = useRef<HTMLInputElement>(null);
   const { create, upload, uploading } = useFileActions(projectId, (path) => { setCreating(false); onOpen(path); });
   const [dropping, setDropping] = useState(false);
+  // videos and photos are asked what they are for (footage, a reference video, a file); the rest are files
+  const media = useMediaUpload(projectId);
+  const [picked, setPicked] = useState<File[] | null>(null);
   const uploadFiles = (list: File[]) => {
     if (!list.length) return;
+    const visual = list.filter(isFootageFile);
+    const rest = list.filter((f) => !isFootageFile(f));
+    if (visual.length) setPicked(visual);
+    if (!rest.length) return;
     // what is uploaded lands in "Added files": show it there
     setFolded((f) => { const next = new Set(f); next.delete("context"); return next; });
-    upload.mutate({ files: list, folder: "context" });
+    upload.mutate({ files: rest, folder: "context" });
   };
   const drag = canEdit ? {
     onDragOver: (e: DragEvent) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDropping(true); } },
@@ -112,11 +120,24 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
       options={[{ value: "docs", label: t("ws.docs.viewDocs") }, { value: "tree", label: t("ws.docs.viewTree") }]} />
   ) : null;
 
+  // asked over whatever the tab shows (a file that came with the videos may have opened meanwhile)
+  const mediaModal = (
+    <MediaUploadModal open={!!picked} files={picked ?? []} videos={videos} currentVideoId={currentVideoId} busy={media.upload.isPending}
+      onCancel={() => setPicked(null)}
+      onConfirm={(use, target) => {
+        const list = picked ?? [];
+        setPicked(null);
+        if (use === "file") setFolded((f) => { const next = new Set(f); next.delete("context"); return next; });
+        media.upload.mutate({ files: list, use, ...(target ? { target } : {}) });
+      }} />
+  );
+
   if (tree) {
     return (
       <div className="ws-docs ws-docs--tree">
         <div className="ws-docs__bar">{viewSwitch}</div>
         <FilesPanel projectId={projectId} canEdit={canEdit} openPath={openPath} onOpen={onOpen} onAttach={onAttach} />
+        {mediaModal}
       </div>
     );
   }
@@ -130,6 +151,7 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
       <div className="ws-files">
         <FileView projectId={projectId} path={openPath} title={title} access={entry?.access ?? "write"} canEdit={canEdit}
           onBack={() => onOpen(null)} onDeleted={() => onOpen(null)} onAttach={onAttach} />
+        {mediaModal}
       </div>
     );
   }
@@ -143,8 +165,8 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
         {canEdit ? (
           <>
             <Tooltip title={t("ws.docs.addHint")}>
-              <Button size="small" icon={<Upload size={14} />} loading={upload.isPending} onClick={() => uploadInput.current?.click()}>
-                {uploading.percent !== null ? t("common.uploading", { pct: uploading.percent }) : t("ws.docs.add")}
+              <Button size="small" icon={<Upload size={14} />} loading={upload.isPending || media.upload.isPending} onClick={() => uploadInput.current?.click()}>
+                {(uploading.percent ?? media.percent) !== null ? t("common.uploading", { pct: uploading.percent ?? media.percent }) : t("ws.docs.add")}
               </Button>
             </Tooltip>
             <input ref={uploadInput} type="file" multiple hidden aria-label={t("ws.docs.add")}
@@ -197,6 +219,7 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
           })}
         </div>
       )}
+      {mediaModal}
       <NewDocModal open={creating} video={currentVideo} taken={new Set((files.data?.entries ?? []).map((e) => e.path))} busy={create.isPending}
         onCreate={(path, title) => create.mutate({ path, content: `# ${title}
 

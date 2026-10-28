@@ -367,7 +367,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     ws.uploadSource.mockResolvedValue({ source: src({}), file: {} });
     mount();
     await toFiles();
-    const refs = await screen.findByRole("region", { name: "Video mẫu (học phong cách dựng)" });
+    const refs = await screen.findByRole("region", { name: "Video tham khảo (học phong cách dựng)" });
     expect(await within(refs).findByText("Kênh mẫu.mp4")).toBeInTheDocument();
     expect(within(refs).queryByText("Ghi chú.md")).toBeNull();
     expect(screen.getByRole("region", { name: "Tài liệu, ảnh, audio" })).not.toHaveTextContent("Kênh mẫu.mp4");
@@ -421,7 +421,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     });
     mount();
     expect(await screen.findByLabelText("Tình trạng video AG Go")).toHaveTextContent("4 video · 1 sẵn sàng · 1 đang chuẩn bị · 1 lỗi · 1 chưa chuẩn bị");
-    const region = screen.getByRole("region", { name: "Video AG Go của dự án" });
+    const region = screen.getByRole("region", { name: "Footage của các video" });
     const heads = await within(region).findAllByRole("button", { expanded: false });
     expect(heads.map((h) => h.textContent)).toEqual(["1. Hoa Lư2 videoLỗi", "2. Tràng An3 videoĐang chuẩn bị"]);
     expect(within(region).queryByText("Hoa Lư 02.mp4")).toBeNull();
@@ -443,6 +443,31 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     const retry = await screen.findAllByRole("button", { name: "Thử lại" });
     fireEvent.click(retry[retry.length - 1]!);
     await waitFor(() => expect(ws.prepareInputs).toHaveBeenCalledWith("p1", ["a2"]));
+  });
+
+  it("on the project page uploads footage from the computer into the video picked, or straight into a video's group", async () => {
+    ws.uploadFootage.mockResolvedValue({ source: src({}), prepare: { state: "queued", job_id: "j9", phase: null, progress: null } });
+    ws.listVideos.mockResolvedValue({ videos: [
+      { id: "v2", projectId: "p1", idx: 2, title: "Tràng An", status: "draft", createdBy: "u", createdAt: "", updatedAt: "", archivedAt: null },
+      { id: "v1", projectId: "p1", idx: 1, title: "Hoa Lư", status: "draft", createdBy: "u", createdAt: "", updatedAt: "", archivedAt: null },
+    ] });
+    ws.listSources.mockResolvedValue({ sources: [src({ kind: "ag_go_asset", ref: "a1", label: "Hoa Lư 01.mp4", videoId: "v1", mediaType: "video", asset: { state: "not_prepared" } })] });
+    mount();
+    const region = await screen.findByRole("region", { name: "Footage của các video" });
+    const file = new File(["x"], "Bái Đính.mp4", { type: "video/mp4" });
+    fireEvent.change(within(region).getByLabelText("Tải từ máy", { selector: "input" }), { target: { files: [file] } });
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Bái Đính.mp4");
+    // the newest video is picked first
+    fireEvent.mouseDown(within(dialog).getByRole("combobox", { name: "Chọn video" }));
+    fireEvent.click(await screen.findByTitle("#1 Hoa Lư"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tải lên" }));
+    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", file, "v1", expect.any(Function)));
+    // an open video's group takes footage straight in (the only group shows open)
+    fireEvent.click(within(region).getByRole("button", { name: "Tải từ máy vào video này" }));
+    fireEvent.change(within(region).getByLabelText("Tải từ máy vào video này", { selector: "input" }), { target: { files: [file] } });
+    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledTimes(2));
+    expect(ws.uploadFootage).toHaveBeenLastCalledWith("p1", file, "v1", expect.any(Function));
   });
 
   it("shows 30 videos at a time and no bulk buttons to a viewer", async () => {

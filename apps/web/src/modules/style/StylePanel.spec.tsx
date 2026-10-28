@@ -77,7 +77,7 @@ describe("Style tab", { timeout: 20_000 }, () => {
     expect(ws.getVideoLook).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("button", { name: /Xem phong cách dựng/ }));
     expect(h.onOpenFile).toHaveBeenCalledWith("channel/style.md");
-    fireEvent.click(screen.getByRole("button", { name: /Video tham khảo/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Xem video tham khảo/ }));
     expect(h.onReferences).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /học phong cách/ }));
     expect(h.onPrompt).toHaveBeenCalledWith(expect.stringContaining("channel/style.md"));

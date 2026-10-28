@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { App as AntApp, Button, ColorPicker, Segmented, Select, Spin, Switch } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Film, Sparkles } from "lucide-react";
+import { FileText, Film, Sparkles, Upload } from "lucide-react";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type LookSource, type OwnLook, type TextLook, type VideoLook, type VideoLookView } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
 import { useThumbnailUrl } from "../inputs/ag-go-projects/ProjectGridView";
+import { REFERENCE_ACCEPT, useMediaUpload } from "../inputs/media-upload";
 import "./style.css";
 
 /** Studio's own look for the words when neither the video, its plan nor the branding says (white, black outline, m). */
@@ -105,6 +106,8 @@ export function StylePanel({ projectId, video, canEdit, onOpenFile, onPrompt, on
   const client = useWorkspaceClient();
   const files = useQuery({ queryKey: ["files", projectId], queryFn: () => client.listFiles(projectId) });
   const has = (path: string) => !!files.data?.entries.some((e) => e.path === path);
+  const media = useMediaUpload(projectId);
+  const referenceInput = useRef<HTMLInputElement>(null);
   return (
     <div className="ws-style">
       {video ? <VideoLookForm projectId={projectId} videoId={video.id} title={video.title} canEdit={canEdit} /> : (
@@ -119,6 +122,15 @@ export function StylePanel({ projectId, video, canEdit, onOpenFile, onPrompt, on
         <p className="ws-hint">{t(has(STYLE_FILE) ? "ws.style.editHas" : "ws.style.editNone")}</p>
         <div className="ws-style__actions">
           {has(STYLE_FILE) ? <Button size="small" icon={<FileText size={14} />} onClick={() => onOpenFile(STYLE_FILE)}>{t("ws.style.openStyle")}</Button> : null}
+          {canEdit ? (
+            <>
+              <Button size="small" icon={<Upload size={14} />} loading={media.upload.isPending} onClick={() => referenceInput.current?.click()}>
+                {media.percent !== null ? t("common.uploading", { pct: media.percent }) : t("ws.style.addReferences")}
+              </Button>
+              <input ref={referenceInput} type="file" multiple hidden accept={REFERENCE_ACCEPT} aria-label={t("ws.style.addReferences")}
+                onChange={(e) => { const list = [...(e.target.files ?? [])]; e.target.value = ""; if (list.length) media.upload.mutate({ files: list, use: "reference" }); }} />
+            </>
+          ) : null}
           <Button size="small" icon={<Film size={14} />} onClick={onReferences}>{t("ws.style.references")}</Button>
           {canEdit ? <Button size="small" icon={<Sparkles size={14} />} onClick={() => onPrompt(t("ws.style.learnPrompt"))}>{t("ws.style.learn")}</Button> : null}
         </div>

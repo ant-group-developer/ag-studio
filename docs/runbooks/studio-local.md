@@ -203,7 +203,7 @@ Worker dùng yt-dlp cho hai việc (ADR-0001 mục 175–176, 186):
   video mẫu do **máy farm** tải (YouTube thường chặn IP máy chủ, không chặn máy văn phòng): Studio kéo file từ bucket về
   thư mục nháp của job, đo, rồi xoá cả object trên bucket lẫn file nháp (ADR-0001 mục 193). Job hiện "Đang tải video mẫu
   i/n trên máy <tên>"; không có máy nào thì worker tự tải bằng yt-dlp như trên. Video mẫu người dùng
-  tải lên tab Nguồn (mục Video mẫu, `context/references/`, ≤ 300 MB) thì agent học bằng `style_from_files`: không thẻ,
+  tải lên tab Nguồn (mục Video tham khảo, `context/references/`, ≤ 300 MB) thì agent học bằng `style_from_files`: không thẻ,
   không mạng, chỉ cần ffmpeg, không xoá file của họ.
 
 Cài trên máy dev Windows (một lần), rồi khai trong `apps/api/.env` (worker chạy trực tiếp đọc file này):

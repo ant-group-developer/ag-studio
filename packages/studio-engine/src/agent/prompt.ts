@@ -189,7 +189,7 @@ export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: Youtub
     o.farm && fetchers.length
       ? `YouTube đang chặn tải từ máy chủ Studio (${seen}) và cả các máy farm (thấy lúc ${viTime(o.farm.blockedAt)}, coi như còn chặn tới ${viTime(o.farm.until)}).`
       : `YouTube đang chặn tải từ máy chủ Studio (${seen}); không máy farm nào tải video mẫu thay được lúc này.`,
-    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Nguồn (mục Video mẫu) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
+    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Nguồn (mục Video tham khảo) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
   ];
 }
 

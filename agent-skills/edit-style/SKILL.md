@@ -9,7 +9,7 @@ Chọn cảnh, kế hoạch dựng và timeline đọc file này, nên mỗi quy
 chung). Căn cứ: `channel/strategy.md`, `CLAUDE.md`, và **một** trong ba nguồn dưới đây.
 
 ## Lấy số đo từ đâu
-1. **Video mẫu người dùng tải lên** (tab Nguồn, mục Video mẫu → `context/references/`; xem bằng `inputs_list`): gọi
+1. **Video mẫu người dùng tải lên** (tab Nguồn, mục Video tham khảo → `context/references/`; xem bằng `inputs_list`): gọi
    `style_from_files {paths, purpose}` — chạy nền, không cần thẻ xác nhận, không đổi hay xoá file của họ.
 2. **Video YouTube**: `propose_action` kind `reference_download {video_ids (≤5), purpose}`; người dùng bấm xác nhận thì
    Studio tải ≤480p, đo rồi xoá. Nếu `<studio_context>` báo **YouTube đang chặn tải từ máy chủ Studio**, đừng đề xuất
