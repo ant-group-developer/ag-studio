@@ -1,0 +1,14 @@
+/* The Style tab: the video's words and picture, the channel's edit style */
+.ws-style { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 12px 14px 20px; }
+.ws-style__section { display: flex; flex-direction: column; gap: 8px; }
+.ws-style__head { display: flex; align-items: center; gap: 8px; }
+.ws-style__h { margin: 0; font-size: 13px; font-weight: 600; color: var(--ws-text); }
+.ws-style__frame {
+  display: flex; align-items: center; justify-content: center; min-height: 96px; padding: 16px; border-radius: 8px;
+  background: #4b525c; text-align: center; overflow: hidden; overflow-wrap: anywhere;
+}
+.ws-style__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; font-size: 13px; color: var(--ws-muted); }
+.ws-style__pair { display: inline-flex; align-items: center; gap: 8px; }
+.ws-style__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ws-style__from { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; background: var(--ws-chip); color: var(--ws-faint); }
+.ws-style__from--video { background: var(--ws-accent-soft); color: var(--ws-accent); }

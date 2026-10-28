@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Drawer, Result, Spin, Tooltip } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { Clapperboard, Film, FolderOpen, Settings } from "lucide-react";
+import { Clapperboard, Film, FolderOpen, Palette, Settings } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { StudioHttpError } from "../api/http";
 import { useWorkspaceClient, type Learning } from "../api/workspace-client";
@@ -12,6 +12,7 @@ import { useProjectEvents, useThread } from "../modules/agent-chat/use-thread";
 import { useAiTranslation } from "../modules/common/assistant-name";
 import { DocsPanel } from "../modules/files/DocsPanel";
 import { InputsPanel } from "../modules/inputs/InputsPanel";
+import { StylePanel } from "../modules/style/StylePanel";
 import { VideoPanel } from "../modules/video/VideoPanel";
 import { StepRail } from "../modules/playbook/StepRail";
 import { useStepText } from "../modules/playbook/step-text";
@@ -23,10 +24,10 @@ import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel"
 import { useTeamRole } from "../modules/workspace/use-team-role";
 import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 
-/** The right column (plan 2026-10-28 P2): the video's preview, the documents, the sources; settings sit behind ⚙. */
-type AsideTab = "preview" | "files" | "inputs";
+/** The right column (plan 2026-10-28 P2–P3): the video's preview, the documents, the sources, the style; settings sit behind ⚙. */
+type AsideTab = "preview" | "files" | "inputs" | "style";
 const TABS: { key: AsideTab; icon: typeof FolderOpen; video?: boolean }[] = [
-  { key: "preview", icon: Clapperboard, video: true }, { key: "files", icon: FolderOpen }, { key: "inputs", icon: Film },
+  { key: "preview", icon: Clapperboard, video: true }, { key: "files", icon: FolderOpen }, { key: "inputs", icon: Film }, { key: "style", icon: Palette },
 ];
 const ASIDE_TABS = new Set<string>(TABS.map((x) => x.key));
 
@@ -162,6 +163,10 @@ export function ProjectPage() {
             ) : tab === "files" ? (
               <DocsPanel projectId={project.id} videos={project.videos} currentVideoId={videoId} canEdit={atLeast("editor")} canRun={atLeast("editor")}
                 openPath={openFile} onOpen={(file) => setAside({ file })} onAttach={threadId && atLeast("editor") ? attach : undefined} />
+            ) : tab === "style" ? (
+              <StylePanel projectId={project.id} video={currentVideo ? { id: currentVideo.id, title: currentVideo.title } : undefined} canEdit={atLeast("editor")}
+                onOpenFile={(file) => setAside({ tab: "files", file })} onPrompt={setDraft}
+                onReferences={() => { try { localStorage.setItem("studio.inputs.section", "files"); } catch { /* this visit only */ } setAside({ tab: "inputs" }); }} />
             ) : (
               <InputsPanel projectId={project.id} {...(videoId ? { videoId } : {})} canEdit={atLeast("editor")} canProduce={atLeast("producer")} onOpenFile={(file) => setAside({ tab: "files", file })} />
             )}

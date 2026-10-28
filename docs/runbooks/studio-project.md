@@ -34,6 +34,9 @@ quay lại bước nào cũng được; mọi kết quả là file sửa đượ
   (tuỳ chọn; học từ video mẫu cần bấm xác nhận thẻ tải video — YouTube chặn máy chủ Studio thì máy farm có yt-dlp tải
   thay, đo xong xoá ngay; hoặc tải video mẫu lên tab Nguồn), branding (`channel/branding.md`: kiểu chữ trên video, tâm
   trạng nhạc, kiểu thumbnail). Lỗi file (ví dụ chữ khó đọc) hiện ở bước và ở tab Tài liệu.
+- Tab **Phong cách**: ở luồng Kênh mở phong cách dựng, video mẫu, nhờ agent học phong cách. Ở một video: chọn font,
+  cỡ, màu chữ, viền, hộp, bóng, màu hình, khớp màu cho riêng video đó (thắng kế hoạch dựng và branding); **Lưu cho video
+  này** áp ngay vào timeline mới nhất (bản xem trước kế tiếp thấy), **Bỏ lựa chọn riêng** để theo kế hoạch/branding lại.
 
 ## 4. Một video
 

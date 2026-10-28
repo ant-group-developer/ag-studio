@@ -105,6 +105,8 @@ survey).
   `look` vẫn áp như thường: khớp màu chạy sau `look`.
 - `text_look` (tuỳ chọn): kiểu chữ riêng của video thay cho `text_look` của branding (cùng các khoá: màu, `size`,
   `shadow`, `font`).
+- Người dùng đã chọn chữ, màu hình hay khớp màu ở tab Phong cách của video (`<studio_context>` báo) thì lựa chọn đó thắng
+  ba khoá trên: đừng ghi khoá đó vào kế hoạch.
 - `target_seconds` theo brief (10–3600).
 
 ## `edit-plan.md` — cho người đọc

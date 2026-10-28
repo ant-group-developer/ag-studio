@@ -9,7 +9,7 @@ import { normalizeRelPath } from "../workspace/files.js";
 import { previewLink } from "../workspace/renders.js";
 import { DEFAULT_SITE_NAME } from "../site-name.js";
 import type { YoutubeBlock } from "../settings.js";
-import type { ProjectRecord, VideoRecord } from "../workspace/project-db.js";
+import type { ProjectRecord, VideoOwnLook, VideoRecord } from "../workspace/project-db.js";
 import type { MessageRecord, ThreadRecord, ThreadRef } from "./threads-db.js";
 
 /** At most this much of CLAUDE.md (with what it imports) goes into the system prompt. */
@@ -76,8 +76,10 @@ Dựng xong vẫn chỉnh được bằng \`timeline_apply_ops\` (skill edit-pla
 dài tới 120 ký tự và tới 600 giây, cỡ riêng từng chữ, chữ cùng vị trí cùng lúc tự xếp chồng; âm lượng từng clip
 (\`setClipGain\`), tiếng gốc đều nhau (\`setSourceEven\`), đường âm lượng nhạc (\`setMusicEnvelope\`); màu hình (\`setLook\`),
 khớp màu các clip quay khác máy, khác giờ (\`setColorMatch\`).
-Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`, \`color_match\`). Đừng bảo người dùng tự sửa trong Premiere những
-việc này.
+Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`, \`color_match\`). Một video có thể có chữ/màu riêng do người
+dùng chọn ở tab Phong cách của video (\`<studio_context>\` báo): cái đó thắng kế hoạch dựng và branding, nên đừng ghi
+\`text_look\`/\`look\`/\`color_match\` vào edit-plan.json cho thứ người dùng đã chọn; muốn đổi thì nói họ đổi ở tab Phong cách.
+Đừng bảo người dùng tự sửa trong Premiere những việc này.
 Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Nguồn hoặc nằm
 trong \`context/audio/\`) và thư viện của Studio; gán bằng \`music_set\` (một file, nhiều file ghép, hoặc một bài thư viện; cho
 video hoặc cả dự án). Đừng nói "chưa có nhạc" khi \`project_files\` còn file. Nhạc vừa gán được phân tích nhịp trong nền
@@ -184,6 +186,16 @@ export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: Youtub
       : `YouTube đang chặn tải từ máy chủ Studio (${seen}); không máy farm nào tải video mẫu thay được lúc này.`,
     "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Nguồn (mục Video mẫu) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
   ];
+}
+
+/** What a person picked in the video's Style tab, for `<studio_context>` (nothing when they picked nothing). */
+export function videoLookLines(own: VideoOwnLook): string[] {
+  const parts = [
+    ...(own.text_look ? [`chữ ${own.text_look.font ?? "Arial"}, cỡ ${own.text_look.size}, màu ${own.text_look.text_color}, viền ${own.text_look.outline_color}${own.text_look.box_color ? `, hộp ${own.text_look.box_color}` : ""}${own.text_look.shadow ? ", bóng" : ""}`] : []),
+    ...(own.look ? [`màu hình ${own.look}`] : []),
+    ...(own.color_match !== null ? [own.color_match ? "khớp màu các clip" : "không khớp màu"] : []),
+  ];
+  return parts.length ? [`Người dùng đã chọn cho video này (tab Phong cách, thắng kế hoạch dựng và branding): ${parts.join("; ")}.`] : [];
 }
 
 /** The turn's message: `<studio_context>`, then what the people (and Studio) said since the last turn. */

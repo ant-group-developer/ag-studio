@@ -19,7 +19,7 @@
 |---|---|---|
 | P1 nhanh | xong: đo trên máy 62 nút (trang Dự án, mọi tab trang dự án, ngăn ag-go) lệch ≤ 0,3 px; nút Bảng/Lưới chỉ còn icon, giữa ô | (commit này) |
 | P2 tab Tài liệu | xong: tab Tài liệu · Nguồn (+ Xem trước), ⚙ Cài đặt dự án (drawer, `?tab=settings` cũ vẫn mở), Chạy nghiên cứu trong nhóm Nghiên cứu; `CLAUDE.md` hiện là "Ghi chú cho agent"; admin có Tài liệu/Thư mục; render trùng tên kèm giờ. Xem trên máy (tài khoản admin); người thường qua test | (commit này) |
-| P3 tab Phong cách + chữ theo video | chưa làm | |
+| P3 tab Phong cách + chữ theo video | xong: migration `0005_video_look.sql`, `GET/PUT /videos/:id/look`, fit + thumbnail + `<studio_context>` dùng lựa chọn của video; không thêm op timeline (ghi thẳng `text_style`/`look`/`color_match` vào bản mới, nhãn `look`). Xem trên máy: chọn Montserrat cỡ Lớn → timeline bản 5 có font, rồi "Bỏ lựa chọn riêng" trả về Branding | (commit này) |
 | P4 tự chuyển sang chat video | chưa làm | |
 | P5 kiểm tra | chưa làm | |
 

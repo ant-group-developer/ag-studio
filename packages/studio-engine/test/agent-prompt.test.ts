@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { agentSystemPrompt, agentTurnPrompt, expandImports, youtubeBlockLines, type MessageRecord, type ProjectRecord, type ThreadRecord } from "../src/index.js";
+import { agentSystemPrompt, agentTurnPrompt, expandImports, videoLookLines, youtubeBlockLines, type MessageRecord, type ProjectRecord, type ThreadRecord } from "../src/index.js";
 
 function workspace() {
   const dir = mkdtempSync(join(tmpdir(), "prompt-"));
@@ -84,5 +84,14 @@ describe("YouTube blocking the server, in the turn's context", () => {
     expect(lines).toContain("15:00");
     expect(lines).toContain("21:00");
     expect(lines).toContain("Đừng đề xuất reference_download");
+  });
+
+  it("says what a person picked for the video's words and picture, and nothing when they picked nothing", () => {
+    expect(videoLookLines({ text_look: null, look: null, color_match: null })).toEqual([]);
+    const [line] = videoLookLines({ text_look: { text_color: "#FFD400", outline_color: "#1A1A1A", box_color: null, size: "l", shadow: true, font: "Montserrat" }, look: "warm", color_match: false });
+    expect(line).toContain("chữ Montserrat, cỡ l, màu #FFD400, viền #1A1A1A, bóng");
+    expect(line).toContain("màu hình warm");
+    expect(line).toContain("không khớp màu");
+    expect(line).toContain("tab Phong cách");
   });
 });

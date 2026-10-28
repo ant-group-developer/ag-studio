@@ -488,6 +488,22 @@ export interface ProjectAudioView {
 }
 export type VoiceOrigin = "synthetic" | "own" | "licensed";
 /** A video's music: its own (overriding the project's), which music it takes, and the project's audio files to pick from. */
+/** How the words on screen look (`TextLookSchema`): colours #RRGGBB, a box behind titles or none, size, shadow, font. */
+export interface TextLook {
+  text_color: string; outline_color: string; box_color: string | null; size: "s" | "m" | "l"; shadow?: boolean; font?: string;
+}
+export type VideoLook = "none" | "natural" | "vivid" | "warm" | "cinematic";
+export type LookSource = "video" | "plan" | "channel" | "default";
+/** A video's words and picture: picked for it (null = not picked), the edit plan's, the channel's, and what the timeline draws. */
+export interface OwnLook { text_look: TextLook | null; look: VideoLook | null; color_match: boolean | null }
+export interface VideoLookView {
+  own: OwnLook; plan: OwnLook; channel: OwnLook;
+  effective: { text_look: TextLook | null; look: VideoLook; color_match: boolean; from: { text_look: LookSource; look: LookSource; color_match: LookSource } };
+  choices: { fonts: { name: string; scripts: ("vietnamese" | "japanese" | "korean")[] }[]; sizes: ("s" | "m" | "l")[]; looks: VideoLook[] };
+  /** The timeline revision that took the pick (null: no timeline yet, or nothing changed). */
+  revision: number | null;
+}
+
 export interface VideoAudioView {
   /** Its own music; null when it takes the project's (`uses: "project"`) or Studio's pick by mood (`"mood"`). */
   music: Record<string, unknown> | null;
@@ -743,6 +759,13 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     /** One file, or several joined in order, as the project's music. */
     musicFromFiles(projectId: string, input: MusicFilesInput): Promise<ProjectAudioView> {
       return call("POST", `/api/projects/${enc(projectId)}/audio/music/from-files`, input);
+    },
+    getVideoLook(videoId: string): Promise<VideoLookView> {
+      return call("GET", `/api/videos/${enc(videoId)}/look`);
+    },
+    /** What the video picks for its words and picture (each null: the plan's or the channel's); its latest timeline takes it. */
+    setVideoLook(videoId: string, own: OwnLook): Promise<VideoLookView> {
+      return call("PUT", `/api/videos/${enc(videoId)}/look`, own);
     },
     getVideoAudio(videoId: string): Promise<VideoAudioView> {
       return call("GET", `/api/videos/${enc(videoId)}/audio`);
