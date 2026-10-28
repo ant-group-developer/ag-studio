@@ -131,6 +131,11 @@ describe("messages and turns", () => {
     const note = await postSystemMessage(db, { threadId: thread.id, text: "Render xem trước xong", trigger: "job", continueAgent: true }, at(700));
     expect(note.turn).toMatchObject({ trigger: "job", status: "pending" });
     expect(await automaticTurnsInARow(db, thread.id)).toBe(1);
+    // a turn out of time that goes on counts against its own budget, not the jobs'
+    await markAgentTurnRunning(db, note.turn!.id, at(701));
+    await finishTurn(db, note.turn!.id, { status: "done", text: "", parts: [], error: "timeout" }, at(701));
+    await postSystemMessage(db, { threadId: thread.id, text: "Lượt trước hết giờ", trigger: "timeout", continueAgent: true }, at(702));
+    expect([await automaticTurnsInARow(db, thread.id), await automaticTurnsInARow(db, thread.id, "timeout")]).toEqual([1, 1]);
     expect((await postSystemMessage(db, { threadId: thread.id, text: "chỉ báo", trigger: "system" }, at(701))).turn).toBeNull();
   });
 

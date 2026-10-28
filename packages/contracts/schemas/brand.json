@@ -315,7 +315,14 @@
               "enum": [
                 "cut",
                 "dissolve",
-                "dip_black"
+                "dip_black",
+                "dip_white",
+                "wipe_left",
+                "wipe_right",
+                "slide_left",
+                "slide_right",
+                "zoom_in",
+                "smooth_left"
               ],
               "default": "cut"
             },

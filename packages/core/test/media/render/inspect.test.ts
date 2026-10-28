@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RenderInspectionSchema, type Composition } from "@harness/contracts";
-import { inspectArgs, inspectionIssues, inspectRender, parseDetections, parseMomentary, segmentLoudness } from "../../../src/media/render/inspect.js";
+import { inspectArgs, inspectionIssues, inspectRender, parseDetections, parseLevels, parseMomentary, repeatedOnsets, segmentLoudness } from "../../../src/media/render/inspect.js";
 import { hasFfmpeg } from "../../../../../tests/media.js";
 
 const seg = (order: number, start: number, end: number, lufs: number | null = -20) => ({ order, start, end, lufs });
@@ -29,6 +29,64 @@ describe("inspectArgs", () => {
     const silent = inspectArgs({ ffmpeg: "ffmpeg", input: "x.mp4", hasAudio: false });
     expect(silent.join(" ")).not.toContain("silencedetect");
     expect(silent).not.toContain("[aout]");
+    expect(graph).not.toContain("onset-lo.txt");
+  });
+
+  it("with narration, also writes two bands' levels every 10 ms", () => {
+    const args = inspectArgs({ ffmpeg: "ffmpeg", input: "e.mp4", hasAudio: true, onsets: true });
+    const graph = args[args.indexOf("-filter_complex") + 1]!;
+    expect(graph).toContain("[0:a]asplit=2[a1][a2]");
+    expect(graph).toContain("[a1]silencedetect");
+    expect(graph).toContain("aresample=4000,asetnsamples=n=40:p=0,astats=metadata=1:reset=1");
+    expect(graph).toContain("file=onset-lo.txt,anullsink");
+    expect(graph).toContain("aresample=16000,asetnsamples=n=160:p=0");
+    expect(graph).toContain("file=onset-hi.txt,anullsink");
+  });
+});
+
+describe("parseLevels / repeatedOnsets", () => {
+  it("reads astats levels, silence as the floor", () => {
+    const text = ["frame:0 pts:0 pts_time:0", "lavfi.astats.1.RMS_level=-inf", "frame:1 pts:40 pts_time:0.01", "lavfi.astats.1.RMS_level=-23.5"].join("\n");
+    expect(parseLevels(text)).toEqual([{ t: 0, db: -90 }, { t: 0.01, db: -23.5 }]);
+  });
+
+  /** Levels every 10 ms: a quiet bed, and at each line a burst-gap-words opening (`leak`) or words of its own. */
+  function levels(starts: number[], open: (k: number, line: number) => [number, number] | null, seconds: number) {
+    const lo: { t: number; db: number }[] = [];
+    const hi: { t: number; db: number }[] = [];
+    for (let k = 0; k < seconds * 100; k++) {
+      const t = k / 100;
+      const line = starts.findIndex((s) => t >= s && t < s + 2.5);
+      const v = line >= 0 ? open(Math.round((t - starts[line]!) * 100), line) : null;
+      lo.push({ t, db: v ? v[0] : -40 });
+      hi.push({ t, db: v ? v[1] : -45 });
+    }
+    return { lo, hi };
+  }
+  const words = (k: number, line: number): [number, number] => [-15 - 8 * Math.abs(Math.sin((k + 7 * line) * (0.3 + 0.07 * line))), -25 - 10 * Math.abs(Math.cos((k + 3 * line) * (0.2 + 0.05 * line)))];
+  const leak = (k: number, line: number): [number, number] | null => {
+    if (k < 12) return null;
+    if (k < 35) return [-14, -40];
+    if (k < 37) return [-12, -12];
+    if (k < 52) return [-35, -18];
+    if (k < 82) return null;
+    return words(k, line);
+  };
+  const starts = Array.from({ length: 10 }, (_, i) => 1 + i * 3);
+
+  it("finds the same opening before every line", () => {
+    const { lo, hi } = levels(starts, leak, 32);
+    const r = repeatedOnsets(lo, hi, starts);
+    expect(r).toEqual({ alike: 10, lines: 10, start: 1 });
+    expect(inspectionIssues(facts(), [], r)).toEqual([{ code: "repeated_onset", severity: "warning", start: 1, lines: 10, of_lines: 10 }]);
+  });
+
+  it("says nothing of lines that open with their own words", () => {
+    const { lo, hi } = levels(starts, (k, line) => (k < 3 ? null : words(k, line)), 32);
+    const r = repeatedOnsets(lo, hi, starts);
+    expect(r.lines).toBe(10);
+    expect(r.alike).toBeLessThan(3);
+    expect(inspectionIssues(facts(), [], r)).toEqual([]);
   });
 });
 

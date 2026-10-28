@@ -125,7 +125,14 @@
                     "enum": [
                       "cut",
                       "dissolve",
-                      "dip_black"
+                      "dip_black",
+                      "dip_white",
+                      "wipe_left",
+                      "wipe_right",
+                      "slide_left",
+                      "slide_right",
+                      "zoom_in",
+                      "smooth_left"
                     ]
                   },
                   "seconds": {
@@ -504,7 +511,45 @@
                 "Noto Sans JP",
                 "Noto Sans KR",
                 "Noto Serif",
-                "Playfair Display"
+                "Playfair Display",
+                "Montserrat",
+                "Oswald",
+                "Bebas Neue",
+                "Anton",
+                "Inter",
+                "Roboto",
+                "Poppins",
+                "Lato",
+                "Raleway",
+                "Josefin Sans",
+                "Quicksand",
+                "Cormorant Garamond",
+                "DM Serif Display",
+                "Libre Baskerville",
+                "Cinzel",
+                "Great Vibes",
+                "Pacifico",
+                "Caveat",
+                "Noto Serif JP",
+                "M PLUS Rounded 1c",
+                "Zen Maru Gothic",
+                "Zen Kaku Gothic New",
+                "Shippori Mincho",
+                "Dela Gothic One",
+                "Kiwi Maru",
+                "Klee One",
+                "RocknRoll One",
+                "BIZ UDPGothic",
+                "Noto Serif KR",
+                "Nanum Gothic",
+                "Nanum Myeongjo",
+                "Nanum Pen Script",
+                "Black Han Sans",
+                "Do Hyeon",
+                "Jua",
+                "Gowun Dodum",
+                "Gowun Batang",
+                "IBM Plex Sans KR"
               ]
             }
           },
@@ -525,6 +570,9 @@
             "warm",
             "cinematic"
           ]
+        },
+        "color_match": {
+          "type": "boolean"
         }
       },
       "required": [

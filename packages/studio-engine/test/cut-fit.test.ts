@@ -47,6 +47,24 @@ function fit(voice: Record<string, { key: string; duration_s: number; words: { w
   });
 }
 
+describe("fitCutTimeline — what each shot is", () => {
+  it("item 9 (2026-10-27): the survey's shot sizes reach the fill, which then avoids a shot of the size beside it", () => {
+    // one shot of B (its only one: nothing after it in B), its line longer than all of B: the rest comes from A by rule 4
+    const one: EditPlan = { ...plan, target_seconds: 20, shots: [{ ...plan.shots[1]!, order: 1, line_id: "L001", section_title: null }], lines: [plan.lines[0]!], texts: [] };
+    const only = (sizes: Record<string, "close" | "wide">): StudioSurvey => ({
+      ...survey, shots: survey.shots.map((r) => ({ ...r, ...(sizes[r.shot_id] ? { size: sizes[r.shot_id] } : {}) })),
+    });
+    const filled = (s: StudioSurvey) => fitCutTimeline({
+      productionId: "prod-1", plan: one, shots, survey: s, transcript: null, voice: { L001: { key: KEY(1), duration_s: 18, words: [] } },
+      sources: [{ asset_id: "a", source_id: A }, { asset_id: "b", source_id: B }], assets,
+      canvas: { width: 3840, height: 2160 }, fps: 30, music: null,
+    }).timeline.clips.map((c) => c.shot_id);
+    // all alike: the first shot of A; B close, so the close shot of A is held back and the wide one goes after it
+    expect(filled(only({}))[1]).toBe("s000-000");
+    expect(filled(only({ "s001-000": "close", "s000-000": "close", "s000-001": "wide" }))[1]).toBe("s000-001");
+  });
+});
+
 describe("fitCutTimeline", () => {
   it("turns the fitted plan into a clean timeline v4 with the narration on its shots", () => {
     const { timeline, report } = fit({

@@ -110,6 +110,14 @@
 .ws-nav__item[aria-current="page"] .ws-nav__title { color: var(--ws-accent); }
 .ws-nav__num { flex-shrink: 0; min-width: 22px; font-size: 12px; color: var(--ws-faint); text-align: right; }
 .ws-nav__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+/* a chat or a video with its ⋯ (shown on hover or focus), and the project's name with its pencil */
+.ws-nav__row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.ws-nav__row > .ws-nav__item, .ws-nav__row > .ws-nav__project-name { flex: 1; min-width: 0; }
+.ws-nav__more { flex-shrink: 0; min-height: 28px; padding: 0 6px; opacity: 0; }
+.ws-nav__row:hover > .ws-nav__more, .ws-nav__more:focus-visible, .ws-nav__more[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .ws-nav__more { opacity: 1; } }
+.ws-nav__item--editing { flex: 1; min-width: 0; }
+.ws-rename { flex: 1; min-width: 0; font-weight: 500; }
 .ws-nav__foot { flex-shrink: 0; padding: 8px; border-top: 1px solid var(--ws-line); display: flex; flex-direction: column; gap: 2px; }
 
 /* the chat and the side panel share what the project nav leaves, half and half, until someone drags the edge (an inline

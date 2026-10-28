@@ -128,8 +128,11 @@ nhưng không code nào đọc.
 - Slot Claude (`claude-slots.ts`): mỗi lượt giữ dòng `lease` `agent:<id>` (chờ: `agent-wait:<id>`, cũng tính vào cap), nên mọi
   worker dùng chung một cap: `studio_settings.claude.max_concurrent` (admin sửa ở màn Hàng đợi) thắng
   `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Hết hạn mức gói: `rate_limited`, chờ 5→60 phút rồi chạy lại.
-- Lượt hết giờ (`STUDIO_AGENT_TURN_MINUTES`, mặc định 20): file đã ghi vẫn giữ; dự án bật `auto_continue` và chưa quá
-  `AUTO_TURNS_IN_A_ROW` (3) lượt tự chạy từ tin của người thì lượt đánh `done` + `error: timeout`, Studio đăng ghi chú
+- Lượt hết giờ: dừng khi CLI im lặng (không ra dòng stdout nào) quá `STUDIO_AGENT_IDLE_MINUTES` (mặc định 10; 0 = tắt), hoặc
+  chạm trần cứng `STUDIO_AGENT_TURN_MINUTES` (mặc định 60; token MCP sống theo trần này) dù agent vẫn đang làm. File đã ghi
+  vẫn giữ; dự án bật `auto_continue` và chưa quá `TIMEOUT_TURNS_IN_A_ROW` (3) lượt `trigger: timeout` từ tin của người (ngân
+  sách riêng: lượt do job/autofix kích hoạt đếm vào `AUTO_TURNS_IN_A_ROW`, không ăn vào đây) thì lượt đánh `done` +
+  `error: timeout`, Studio đăng ghi chú nói rõ giới hạn nào
   (`trigger: timeout`, migration `0003`) và xếp lượt mới tiếp tục cùng session; tin người nhắn lúc đó được trả lời trước.
   Không thì lượt `failed` như cũ.
 - **Tên AI trên web** (`studio_settings.assistant.name`): admin đặt ở màn Hàng đợi, mặc định `Claude`; chỉ là tên hiển thị.

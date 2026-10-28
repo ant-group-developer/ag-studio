@@ -26,8 +26,9 @@ Một lượt có giới hạn thời gian; video nhiều nguồn rất dễ h�
 {
   "schema_version": "harness.survey-index/v2",
   "shots": [
-    { "source_id": "src_…", "shot_id": "s000-000", "in": 0, "out": 4.2, "score": 4, "tags": ["thuyền", "sông"],
-      "usable": true, "note": "Thuyền trôi chậm, ánh sáng đẹp", "speech": "none" }
+    { "source_id": "src_…", "shot_id": "s000-000", "in": 0, "out": 4.2, "score": 4, "tags": ["thuyền", "sông", "establishing"],
+      "usable": true, "note": "Thuyền trôi chậm, ánh sáng đẹp", "speech": "none",
+      "size": "wide", "motion": "pan_right", "direction": "left_to_right" }
   ]
 }
 ```
@@ -35,10 +36,23 @@ Một lượt có giới hạn thời gian; video nhiều nguồn rất dễ h�
 - `score` 0–5 (5 = cảnh đẹp nhất, đúng ý brief); `usable: false` cho cảnh rung, mờ, lộ người lạ, logo, chữ, quá ngắn.
 - `speech`: `talking` (có người nói rõ), `ambient` (tiếng nền có ích), `none`.
 - `note` ngắn, nói vì sao. `tags` vài từ tiếng Việt về nội dung.
+- Mỗi cảnh dùng được ghi thêm shot đó là gì, để kế hoạch dựng cắt cho đúng (xem "Ngữ pháp dựng" của skill edit-plan);
+  Studio đọc ba khoá này khi kiểm kế hoạch dựng và khi dựng (bước lấp chỗ trống tránh cắt giữa hai shot cùng cỡ):
+  - `size`: `wide` (toàn: thấy cả nơi chốn), `medium` (trung: người từ gối/hông lên, một nhóm việc), `close` (cận: mặt,
+    tay, một vật), `detail` (chi tiết rất gần: hoa văn, giọt nước). Chấm theo khung giữa; cảnh đổi cỡ giữa chừng thì
+    ghi cỡ của phần dài nhất.
+  - `motion` (máy quay): `static`, `pan_left`/`pan_right` (lia), `tilt_up`/`tilt_down`, `push_in`/`pull_out` (tiến
+    vào, lùi ra hay zoom), `tracking` (máy đi theo), `handheld` (cầm tay, rung nhẹ). Khung giữa không cho thấy chuyển
+    động thì so với khung của cảnh trước, cảnh sau trên tờ ghép; còn phân vân thì bỏ trống.
+  - `direction` (hướng của vật chuyển động trong khung, nếu có): `left_to_right`, `right_to_left`, `toward` (tiến về
+    máy), `away`. Không có gì chuyển động rõ thì bỏ trống.
+- Ghi thêm vào `tags`: `establishing` cho shot mở cảnh tốt (rộng, rõ nơi chốn, đứng yên hoặc lia chậm), `cutaway` cho
+  chi tiết ngắn chèn được ở bất cứ đâu (tay, biển hiệu, đồ ăn, mặt nước).
 
 ## `scenes.md` — cho người đọc
 Frontmatter `status: draft` (đổi `done` khi người dùng đồng ý). Thân: các cảnh tốt nhất theo phần của brief (mở đầu,
-thân, kết), cảnh nên tránh và vì sao, ghi chú về tiếng gốc.
+thân, kết), mỗi phần có shot nào để mở (toàn/establishing) và có đủ trung, cận, cutaway chưa; cảnh nên tránh và vì sao,
+ghi chú về tiếng gốc.
 
 Sau khi ghi: gọi `validate_file` cho `videos/<id>/survey.json`, sửa đến khi hết lỗi; cảnh báo "chưa chấm" nghĩa là còn
 thiếu dòng. Rồi gợi ý bước kế hoạch dựng.

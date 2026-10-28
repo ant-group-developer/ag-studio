@@ -54,8 +54,9 @@ describe("the worker pool", () => {
     expect(Object.keys(projectJobHandlers({ ...base(), youtubeApiKey: "k" }))).toEqual(["research"]);
     // inputs come prepared from ag-go: no ffmpeg needed
     expect(Object.keys(projectJobHandlers({ ...base(), preps }))).toEqual(["prepare_asset"]);
+    // uploaded reference videos need only ffmpeg; uploaded footage ffmpeg and the farm
     expect(Object.keys(projectJobHandlers({ ...base(), media, thumbnails: fakeThumbnails() })).sort())
-      .toEqual(["export_premiere", "fit", "music_beats", "render_final", "render_preview", "style_watch", "thumbnail"]); // uploaded reference videos need only ffmpeg
+      .toEqual(["export_premiere", "fit", "music_beats", "prepare_asset", "render_final", "render_preview", "style_watch", "thumbnail"]);
     const ytdlp = {} as YtDlp;
     expect(Object.keys(projectJobHandlers({ ...base(), media, preps, ytdlp })).sort())
       .toEqual(["export_premiere", "fit", "music_beats", "prepare_asset", "render_final", "render_preview", "research", "style_watch"]);

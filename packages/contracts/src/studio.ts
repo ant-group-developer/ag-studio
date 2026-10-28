@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { TEXT_LOOK_SIZES, TextLookSchema, VIDEO_LOOKS } from "./composition.js";
+import { TEXT_LOOK_SIZES, TextLookSchema, TRANSITION_KINDS, VIDEO_LOOKS } from "./composition.js";
 import { surveyIndexSchemaV2 } from "./library.js";
 
 /**
@@ -734,7 +734,7 @@ export type TimelineText = TimelineV3["texts"][number];
  * A v3 document reads as v4 through `upgradeTimelineV3` (`in: 0`, `out: null`, cuts, no narration, no captions);
  * an episode whose timeline was v3 keeps being stored as v3 (`downgradeTimelineV4`), never rewritten.
  */
-export const TIMELINE_TRANSITIONS = ["cut", "dissolve", "dip_black"] as const;
+export const TIMELINE_TRANSITIONS = TRANSITION_KINDS;
 export type TimelineTransitionKind = (typeof TIMELINE_TRANSITIONS)[number];
 export const CAPTION_MODES = ["none", "burn-in", "karaoke"] as const;
 export type CaptionMode = (typeof CAPTION_MODES)[number];
@@ -817,6 +817,11 @@ export const TimelineV4Schema = z.object({
   text_style: TextLookSchema.optional(),
   /** Feedback-vps §4.6: the colour of the picture (`VIDEO_LOOKS`). Absent = `none`, as filmed. */
   look: z.enum(VIDEO_LOOKS).optional(),
+  /**
+   * Feedback 2026-10-27 item 6: the clips' brightness, contrast and colour cast brought part of the way to one another (the
+   * render worker measures each clip). Absent = each clip as filmed.
+   */
+  color_match: z.boolean().optional(),
 }).strict();
 export type TimelineV4 = z.infer<typeof TimelineV4Schema>;
 export type TimelineClipV4 = TimelineV4["clips"][number];
@@ -873,6 +878,7 @@ export function downgradeTimelineV4(t: TimelineV4): TimelineV3 {
   if (t.captions.mode !== "none") lost.push("captions");
   if (t.text_style) lost.push("text_style");
   if (t.look !== undefined) lost.push("look");
+  if (t.color_match !== undefined) lost.push("color_match");
   if (lost.length > 0) throw new TimelineVersionError(`a v3 timeline cannot hold: ${lost.join(", ")}`);
   return {
     schema_version: "studio.timeline/v3",
@@ -1030,9 +1036,9 @@ export const EditPlanSchema = z.object({
     in: z.number().min(0),
     out: z.number().positive(),
     line_id: z.string().regex(/^L\d{3}$/).nullable(),
-    /** Into the next shot. Feedback-vps §4.4: also `dip_black`, the same as the timeline's. */
+    /** Into the next shot: one of the timeline's transitions (`TIMELINE_TRANSITIONS`; feedback-vps §4.4, round 2026-10-27). */
     transition: z.enum(TIMELINE_TRANSITIONS),
-    /** Seconds of the transition (default: dissolve 0.4, dip to black 0.6). */
+    /** Seconds of the transition (default: dips 0.6, the others 0.4). */
     transition_s: z.number().min(0.2).max(1).optional(),
     section_title: z.string().min(1).max(100).nullable(),
     note: z.string().max(300),
@@ -1087,6 +1093,8 @@ export const EditPlanSchema = z.object({
   text_look: TextLookSchema.optional(),
   /** Feedback-vps §4.6: the colour of the picture instead of the branding's `look`. */
   look: z.enum(VIDEO_LOOKS).optional(),
+  /** Feedback 2026-10-27 item 6: the clips' colour matched to one another (`color_match`), instead of the branding's. */
+  color_match: z.boolean().optional(),
 }).strict();
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 

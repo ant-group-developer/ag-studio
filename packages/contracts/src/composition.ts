@@ -10,8 +10,32 @@ export type OverlayKind = (typeof OVERLAY_KINDS)[number];
  * `packages/contracts/src/interfaces.ts` already exports a `TransitionKind` type for the control-plane
  * `transition()` call ("run" | "stage_run" | ...); both are wildcard-re-exported from `index.ts`, so reusing
  * the name would collide. Fixed as an obvious bug in the brief -- see task-1-report.md. */
-export const TRANSITION_KINDS = ["cut", "dissolve", "dip_black"] as const;
+export const TRANSITION_KINDS = [
+  "cut", "dissolve", "dip_black",
+  // render level 8 (2026-10-27)
+  "dip_white", "wipe_left", "wipe_right", "slide_left", "slide_right", "zoom_in", "smooth_left",
+] as const;
 export type CompositionTransitionKind = (typeof TRANSITION_KINDS)[number];
+
+/**
+ * The transitions ffmpeg's `xfade` draws, by its name for them: the outgoing clip plays on into a tail of its source
+ * (`tail_available`) while the next one comes in over it, as a dissolve always has.
+ */
+export const XFADE_TRANSITIONS: Partial<Record<CompositionTransitionKind, string>> = {
+  dissolve: "fade", wipe_left: "wipeleft", wipe_right: "wiperight", slide_left: "slideleft", slide_right: "slideright",
+  zoom_in: "zoomin", smooth_left: "smoothleft",
+};
+
+/** The transitions that dip through a flat colour: the outgoing clip fades out to it, the next fades in from it. */
+export const DIP_TRANSITIONS: Partial<Record<CompositionTransitionKind, "black" | "white">> = { dip_black: "black", dip_white: "white" };
+
+/** The transitions an older render worker (level < 8) draws. */
+export const LEVEL1_TRANSITIONS: readonly CompositionTransitionKind[] = ["cut", "dissolve", "dip_black"];
+
+/** A transition played over a tail of the outgoing clip (`XFADE_TRANSITIONS`). */
+export function isTailTransition(kind: CompositionTransitionKind): boolean {
+  return XFADE_TRANSITIONS[kind] !== undefined;
+}
 
 export const TEXT_POSITIONS = ["top_left", "top_center", "top_right", "center", "bottom_left", "bottom_center", "bottom_right"] as const;
 export type TextPosition = (typeof TEXT_POSITIONS)[number];
@@ -28,11 +52,81 @@ const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/);
 
 /**
  * The fonts a text look may name (feedback-vps §4.2): Arial, which every render machine has installed, and fonts under
- * the SIL Open Font License that the render worker ships in its release (`fonts/` of ag-render-worker). Noto Sans JP
- * and KR also draw Japanese and Korean words whatever the look's font is.
+ * the SIL Open Font License that the render worker ships in its release (`fonts/` of ag-render-worker). The first six
+ * since render level 4, the rest (fonts sheet 2026-10-27, batch 1) since level 8. Words in a script the look's font
+ * lacks are drawn in Noto Sans KR / JP or Be Vietnam Pro (`TEXT_FONT_INFO`).
  */
-export const TEXT_FONTS = ["Arial", "Be Vietnam Pro", "Noto Sans JP", "Noto Sans KR", "Noto Serif", "Playfair Display"] as const;
+export const TEXT_FONTS = [
+  "Arial", "Be Vietnam Pro", "Noto Sans JP", "Noto Sans KR", "Noto Serif", "Playfair Display",
+  // Latin
+  "Montserrat", "Oswald", "Bebas Neue", "Anton", "Inter", "Roboto", "Poppins", "Lato", "Raleway", "Josefin Sans", "Quicksand",
+  "Cormorant Garamond", "DM Serif Display", "Libre Baskerville", "Cinzel", "Great Vibes", "Pacifico", "Caveat",
+  // Japanese
+  "Noto Serif JP", "M PLUS Rounded 1c", "Zen Maru Gothic", "Zen Kaku Gothic New", "Shippori Mincho", "Dela Gothic One", "Kiwi Maru",
+  "Klee One", "RocknRoll One", "BIZ UDPGothic",
+  // Korean
+  "Noto Serif KR", "Nanum Gothic", "Nanum Myeongjo", "Nanum Pen Script", "Black Han Sans", "Do Hyeon", "Jua", "Gowun Dodum",
+  "Gowun Batang", "IBM Plex Sans KR",
+] as const;
 export type TextFont = (typeof TEXT_FONTS)[number];
+
+/** The scripts a text font draws (besides plain Latin, which all of them do). */
+export const TEXT_SCRIPTS = ["vietnamese", "japanese", "korean"] as const;
+export type TextScript = (typeof TEXT_SCRIPTS)[number];
+
+const V = "vietnamese";
+const J = "japanese";
+const K = "korean";
+/**
+ * Per font: the scripts it has glyphs for (read from the shipped files) and, when it differs from the name, the family
+ * name inside the file that libass matches (`face`).
+ */
+export const TEXT_FONT_INFO: Record<TextFont, { scripts: readonly TextScript[]; face?: string }> = {
+  "Arial": { scripts: [V] },
+  "Be Vietnam Pro": { scripts: [V] },
+  "Noto Sans JP": { scripts: [V, J] },
+  "Noto Sans KR": { scripts: [V, J, K] },
+  "Noto Serif": { scripts: [V] },
+  "Playfair Display": { scripts: [V] },
+  "Montserrat": { scripts: [V] },
+  "Oswald": { scripts: [V] },
+  "Bebas Neue": { scripts: [] },
+  "Anton": { scripts: [V] },
+  "Inter": { scripts: [V] },
+  "Roboto": { scripts: [V] },
+  "Poppins": { scripts: [] },
+  "Lato": { scripts: [V] },
+  "Raleway": { scripts: [V] },
+  "Josefin Sans": { scripts: [V] },
+  "Quicksand": { scripts: [V] },
+  "Cormorant Garamond": { scripts: [V] },
+  "DM Serif Display": { scripts: [] },
+  "Libre Baskerville": { scripts: [] },
+  "Cinzel": { scripts: [] },
+  "Great Vibes": { scripts: [V] },
+  "Pacifico": { scripts: [V] },
+  "Caveat": { scripts: [] },
+  "Noto Serif JP": { scripts: [V, J] },
+  "M PLUS Rounded 1c": { scripts: [V, J], face: "Rounded Mplus 1c" },
+  "Zen Maru Gothic": { scripts: [J] },
+  "Zen Kaku Gothic New": { scripts: [J] },
+  "Shippori Mincho": { scripts: [J] },
+  "Dela Gothic One": { scripts: [V, J] },
+  "Kiwi Maru": { scripts: [J] },
+  "Klee One": { scripts: [J] },
+  "RocknRoll One": { scripts: [J] },
+  "BIZ UDPGothic": { scripts: [J] },
+  "Noto Serif KR": { scripts: [V, J, K] },
+  "Nanum Gothic": { scripts: [K], face: "NanumGothic" },
+  "Nanum Myeongjo": { scripts: [K], face: "NanumMyeongjo" },
+  "Nanum Pen Script": { scripts: [K], face: "Nanum Pen" },
+  "Black Han Sans": { scripts: [K] },
+  "Do Hyeon": { scripts: [K] },
+  "Jua": { scripts: [K] },
+  "Gowun Dodum": { scripts: [V, K] },
+  "Gowun Batang": { scripts: [V, K] },
+  "IBM Plex Sans KR": { scripts: [K] },
+};
 
 /**
  * The colour of a video's picture (feedback-vps §4.6): a fixed grade applied to every clip when its mezzanine is made.
@@ -56,7 +150,7 @@ export const TextLookSchema = z.object({
   size: z.enum(TEXT_LOOK_SIZES),
   /** A soft shadow under texts and subtitles (feedback-vps §4.1). Absent = none. Needs render level 3. */
   shadow: z.boolean().optional(),
-  /** One of `TEXT_FONTS` (feedback-vps §4.2). Absent = Arial. Needs render level 4. */
+  /** One of `TEXT_FONTS` (feedback-vps §4.2). Absent = Arial. Needs render level 4 (the first six) or 8. */
   font: z.enum(TEXT_FONTS).optional(),
 }).strict();
 export type TextLook = z.infer<typeof TextLookSchema>;
@@ -283,6 +377,12 @@ export const CompositionSchema = z.object({
   source_even: z.boolean().optional(),
   /** Feedback-vps §4.6: the colour grade of every segment (`VIDEO_LOOKS`, never `none`). Absent = as filmed. Level 6. */
   look: z.enum(VIDEO_LOOKS).optional(),
+  /**
+   * Feedback 2026-10-27 item 6: the render worker measures each segment's picture (`signalstats` of its mezzanine, cached
+   * with it) and brings its luma spread, level and colour cast part of the way to the median of them, after `look`.
+   * Absent = as filmed. Needs render level 9.
+   */
+  color_even: z.boolean().optional(),
   warnings: z.array(z.string()),
 }).strict();
 
@@ -329,7 +429,7 @@ export const RenderReportSchema = z.object({
 const inspectSpanSchema = z.object({ start: z.number(), end: z.number() });
 
 /** What the inspection of a finished render can find (`inspectionIssues` in `@harness/core`). */
-export const RENDER_INSPECT_ISSUE_CODES = ["duration", "freeze", "black", "silence", "clip_loudness"] as const;
+export const RENDER_INSPECT_ISSUE_CODES = ["duration", "freeze", "black", "silence", "clip_loudness", "repeated_onset"] as const;
 export type RenderInspectIssueCode = (typeof RENDER_INSPECT_ISSUE_CODES)[number];
 
 export const RenderInspectIssueSchema = z.object({
@@ -348,6 +448,10 @@ export const RenderInspectIssueSchema = z.object({
   delta_db: z.number().optional(),
   /** `freeze`: the picture never moves again. */
   to_end: z.boolean().optional(),
+  /** `repeated_onset`: narration lines that open with the same sound (a voice sample leaking into the TTS), of the
+   * lines measured; `start` is the first such line's. */
+  lines: z.number().int().optional(),
+  of_lines: z.number().int().optional(),
 });
 export type RenderInspectIssue = z.infer<typeof RenderInspectIssueSchema>;
 
@@ -368,6 +472,8 @@ export const RenderInspectionSchema = z.object({
   /** Momentary loudness gated at -70 LUFS over each segment's window; null: silent or no audio. */
   segments: z.array(z.object({ order: z.number().int(), start: z.number(), end: z.number(), lufs: z.number().nullable() })),
   loudness_median_lufs: z.number().nullable(),
+  /** With narration: how many lines open with a sound alike to many other lines', of the lines measured. */
+  narration_onsets: z.object({ alike: z.number().int(), lines: z.number().int(), start: z.number().nullable() }).optional(),
   /** `sheet-NN.jpg`: `frames` tiles from `from_s`, one every `every_s` seconds, `columns` x `rows`, row by row. */
   sheets: z.array(z.object({
     file: z.string(),

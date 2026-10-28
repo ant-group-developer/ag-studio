@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CompositionSchema, downgradeTimelineV4, TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
 import { applyTimelineOps, setCaptions, setClipMuted, setTransition, TimelineOpError, trimClip } from "../../src/studio/layout.js";
-import { studioFontFamilies, studioOverlayAss, studioScriptFont } from "../../src/studio/overlay.js";
+import { studioFontFace, studioFontFamilies, studioOverlayAss, studioScriptFont } from "../../src/studio/overlay.js";
 import { timelineToComposition } from "../../src/studio/render-plan.js";
 
 const asset = (d: number) => ({ title: "Video", summary_vi: "Clip", duration_s: d, orientation: "landscape" as const });
@@ -207,6 +207,32 @@ describe("timelineToComposition on v4", () => {
     expect(studioScriptFont("Hà Nội")).toBeNull();
   });
 
+  it("a font that has the words' script keeps them; one that lacks it hands them to Noto Sans KR / JP or Be Vietnam Pro", () => {
+    expect(studioScriptFont("경복궁", "Nanum Gothic")).toBeNull();
+    expect(studioScriptFont("清水寺", "Zen Maru Gothic")).toBeNull();
+    expect(studioScriptFont("清水寺", "Noto Serif KR")).toBeNull();
+    expect(studioScriptFont("清水寺", "Nanum Gothic")).toBe("Noto Sans JP");
+    expect(studioScriptFont("경복궁", "Zen Maru Gothic")).toBe("Noto Sans KR");
+    expect(studioScriptFont("Hà Nội", "Bebas Neue")).toBe("Be Vietnam Pro");
+    expect(studioScriptFont("Hà Nội", "Montserrat")).toBeNull();
+    expect(studioScriptFont("Kyoto", "Bebas Neue")).toBeNull();
+    expect(studioFontFace("Nanum Pen Script")).toBe("Nanum Pen");
+    expect(studioFontFace("Montserrat")).toBe("Montserrat");
+    const look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "m" as const, font: "Nanum Gothic" as const };
+    const t = applyTimelineOps({ ...cut(), text_style: look }, [
+      { op: "addText", kind: "title", text: "경복궁", start: 1, duration: 5, position: "top_left" },
+      { op: "addText", kind: "lower_third", text: "清水寺", start: 8, duration: 2, position: "bottom_left" },
+    ], {});
+    const c = CompositionSchema.parse(timelineToComposition(t));
+    const ass = studioOverlayAss(c, { scriptFonts: true })!;
+    // the style names the family inside the file; the worker copies the files by the font's name
+    expect(new Set(ass.split("\n").filter((l) => l.startsWith("Style:")).map((l) => l.split(",")[1]))).toEqual(new Set(["NanumGothic"]));
+    expect(ass.split("\n").find((l) => l.endsWith("경복궁"))).not.toContain("\\fn");
+    expect(ass.split("\n").find((l) => l.endsWith("清水寺"))).toContain("\\fnNoto Sans JP");
+    // the fixture's Vietnamese subtitles: Nanum Gothic has no Vietnamese letters
+    expect(studioFontFamilies(c)).toEqual(["Nanum Gothic", "Be Vietnam Pro", "Noto Sans JP"]);
+  });
+
   it("feedback-vps §4.3: a clip's gain, even source sound and the music's volume line reach the composition", () => {
     const t = applyTimelineOps({ ...cut(), music: { track: "library:music/a.mp3", gain_db: -18, ducking: true } }, [
       { op: "setClipGain", clip_id: "C002", gain_db: -6 },
@@ -242,6 +268,16 @@ describe("timelineToComposition on v4", () => {
     expect("look" in none).toBe(false);
     expect("look" in timelineToComposition(none)).toBe(false);
     expect(() => downgradeTimelineV4({ ...warm, edit_style: "whole" })).toThrow(/look/);
+  });
+
+  it("item 6 (2026-10-27): matching the clips' colour reaches the composition; off is each as filmed", () => {
+    const matched = applyTimelineOps(cut(), [{ op: "setColorMatch", match: true }], {});
+    expect(matched.color_match).toBe(true);
+    expect(timelineToComposition(matched).color_even).toBe(true);
+    const off = applyTimelineOps(matched, [{ op: "setColorMatch", match: false }], {});
+    expect("color_match" in off).toBe(false);
+    expect("color_even" in timelineToComposition(off)).toBe(false);
+    expect(() => downgradeTimelineV4({ ...matched, edit_style: "whole" })).toThrow(/color_match/);
   });
 
   it("the footage's own speech (narration original) plays at its own level, not lowered as background", () => {

@@ -12,6 +12,7 @@
 //   @fake read <path>                Read tool
 //   @fake mcp <tool> <json args>     calls the MCP server of --mcp-config for real (initialize, tools/call)
 //   @fake slow <ms>                  waits
+//   @fake busy <ms> <every>          works <ms> long, printing a stream event every <every> ms (a CLI that is not stuck)
 //   @fake hang                       writes its pid to $FAKE_AGENT_LOG_DIR/hang.pid and waits until killed
 //   @fake fail                       exits 1 without a result
 //   @fake lesson <text>              (structured mode, --output-format json) a lesson the thread summary proposes
@@ -203,6 +204,10 @@ for (const line of lines) {
     const args = json.length ? JSON.parse(json.join(" ")) : {};
     await tool(`mcp__${mcp.name ?? "studio"}__${name}`, args, () => mcpCall(name, args));
   } else if (cmd === "slow") await sleep(Number(rest[0] ?? 100));
+  else if (cmd === "busy") {
+    const [ms, every] = [Number(rest[0] ?? 1000), Number(rest[1] ?? 200)];
+    for (let t = 0; t < ms; t += every) { out({ type: "stream_event", event: { type: "ping" }, session_id: sessionId }); await sleep(every); }
+  }
   else if (cmd === "hang") { writeFileSync(join(logDir, "hang.pid"), String(process.pid)); await sleep(10 * 60_000); }
   else if (cmd === "fail") { process.stderr.write("fake failure\n"); process.exit(1); }
 }

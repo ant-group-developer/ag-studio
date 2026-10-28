@@ -1,8 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Button, Input, Popconfirm, Select, Tag, Tooltip } from "antd";
-import { ChevronRight, Film, FolderKanban, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronRight, Film, FolderKanban, Image as ImageIcon, RotateCcw, Trash2 } from "lucide-react";
 import { useAiTranslation } from "../common/assistant-name";
-import type { AssetState, SourceItem, Video } from "../../api/workspace-client";
+import { isFootage, type AssetState, type SourceItem, type Video } from "../../api/workspace-client";
 import { withoutIds } from "../common/no-ids";
 import { clock } from "../workspace/time";
 
@@ -25,10 +25,10 @@ export function stateKey(a: AssetState | null): Exclude<StateFilter, "all"> {
 
 export interface Counts { videos: number; ready: number; preparing: number; failed: number; notPrepared: number }
 
-/** Distinct ag-go videos by where they stand (the API's `counts`, or the same from rows). */
+/** Distinct footage (ag-go videos, uploads) by where they stand (the API's `counts`, or the same from rows). */
 export function countAssets(items: readonly SourceItem[]): Counts {
   const seen = new Map<string, AssetState | null>();
-  for (const s of items) if (s.kind === "ag_go_asset" && !seen.has(s.ref)) seen.set(s.ref, s.asset);
+  for (const s of items) if (isFootage(s) && !seen.has(s.ref)) seen.set(s.ref, s.asset);
   const c: Counts = { videos: seen.size, ready: 0, preparing: 0, failed: 0, notPrepared: 0 };
   for (const a of seen.values()) {
     const k = stateKey(a);
@@ -65,13 +65,17 @@ export function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
   const { t } = useAiTranslation();
   const a = s.asset;
   const name = withoutIds(s.label, t("ws.inputs.unnamedVideo"));
-  const duration = typeof s.meta.durationMs === "number" ? clock((s.meta.durationMs as number) / 1000) : null;
+  const duration = typeof s.meta.durationMs === "number" ? clock((s.meta.durationMs as number) / 1000)
+    : a?.state === "ready" && a.duration_s ? clock(a.duration_s) : null;
+  const uploaded = s.kind === "upload_asset";
+  const Icon = s.mediaType === "image" ? ImageIcon : Film;
   return (
     <li className="ws-inputs__row">
-      <Film size={14} aria-hidden />
+      <Icon size={14} aria-hidden />
       <div className="ws-inputs__text">
         <span className="ws-inputs__name" title={name}>{name}</span>
         <span className="ws-hint">
+          {uploaded ? <>{s.mediaType === "image" ? t("ws.inputs.uploadedPhoto") : t("ws.inputs.uploadedVideo")}{duration || a?.state === "ready" ? " · " : ""}</> : null}
           {duration}
           {a?.state === "ready" ? <> · {t("ws.inputs.shots", { count: a.shots ?? 0 })}{a.transcript ? ` · ${t("ws.inputs.withTranscript")}` : ""}</> : null}
           {a?.state === "failed" ? <span className="ws-error"> · {a.error}</span> : null}

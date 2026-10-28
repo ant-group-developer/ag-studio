@@ -41,7 +41,8 @@
  *   STUDIO_AGENT_CLAUDE_CONFIG_DIR  CLAUDE_CONFIG_DIR of agent sessions (default <STUDIO_DATA_ROOT>/agent-claude)
  *   STUDIO_AGENT_MODEL          model alias or name (default sonnet; a project's setting wins)
  *   STUDIO_AGENT_MAX_TURNS      tool rounds a turn may take (default 40)
- *   STUDIO_AGENT_TURN_MINUTES   a turn's deadline (default 20)
+ *   STUDIO_AGENT_IDLE_MINUTES   a turn stops after this long with no output from the CLI (default 10; 0: off)
+ *   STUDIO_AGENT_TURN_MINUTES   a turn's hard cap, however busy (default 60)
  *   STUDIO_AGENT_ARGV           JSON array replacing `claude` (tests: the fake agent CLI)
  *   STUDIO_MCP_ARGV             JSON array starting the Studio MCP server (default node packages/studio-mcp/server.mjs)
  */
@@ -114,7 +115,8 @@ async function main(): Promise<void> {
     configDir: resolve(process.env.STUDIO_AGENT_CLAUDE_CONFIG_DIR ?? join(dataRoot, "agent-claude")),
     model: process.env.STUDIO_AGENT_MODEL?.trim() || "sonnet",
     maxTurns: numberEnv("STUDIO_AGENT_MAX_TURNS", 40),
-    deadlineMs: numberEnv("STUDIO_AGENT_TURN_MINUTES", 20) * 60_000,
+    deadlineMs: numberEnv("STUDIO_AGENT_TURN_MINUTES", 60) * 60_000,
+    idleMs: numberEnv("STUDIO_AGENT_IDLE_MINUTES", 10) * 60_000,
     mcpTools: () => mcpToolNames(agentTools()),
     skills: { builtinDir: join(harnessRoot, "agent-skills"), pluginsRoot: join(dataRoot, "agent-plugins") },
   } : undefined;

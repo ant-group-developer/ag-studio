@@ -155,7 +155,7 @@ exports[`timelineToComposition on v3 > a timeline with music, texts and sections
   "duck": {
    "windows": [],
    "gain_db": -8,
-   "attack_ms": 200,
+   "attack_ms": 50,
    "release_ms": 500
   }
  },

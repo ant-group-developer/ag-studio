@@ -9,7 +9,8 @@ import { extname, join } from 'node:path';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  addSource, agGoProjectIds, assetCounts, assetStates, AUDIO_FILE_EXTS, getSource, jobView, listJobs, listSources, nameUnnamedAssets, queuePrepare, removeSource, requestJobCancel, requireJob,
+  addSource, addUploadedFootage, agGoProjectIds, assetCounts, FOOTAGE_IMAGE_EXTS, FOOTAGE_IMAGE_MAX_BYTES, FOOTAGE_VIDEO_EXTS, FOOTAGE_VIDEO_MAX_BYTES,
+  footageMedia, isFootageKind, newFootageKey, assetStates, AUDIO_FILE_EXTS, getSource, jobView, listJobs, listSources, nameUnnamedAssets, queuePrepare, removeSource, requestJobCancel, requireJob,
   PROJECT_AUDIO_DIR, REFERENCE_UPLOAD_DIR, REFERENCE_UPLOAD_MAX_BYTES, REFERENCE_VIDEO_EXTS, requireProject, requireVideo, sourceItems, StudioRunError, writeVideoIndex,
   writeWorkspaceFile, type ActorRole, type AssetCounts, type JobView, type SourceItem, type SourceMediaType, unnamedAssetIds,
 } from '@ag-studio/engine';
@@ -18,7 +19,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
 import { checkFileUpload, safeFileName, uploadMaxBytes, WORKSPACE_UPLOAD_MAX_BYTES } from './files.controller';
-import { dropRawUpload, RawUploadFields, signRawUpload, SignUploadFields, takeRawUpload, type UploadedTmp } from './raw-uploads';
+import { dropRawUpload, RawUploadFields, signRawUpload, SignUploadFields, takeRawUpload, UPLOAD_LINK_TTL_SECONDS, type UploadedTmp } from './raw-uploads';
 import { addability, ProjectFootageService, type AgGoAddability } from './project-footage.service';
 import { SiteNameService } from '../ag-go/site-name.service';
 import { FOOTAGE_RESOLUTIONS, FOOTAGE_SORT_FIELDS, FOOTAGE_USABILITIES } from '../ag-go/client';
@@ -44,7 +45,13 @@ const UploadFormSchema = z.object({
   reference: z.union([z.enum(['1', 'true']), z.literal(true)]).optional(),
   ...RawUploadFields,
 });
-const SignUploadSchema = z.object({ purpose: z.enum(['source', 'reference', 'file']), ...SignUploadFields }).strict();
+const SignUploadSchema = z.object({ purpose: z.enum(['source', 'reference', 'file', 'footage']), ...SignUploadFields }).strict();
+/** A video or photo from someone's computer, once the browser put it at the key `uploads` gave (`purpose: footage`). */
+const FootageSchema = z.object({
+  uploadKey: z.string().min(1).max(300), name: z.string().trim().min(1).max(255), videoId: z.string().min(1),
+  /** Prepare it right away (default). */
+  prepare: z.boolean().optional(),
+}).strict();
 
 /** A comma-separated list in a query string (or the same key repeated). */
 const csv = <T extends z.ZodTypeAny>(item: T) => z.union([z.string(), z.array(z.string())])
@@ -234,7 +241,33 @@ export class InputsController {
       if (!s || s.project_id !== projectId) throw new StudioRunError('not_found', `không có nguồn ${sourceId}`);
       if (s.kind === 'ag_go_project' && force !== '1') await this.refuseInUse(projectId, s.ref);
       await removeSource(this.engine.db, sourceId, req.authContext!.userId);
-      if (s.kind === 'ag_go_asset' && s.video_id) await writeVideoIndex(this.engine.db, await this.workspace.dir(projectId), projectId, s.video_id);
+      if (isFootageKind(s.kind) && s.video_id) await writeVideoIndex(this.engine.db, await this.workspace.dir(projectId), projectId, s.video_id);
+    });
+  }
+
+  /**
+   * A video or photo from someone's computer as footage of a video (feedback 2026-10-27 item 3): the browser put it at
+   * the key `uploads` gave for `purpose: footage`; it is prepared like an ag-go video (cut into shots on the farm, a
+   * photo made into a short clip) unless `prepare: false`.
+   */
+  @Post('sources/footage')
+  @Roles('editor')
+  @HttpCode(HttpStatus.CREATED)
+  addFootage(@Param('projectId') projectId: string, @Body() raw: unknown, @Req() req: Request): Promise<{ source: SourceItem; prepare?: unknown }> {
+    return mapErrors(async () => {
+      const body = parseBody(FootageSchema, raw);
+      const project = await requireProject(this.engine.db, projectId);
+      const v = await requireVideo(this.engine.db, body.videoId);
+      if (v.project_id !== projectId) throw new StudioRunError('invalid', 'video thuộc dự án khác', { code: 'other_project' });
+      const userId = req.authContext!.userId;
+      const s = await addUploadedFootage(this.engine.db, this.engine.bucket, { projectId, videoId: body.videoId, key: body.uploadKey, name: body.name, addedBy: userId });
+      await writeVideoIndex(this.engine.db, await this.workspace.dir(projectId), projectId, body.videoId);
+      const prepare = body.prepare !== false
+        ? (await queuePrepare(this.engine.db, {
+          projectId, assetIds: [s.ref], threadId: await this.videoThreadId(body.videoId), createdBy: userId, actorRole: await roleOf(this.engine, req, project.team_id),
+        }, new Date().toISOString()))[s.ref]
+        : undefined;
+      return { source: await this.item(projectId, s.id), ...(prepare ? { prepare } : {}) };
     });
   }
 
@@ -248,10 +281,31 @@ export class InputsController {
   @HttpCode(HttpStatus.CREATED)
   async signUpload(@Param('projectId') projectId: string, @Body() raw: unknown) {
     const body = parseBody(SignUploadSchema, raw);
+    if (body.purpose === 'footage') {
+      await mapErrors(() => requireProject(this.engine.db, projectId));
+      return this.signFootage(projectId, body.name, body.size, body.contentType);
+    }
     if (body.purpose === 'file') checkFileUpload(body.name, body.size);
     else this.checkSource(body.name, body.size, body.purpose === 'reference');
     await mapErrors(() => requireProject(this.engine.db, projectId));
     return signRawUpload(this.engine.bucket, projectId, body.contentType);
+  }
+
+  /** A link to put a video or photo straight where footage is kept (it is not a raw upload: nothing moves it after). */
+  private async signFootage(projectId: string, rawName: string, size: number, contentType: string | undefined) {
+    const name = safeFileName(rawName);
+    const media = footageMedia(name);
+    if (!media) {
+      throw new UnsupportedMediaTypeException({
+        code: 'file_type', message: `Footage là video (${FOOTAGE_VIDEO_EXTS.join(', ')}) hoặc ảnh (${FOOTAGE_IMAGE_EXTS.join(', ')})`,
+      });
+    }
+    const max = media === 'video' ? FOOTAGE_VIDEO_MAX_BYTES : FOOTAGE_IMAGE_MAX_BYTES;
+    if (size > max) throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${Math.round(max / 1024 / 1024)} MB` });
+    const { key } = newFootageKey(projectId, name);
+    const type = contentType || 'application/octet-stream';
+    const url = await this.engine.bucket.signedPutUrl(key, UPLOAD_LINK_TTL_SECONDS, { contentType: type });
+    return { key, url, contentType: type, expiresAt: new Date(Date.now() + UPLOAD_LINK_TTL_SECONDS * 1000).toISOString() };
   }
 
   /**
@@ -320,7 +374,7 @@ export class InputsController {
     if (isVideo && !reference) {
       throw new UnsupportedMediaTypeException({
         code: 'video_from_ag_go',
-        message: `Video lấy từ ${this.siteName.current()}: tải lên ${this.siteName.current()} rồi chọn ở đây. Video mẫu để học phong cách dựng thì tải ở mục Video mẫu`,
+        message: `Video làm footage: chọn từ ${this.siteName.current()} hoặc tải ở mục Footage của video (Tải từ máy). Video mẫu để học phong cách dựng thì tải ở mục Video mẫu`,
       });
     }
     const kind = reference ? { mediaType: 'video' as const, dir: REFERENCE_UPLOAD_DIR } : UPLOAD_KINDS.find((k) => k.exts.includes(ext));
@@ -384,7 +438,7 @@ export class InputsController {
     return mapErrors(async () => {
       const body = parseBody(PrepareSchema, raw);
       const project = await requireProject(this.engine.db, projectId);
-      const first = (await listSources(this.engine.db, projectId)).find((s) => s.kind === 'ag_go_asset' && body.assetIds.includes(s.ref) && s.video_id);
+      const first = (await listSources(this.engine.db, projectId)).find((s) => isFootageKind(s.kind) && body.assetIds.includes(s.ref) && s.video_id);
       return {
         assets: await queuePrepare(this.engine.db, {
           projectId, assetIds: body.assetIds, threadId: await this.videoThreadId(first?.video_id ?? undefined), createdBy: req.authContext!.userId,

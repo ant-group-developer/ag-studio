@@ -9,6 +9,31 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
 `videos/<id>/brief.md`, `scenes.md`, `survey.json`, `sources/index.json`, lời thoại `inputs/<asset>/transcript.md`,
 `channel/branding.md` (giọng văn, `music_mood`), `channel/style.md` nếu có. Dùng cảnh `usable: true`, điểm cao.
 
+## Ngữ pháp dựng — chọn shot theo luật, không theo điểm
+Điểm chỉ nói shot đẹp hay không; thứ tự và chỗ cắt theo các luật dưới đây. Cỡ shot, chuyển động máy và hướng chuyển
+động lấy từ `size`, `motion`, `direction` của mỗi dòng `survey.json` (thiếu thì mở khung để xem rồi ghi bổ sung vào
+survey).
+- **Mở mỗi cảnh (mỗi nơi, mỗi phần) từ rộng tới gần:** toàn/establishing để người xem biết đang ở đâu, rồi trung, rồi
+  cận và chi tiết. Sang nơi mới thì lại mở bằng một shot toàn.
+- **Mỗi cú cắt phải đổi rõ hình:** không đặt liền nhau hai shot cùng nguồn, cùng cỡ, cùng góc. Đổi cỡ (toàn → trung →
+  cận) hoặc đổi góc máy ít nhất khoảng 30°; nếu không thì hình chỉ "nhảy" (jump cut).
+- **Hai đoạn của cùng một cảnh gốc** không đặt liền nhau khi chúng cách nhau dưới 2 s hay chồng nhau: chèn một
+  cutaway (chi tiết, cảnh khác) vào giữa, hoặc lấy đoạn cách xa hơn. Lấy liền mạch (đoạn sau bắt đầu đúng chỗ đoạn trước
+  hết) thì không sao — đó vẫn là một shot.
+- **Giữ hướng chuyển động qua cú cắt:** thuyền, người, xe đi trái→phải ở shot trước thì shot sau cũng trái→phải (hoặc
+  đứng yên); đổi hướng thì đặt một shot trung tính (chính diện, tĩnh, cận) vào giữa.
+- **Cắt theo lời và nhịp:** điểm cắt rơi vào đầu/cuối một ý của lời dẫn, giữa hai câu, không giữa một từ; câu nói về
+  một chi tiết thì hình chi tiết đó lên đúng lúc câu bắt đầu (neo `line_id` vào shot đó).
+- **Độ dài shot theo nhịp:** b-roll du lịch 2–6 s một shot (theo `shot_seconds` của `channel/style.json` nếu có); shot
+  toàn mở cảnh và cảnh đẹp có thể dài hơn, chi tiết và cutaway ngắn hơn. Đừng để nhiều shot liền nhau dài bằng nhau.
+- **Cutaway** (chi tiết, biển hiệu, đồ ăn, mặt nước) là chỗ nối khi phải dùng tiếp cùng một nguồn hay cùng một cảnh.
+- Trong `note` của mỗi shot ghi ngắn vai trò của nó (`toàn mở cảnh`, `cận chi tiết`, `cutaway nối`) để người đọc và lần
+  sửa sau hiểu vì sao shot nằm đó.
+- Studio kiểm các luật này bằng `size`/`motion`/`direction` của survey khi kiểm file (`validate_file`), cảnh báo không
+  chặn: `same_size_cut` (hai shot liền nhau cùng nguồn, cùng cỡ), `direction_flip` (đảo hướng trái↔phải ở chỗ cắt),
+  `pan_clash` (lia trái rồi lia phải), `opening_not_wide` (mở video bằng cận hay chi tiết), `size_monotony` (quá 5 shot
+  liền nhau cùng cỡ), cùng `jump_cut`. Khi dựng, bước lấp chỗ trống cũng tránh shot cùng cỡ với shot hai bên.
+
 ## `edit-plan.json` — Studio đọc khi dựng timeline
 ```json
 {
@@ -32,8 +57,24 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
 - `narration`: `tts` (Studio đọc `lines` bằng giọng của dự án), `original` (giữ tiếng nói gốc), `none`.
   Mỗi câu `L001`, `L002`… gắn vào shot nó bắt đầu (`line_id`); câu không gắn shot thì không được đọc. Studio kéo dài hình
   cho vừa lời ("hình theo lời"), nên đừng cố khớp giây.
-- `transition`: `cut`, `dissolve` hoặc `dip_black` (tối dần rồi sáng lại) sang shot sau; `transition_s` (0.2–1, tuỳ chọn;
-  mặc định dissolve 0.4, dip_black 0.6). `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc, người lạ nói);
+- `transition` sang shot sau, `transition_s` (0.2–1, tuỳ chọn; mặc định 0.4, hai kiểu dip 0.6):
+  - `cut`: mặc định, dùng cho gần hết video. Nhịp nhanh, không làm người xem chú ý tới việc cắt.
+  - `dissolve`: hai cảnh hoà vào nhau. Dùng khi thời gian trôi qua hoặc đổi nơi chốn nhẹ nhàng (sáng sang chiều, ngoài sang
+    trong). Không dùng liên tục, mỗi đoạn vài lần là đủ.
+  - `dip_black` (tối dần rồi sáng lại): kết thúc một chương hoặc đổi ngày. `dip_white` (trắng rồi sáng lại): hồi tưởng,
+    giấc mơ, hoặc mở đầu một phần sáng sủa. Hiếm dùng hơn `dip_black`.
+  - `wipe_left`, `wipe_right` (lau ngang), `slide_left`, `slide_right` (trượt ngang), `smooth_left` (lau mềm): chuyển
+    hướng đi trên bản đồ hay một hành trình (sang trái là đi tiếp). Hợp video du lịch nhịp vừa. Chọn một kiểu cho cả
+    video, đừng trộn nhiều kiểu.
+  - `zoom_in`: lao vào một chi tiết (từ toàn cảnh chợ vào một món ăn). Rất hiếm, tối đa một hai lần mỗi video.
+  - Chuyển cảnh đặt ở chỗ đổi ý hoặc đổi đoạn, không đặt giữa câu dẫn. Cùng một đoạn thì dùng cùng một kiểu. Kiểu nào
+    cũng cần shot trước có thêm hình sau `out` (đuôi) và shot sau đủ dài, không đủ thì Studio đổi thành `cut` và báo.
+  - Studio tự kiểm khi kiểm file và sau mỗi lần dựng, rồi báo cảnh báo (không chặn):
+    - `transitions_overused`: hơn 30% chỗ nối là chuyển cảnh, với video từ 6 chỗ nối trở lên.
+    - `transitions_mixed`: trộn hai kiểu lau/trượt trong một video.
+    - `zoom_overused`: quá hai lần `zoom_in`.
+    Thấy cảnh báo nào thì sửa trước khi render.
+  `source_audio: "mute"` khi tiếng gốc làm phiền (thông báo, nhạc, người lạ nói);
   `source_muted: true` (cấp kế hoạch) tắt tiếng gốc của mọi clip.
 - Âm lượng (tuỳ chọn): `gain_db` của shot (-30..20 dB) cho tiếng gốc to/nhỏ hơn (người nói nhỏ: +6; phố ồn: -8);
   `source_even: true` để máy render đo tiếng gốc từng clip và kéo về cùng một mức (bù tối đa ±12 dB, trước `gain_db`);
@@ -58,6 +99,10 @@ description: Viết kế hoạch dựng của một video — thứ tự shot, �
   nên shot dài khoảng bội số của 2 s); nhạc chưa phân tích thì Studio tự phân tích lúc dựng. Đừng tự chỉnh `out` cho
   khớp giây của phách.
 - `look` (tuỳ chọn): màu hình của video này thay cho `look` của branding — none | natural | vivid | warm | cinematic.
+- `color_match` (tuỳ chọn): `true` để máy render đo độ sáng, độ tương phản và ám màu của từng clip rồi kéo các clip lại
+  gần nhau (một phần đường, có giới hạn: cảnh đêm không bị làm sáng như ban trưa). Dùng khi footage quay bằng nhiều máy
+  hoặc nhiều giờ khác nhau và nhảy màu ở chỗ cắt; `false` giữ từng clip như quay. Thay cho `color_match` của branding.
+  `look` vẫn áp như thường: khớp màu chạy sau `look`.
 - `text_look` (tuỳ chọn): kiểu chữ riêng của video thay cho `text_look` của branding (cùng các khoá: màu, `size`,
   `shadow`, `font`).
 - `target_seconds` theo brief (10–3600).
@@ -67,7 +112,9 @@ Frontmatter `status: draft`. Thân: cấu trúc từng phần, lời dẫn đầ
 
 ## Sau khi ghi
 1. `validate_file` cho `videos/<id>/edit-plan.json` và `survey.json` (chưa có survey thì chạy skill scene-selection
-   trước); sửa đến khi hết lỗi.
+   trước); sửa đến khi hết lỗi. Kế hoạch được kiểm với bản chọn cảnh: cảnh báo `jump_cut` (hai đoạn cùng cảnh liền
+   nhau), `not_usable` (shot đã loại ở bước chọn cảnh), `style_shot_length` (nhịp lệch phong cách) — sửa theo "Ngữ pháp
+   dựng" trừ khi có lý do và ghi lý do đó trong `note`.
 2. Khi người dùng đồng ý: `status: done` trong edit-plan.md, rồi `timeline_from_edit_plan` (thiếu hay sai một trong hai
    file thì tool báo ngay, không tạo việc). Lời dẫn tts cần giọng của
    dự án (xem `project_info`); chưa có thì nhờ người dùng chọn file giọng mẫu ở tab Đầu vào.

@@ -39,6 +39,23 @@ describe("compositionFeatureLevel", () => {
     expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Arial", shadow: true } }))).toBe(4);
   });
 
+  it("is 8 for a font of batch 1 of the fonts sheet", () => {
+    const look = { text_color: "#FFFFFF", outline_color: "#000000", box_color: null, size: "m" as const };
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Montserrat" } }))).toBe(8);
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), text_style: { ...look, font: "Nanum Gothic" } }))).toBe(8);
+    expect(RENDER_FEATURE_LEVEL).toBeGreaterThanOrEqual(8);
+  });
+
+  it("is 8 for a transition after cut, dissolve and dip to black", () => {
+    const t = timeline(null);
+    const two = (kind: TimelineV4["clips"][number]["transition_out"]["kind"]): TimelineV4 => ({
+      ...t, clips: [{ ...t.clips[0]!, out: 4, transition_out: { kind, seconds: 0.5 } }, { ...t.clips[0]!, clip_id: "C002", in: 5, out: 9 }],
+    });
+    expect(compositionFeatureLevel(timelineToComposition(two("dip_black")))).toBe(0);
+    expect(compositionFeatureLevel(timelineToComposition(two("dip_white")))).toBe(8);
+    expect(compositionFeatureLevel(timelineToComposition(two("slide_left")))).toBe(8);
+  });
+
   it("is 5 for a clip's gain, even source sound or a music volume line", () => {
     const t = timeline({ track: "library:m.mp3", gain_db: -18, ducking: true });
     expect(compositionFeatureLevel(timelineToComposition({ ...t, clips: [{ ...t.clips[0]!, gain_db: -6 }] }))).toBe(5);
@@ -49,6 +66,12 @@ describe("compositionFeatureLevel", () => {
   it("is 6 for a colour look", () => {
     expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), look: "cinematic" }))).toBe(6);
     expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), look: "none" }))).toBe(0);
+  });
+
+  it("is 9 for clips whose colour is matched", () => {
+    expect(compositionFeatureLevel(timelineToComposition({ ...timeline(null), color_match: true }))).toBe(9);
+    expect(timelineToComposition({ ...timeline(null), color_match: true }).color_even).toBe(true);
+    expect(timelineToComposition(timeline(null)).color_even).toBeUndefined();
   });
 
   it("never asks for more than this build renders", () => {

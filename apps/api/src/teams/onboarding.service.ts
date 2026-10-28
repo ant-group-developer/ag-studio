@@ -51,7 +51,7 @@ export class OnboardingService {
        SELECT
          (SELECT COUNT(*) FROM team_members WHERE user_id = ?) AS team,
          (SELECT COUNT(*) FROM mine) AS project,
-         (SELECT COUNT(*) FROM project_sources WHERE project_id IN (SELECT id FROM mine) AND kind IN ('ag_go_project', 'ag_go_asset')) AS footage,
+         (SELECT COUNT(*) FROM project_sources WHERE project_id IN (SELECT id FROM mine) AND kind IN ('ag_go_project', 'ag_go_asset', 'upload_asset')) AS footage,
          (SELECT COUNT(*) FROM videos WHERE project_id IN (SELECT id FROM mine) AND archived_at IS NULL) AS video,
          (SELECT COUNT(*) FROM agent_messages m JOIN agent_threads t ON t.id = m.thread_id
            WHERE t.project_id IN (SELECT id FROM mine) AND m.role = 'user' AND m.created_by = ?) AS chat,

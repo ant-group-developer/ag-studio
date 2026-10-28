@@ -52,6 +52,12 @@ describe("validateStudioSurvey", () => {
     expect(codes(validateStudioSurvey(none, { shots: shots() })).problems).toContain("none_usable");
     expect(codes(validateStudioSurvey({ schema_version: "x" }, { shots: shots() })).problems).toContain("schema");
   });
+
+  it("asks for each usable shot's size when most have none", () => {
+    expect(codes(validateStudioSurvey(survey(), { shots: shots() })).warnings).toEqual(["no_shot_meta"]);
+    const sized = { ...survey(), shots: survey().shots.map((r) => ({ ...r, size: "medium" as const })) };
+    expect(validateStudioSurvey(sized, { shots: shots() }).warnings).toEqual([]);
+  });
 });
 
 function plan(over: Partial<EditPlan> = {}): EditPlan {
@@ -129,6 +135,45 @@ describe("validateEditPlan", () => {
     expect(codes(validateEditPlan(plan({ texts: [t, { ...t, text_id: "T002" }] }), { survey: survey(), shots: shots() })).problems).toContain("two_titles");
     const many = ["T002", "T003", "T004"].map((id, i) => ({ ...t, text_id: id, kind: "lower_third" as const, at_order: i + 1 }));
     expect(codes(validateEditPlan(plan({ texts: [t, ...many] }), { survey: survey(), shots: shots() })).problems).toContain("too_many_texts");
+  });
+
+  it("warns of two wipe/slide styles in one plan, without blocking it", () => {
+    const p = plan();
+    const mixed = plan({ shots: [{ ...p.shots[0]!, transition: "slide_left" }, { ...p.shots[1]!, transition: "wipe_right" }, p.shots[2]!] });
+    const v = validateEditPlan(mixed, { survey: survey(), shots: shots() });
+    expect(codes(v).warnings).toContain("transitions_mixed");
+    expect(v.ok).toBe(true);
+  });
+
+  it("warns of a jump cut: two pieces of one shot back to back, under 2 s apart", () => {
+    const p = plan();
+    const second = (inS: number, out: number) => plan({ target_seconds: 11, shots: [p.shots[0]!, { ...p.shots[0]!, order: 2, in: inS, out, line_id: null }, { ...p.shots[2]!, order: 3 }] });
+    const ctx = { survey: survey(), shots: shots() };
+    expect(validateEditPlan(second(5.5, 6), ctx).warnings).toEqual([{ code: "jump_cut", message: expect.stringContaining("chỉ cách 0.5s") }]);
+    expect(codes(validateEditPlan(second(0, 3), ctx)).warnings).toContain("jump_cut"); // overlapping
+    expect(codes(validateEditPlan(second(5, 6), ctx)).warnings).not.toContain("jump_cut"); // carries straight on
+    expect(validateEditPlan(second(5.5, 6), ctx).ok).toBe(true); // advice, never blocks
+    // two shots of one source: the source cuts there, so no jump
+    expect(codes(validateEditPlan(plan({ shots: [p.shots[0]!, { ...p.shots[2]!, order: 2, in: 14, out: 18 }] }), ctx)).warnings).not.toContain("jump_cut");
+  });
+
+  it("item 9 (2026-10-27): reads what each shot is from the survey — same size from one source, direction and pans reversed, a close opening", () => {
+    const meta: Record<string, { size?: "wide" | "medium" | "close" | "detail"; motion?: "pan_left" | "pan_right" | "static"; direction?: "left_to_right" | "right_to_left" }> = {
+      "s000-000": { size: "close", motion: "pan_left", direction: "left_to_right" },
+      "s000-002": { size: "close", motion: "pan_right", direction: "right_to_left" },
+      "s001-000": { size: "wide" },
+    };
+    const sized: StudioSurvey = { ...survey(), shots: survey().shots.map((r) => ({ ...r, ...meta[r.shot_id] })) };
+    const p = plan();
+    const back = plan({ shots: [p.shots[0]!, { ...p.shots[2]!, order: 2 }, { ...p.shots[1]!, order: 3 }] });
+    const v = validateEditPlan(back, { survey: sized, shots: shots() });
+    expect(codes(v).warnings).toEqual(expect.arrayContaining(["opening_not_wide", "same_size_cut", "direction_flip", "pan_clash"]));
+    expect(v.warnings.find((w) => w.code === "same_size_cut")!.message).toContain("cùng cỡ cận");
+    expect(v.ok).toBe(true);
+    // the plan as written: a wide shot between them, nothing to say about sizes
+    expect(codes(validateEditPlan(plan(), { survey: sized, shots: shots() })).warnings).not.toContain("same_size_cut");
+    // a survey without them: not judged
+    expect(codes(validateEditPlan(back, { survey: survey(), shots: shots() })).warnings).not.toContain("same_size_cut");
   });
 
   it("warns when a line is longer than its picture and when the cut is off its target", () => {

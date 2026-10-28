@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TimelineV4Schema, upgradeTimelineV3, type TimelineV3, type TimelineV4 } from "@harness/contracts";
 import {
   addClip, applyTimelineOps, layoutTimeline, moveClip, removeClip, replaceClipAsset, resolveTransitions, setCaptions,
-  setTransition, timelineIssues, TimelineOpError, trimClip,
+  setTransition, timelineIssues, TimelineOpError, transitionUseIssues, trimClip,
 } from "../../src/studio/layout.js";
 
 const asset = (d: number) => ({ title: "Video", summary_vi: "Clip", duration_s: d, orientation: "landscape" as const });
@@ -118,6 +118,26 @@ describe("timelineIssues on v4", () => {
     expect(codes(trimClip(cut(), "C003", 4, 8))).toContain("warning:overlapping_range");
   });
 
+  it("warns of a jump cut: back to back on one shot, under 2 s apart or overlapping", () => {
+    const jumps = (t: TimelineV4) => timelineIssues(t).filter((i) => i.code === "jump_cut").map((i) => i.clip_id);
+    const pair = (aIn: number, aOut: number, bIn: number, bOut: number, shots: [string | null, string | null] = [null, null]) => {
+      const t = cut();
+      t.clips[1] = { ...t.clips[1]!, asset_id: "a01", in: bIn, out: bOut, shot_id: shots[1] };
+      t.clips[0] = { ...t.clips[0]!, in: aIn, out: aOut, shot_id: shots[0], transition_out: { kind: "cut", seconds: 0 } };
+      t.clips[2] = { ...t.clips[2]!, asset_id: "a02", in: 0, out: 4 };
+      return t;
+    };
+    expect(jumps(cut())).toEqual([]); // C001 and C003 share a01 but are not back to back
+    expect(jumps(pair(2, 5, 6, 9))).toEqual(["C002"]); // 1 s skipped
+    expect(jumps(pair(6, 9, 2, 5))).toEqual(["C002"]); // 1 s back
+    expect(jumps(pair(2, 5, 4, 8))).toEqual(["C002"]); // overlapping
+    expect(timelineIssues(pair(2, 5, 4, 8)).find((i) => i.code === "jump_cut")?.message).toContain("chồng nhau 1.0s");
+    expect(jumps(pair(2, 5, 5, 8))).toEqual([]); // carries straight on: one shot
+    expect(jumps(pair(2, 5, 7, 9))).toEqual([]); // 2 s apart
+    expect(jumps(pair(2, 5, 6, 9, ["s000-001", "s000-002"]))).toEqual([]); // two detected shots: the source cuts there
+    expect(jumps(pair(2, 5, 6, 9, ["s000-001", "s000-001"]))).toEqual(["C002"]);
+  });
+
   it("flags ranges, short clips and narration problems", () => {
     const beyond = cut();
     beyond.clips[1] = { ...beyond.clips[1]!, out: 12 }; // a02 is 10 s long
@@ -142,6 +162,17 @@ describe("timelineIssues on v4", () => {
     expect(codes(trimClip(trimClip(cut(), "C001", 2, 2.6), "C002", 0, 1))).toContain("warning:narration_overrun");
     expect(codes(trimClip(cut(), "C002", 0, 9.5))).not.toContain("warning:narration_overrun");
     expect(codes(setTransition(trimClip(cut(), "C001", 2, 20), "C001", "dissolve", 0.4))).toContain("warning:transition_no_tail");
+  });
+
+  it("warns of transitions on most joins, of two wipe/slide styles in one video, and of zooms past two", () => {
+    const codesOf = (kinds: Parameters<typeof transitionUseIssues>[0]) => transitionUseIssues(kinds).map((i) => i.code);
+    expect(codesOf(["cut", "cut", "dissolve", "cut", "cut", "cut", "slide_left", "cut"])).toEqual([]);
+    expect(codesOf(["dissolve", "cut", "dissolve", "cut", "dissolve", "cut"])).toEqual(["transitions_overused"]);
+    // a short video may use one on most joins
+    expect(codesOf(["dissolve", "dissolve", "cut"])).toEqual([]);
+    expect(codesOf(["slide_left", "cut", "cut", "slide_right", "cut", "cut", "cut", "cut", "cut", "cut"])).toEqual([]);
+    expect(codesOf(["slide_left", "cut", "cut", "wipe_right", "cut", "cut", "cut", "cut", "cut", "cut"])).toEqual(["transitions_mixed"]);
+    expect(codesOf(["zoom_in", "cut", "zoom_in", "cut", "zoom_in", ...Array(10).fill("cut")])).toEqual(["zoom_overused"]);
   });
 });
 

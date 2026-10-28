@@ -205,12 +205,26 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     expect(readFileSync(join(dir, "videos", "notes.md"), "utf8")).toBe("dở dang");
     const after = (await listMessages(db, thread.id)).slice(2);
     expect(after.map((m) => [m.role, m.status, m.trigger])).toEqual([["system", "done", "timeout"], ["assistant", "pending", "timeout"]]);
-    expect(after[0]!.text).toContain("hết thời gian của một lượt");
+    expect(after[0]!.text).toContain("hết thời gian tối đa của một lượt (2 giây)");
     expect(after[0]!.text).toContain("làm tiếp từ chỗ dừng");
     expect(after[1]).toMatchObject({ created_by: "auth0|u", actor_role: "editor" });
   });
 
-  it("out of time with auto-continue off, or after 3 automatic turns in a row: the turn fails and waits for a person", async () => {
+  it("a CLI that keeps printing outlives the idle limit; a quiet one stops after it and goes on", async () => {
+    // 3 s of quiet at most (the fake CLI may take more than a second to start on a busy machine), working twice that
+    const { runner, say, turnOf, db, thread } = await setup({}, { idleMs: 3000 });
+    const busy = (await say("@fake busy 6000 200\n@fake say xong")).turn!;
+    await runner.tick(); await runner.idle();
+    expect(await turnOf(busy.id)).toMatchObject({ status: "done", error: null, text: "xong" });
+    const quiet = (await say("@fake hang")).turn!;
+    await runner.tick(); await runner.idle();
+    expect(await turnOf(quiet.id)).toMatchObject({ status: "done", error: "timeout" });
+    const note = (await listMessages(db, thread.id)).at(-2)!;
+    expect(note).toMatchObject({ role: "system", trigger: "timeout" });
+    expect(note.text).toContain("dừng vì 3 giây không thấy tiến triển");
+  });
+
+  it("out of time with auto-continue off, or after 3 timed out turns in a row: the turn fails and waits for a person", async () => {
     const { runner, say, turnOf, db, thread, project } = await setup({}, { deadlineMs: 1500 });
     await db.run("UPDATE projects SET settings = ? WHERE id = ?", [JSON.stringify({ auto_continue: false }), project.id]);
     const { turn } = await say("@fake hang");
@@ -219,7 +233,7 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     expect(await turnOf(turn!.id)).toMatchObject({ status: "failed", error: "timeout" });
     expect((await listMessages(db, thread.id)).map((m) => m.role)).toEqual(["user", "assistant"]);
 
-    // auto-continue on, but this is already the third automatic turn since the person's message
+    // auto-continue on: three turns jobs started do not use up the timed out turns' budget
     await db.run("UPDATE projects SET settings = ? WHERE id = ?", [JSON.stringify({ auto_continue: true }), project.id]);
     await say("@fake say ok");
     await runner.tick(); await runner.idle();
@@ -228,8 +242,18 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
       await postSystemMessage(db, { threadId: thread.id, text, trigger: "job", continueAgent: true, actor: { id: "auth0|u", role: "editor" } });
       await runner.tick(); await runner.idle();
     }
-    const last = (await listMessages(db, thread.id)).at(-1)!;
-    expect(last).toMatchObject({ role: "assistant", trigger: "job", status: "failed", error: "timeout" });
+    expect((await listMessages(db, thread.id)).slice(-3).map((m) => [m.role, m.trigger, m.status, m.error]))
+      .toEqual([["assistant", "job", "done", "timeout"], ["system", "timeout", "done", null], ["assistant", "timeout", "pending", null]]);
+    // each turn that goes on times out again (the fake CLI hangs on the note): the third one in a row waits for a person
+    for (let i = 0; i < 3; i++) {
+      const note = (await listMessages(db, thread.id)).at(-2)!;
+      await db.run("UPDATE agent_messages SET text = text || ? WHERE id = ?", ["\n@fake hang", note.id]);
+      await runner.tick(); await runner.idle();
+    }
+    const messages = await listMessages(db, thread.id);
+    expect(messages.filter((m) => m.role === "assistant" && m.trigger === "timeout").map((m) => [m.status, m.error]))
+      .toEqual([["done", "timeout"], ["done", "timeout"], ["failed", "timeout"]]);
+    expect(messages.at(-1)).toMatchObject({ role: "assistant", trigger: "timeout", status: "failed" });
   });
 
   it("a lost session starts a new one with a recap; the plan's limit waits and retries", async () => {

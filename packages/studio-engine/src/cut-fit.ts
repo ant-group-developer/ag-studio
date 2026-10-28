@@ -8,7 +8,7 @@
 import {
   DEFAULT_NARRATION_LEAD_SECONDS, EdlSchema, NarrationTimingSchema, TimelineV4Schema,
   type EditPlan, type EpisodeAsset, type FitReport, type NarrationTiming, type ShotsIndex, type StudioCanvas, type StudioMusic,
-  type StudioSurvey, type TextLook, type TimelineClipV4, type TimelineV4, type Transcript, type VideoLook,
+  type StudioSurvey, type TextLook, type TimelineClipV4, type TimelineTransitionKind, type TimelineV4, type Transcript, type VideoLook,
 } from "@harness/contracts";
 import { buildTimeline, fitEdl, narrationCps, snapCuts, type BeatGrid, type SnapMove, type SnapSkip } from "@harness/core";
 
@@ -44,6 +44,8 @@ export interface FitCutInput {
   textStyle?: TextLook | null;
   /** Feedback-vps §4.6: the colour of the picture (the plan's, else the branding's). */
   look?: VideoLook | null;
+  /** Feedback 2026-10-27 item 6: the clips' colour matched to one another (the plan's, else the branding's). */
+  colorMatch?: boolean;
   /** Feedback-vps §4.7: the music's beats, for the plan's shots with `snap`; null: none known (those cuts stay). */
   beats?: BeatGrid | null;
 }
@@ -54,8 +56,8 @@ export interface FitSnapReport {
   skipped: (SnapSkip & { clip_id: string })[];
 }
 
-/** A transition's length when the plan gives none: a dissolve the harness brand default, a dip to black a little longer. */
-const TRANSITION_SECONDS = { dissolve: 0.4, dip_black: 0.6 } as const;
+/** A transition's length when the plan gives none: the harness brand default, a dip a little longer. */
+const transitionSeconds = (kind: TimelineTransitionKind): number => (kind === "dip_black" || kind === "dip_white" ? 0.6 : 0.4);
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /** The shot of `source_id` holding the middle of `[in, out)` (an appended piece is not one of the plan's shots). */
@@ -94,9 +96,12 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
   });
   const voice = plan.narration;
   const tolerance = plan.target_seconds * 0.2;
+  // the size of each shot the scene selection gave one: the fill avoids cutting between two of the same size
+  const sizes = Object.fromEntries(p.survey.shots.flatMap((r) => (r.size ? [[r.shot_id, r.size] as const] : [])));
   const fitted = fitEdl({
     edl, timing, shots: p.shots, survey: p.survey, transcript: p.transcript, voice,
     target_duration_seconds: [Math.max(1, plan.target_seconds - tolerance), plan.target_seconds + tolerance],
+    ...(Object.keys(sizes).length ? { shot_sizes: sizes } : {}),
   });
   const laid = buildTimeline({ edl: fitted.edl, timing, transcript: p.transcript, voice, language: plan.language, orderMap: fitted.orderMap });
 
@@ -139,7 +144,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     const origin = fromPlan.get(v.order);
     const kind = origin?.shot.transition;
     const transition = origin?.last && kind && kind !== "cut" && i < video.length - 1
-      ? { kind, seconds: origin.shot.transition_s ?? TRANSITION_SECONDS[kind] } : { kind: "cut" as const, seconds: 0 };
+      ? { kind, seconds: origin.shot.transition_s ?? transitionSeconds(kind) } : { kind: "cut" as const, seconds: 0 };
     const assetId = assetOf.get(v.source_id);
     if (!assetId) throw new Error(`fitted entry ${v.order} is on an unknown source ${v.source_id}`);
     return {
@@ -189,6 +194,7 @@ export function fitCutTimeline(p: FitCutInput): { timeline: TimelineV4; report: 
     alternates: [],
     ...(p.textStyle ? { text_style: p.textStyle } : {}),
     ...(p.look && p.look !== "none" ? { look: p.look } : {}),
+    ...(p.colorMatch ? { color_match: true } : {}),
   });
   return { timeline, report: fitted.report, snap };
 }

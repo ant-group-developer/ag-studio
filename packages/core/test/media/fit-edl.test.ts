@@ -263,6 +263,53 @@ describe("fitEdl - voice tts", () => {
     expect(() => EdlSchema.parse(edl)).not.toThrow();
   });
 
+  it("rule 4 changes source across the cut when a shot of another source is nearly as good", () => {
+    const fill = (overrides: Record<string, { score?: number; usable?: boolean }>, shots = TWO_SOURCES) => fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 10, out: 13, order: 0 }]),
+      timing: timingFixture([{ line_id: "L001", edl_order: 0, duration_seconds: 6 }]),
+      shots,
+      survey: surveyFor(shots, { "s000-003": { usable: false }, ...overrides }),
+      transcript: null,
+      voice: "tts",
+    }).edl.entries[1];
+    // s000-005 scores 3 but sits next to more of A (3 - 2): B's score-2 shot wins
+    expect(fill({ "s000-005": { score: 3 }, "s001-002": { score: 2 } })).toMatchObject({ source_id: SRC_B, in: 10, out: 11.7 });
+    // a much better shot of the same source still wins
+    expect(fill({ "s000-005": { score: 5 }, "s001-002": { score: 2 } })).toMatchObject({ source_id: SRC_A, in: 25, out: 26.7 });
+    // one source only: no other choice, so plain quality as before
+    const one = shotsFixture([sixShots(SRC_A, 0)]);
+    expect(fill({ "s000-005": { score: 3 } }, one)).toMatchObject({ source_id: SRC_A, in: 25, out: 26.7 });
+  });
+
+  it("rule 4 holds a candidate against the entry after the cut and, with shot sizes, against the same size", () => {
+    const SRC_C = "src_01JCCCCCCCCCCCCCCCCCCCCCCC";
+    const three = shotsFixture([sixShots(SRC_A, 0), sixShots(SRC_B, 1), sixShots(SRC_C, 2)]);
+    const fill = (nextSource: string) => fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 10, out: 13, order: 0 }, { source_id: nextSource, in: 0, out: 3, order: 1 }]),
+      timing: timingFixture([{ line_id: "L001", edl_order: 0, duration_seconds: 6 }]),
+      shots: three,
+      survey: surveyFor(three, { "s000-003": { usable: false }, "s001-003": { score: 2 }, "s002-003": { score: 1 } }, 0),
+      transcript: null,
+      voice: "tts",
+    }).edl.entries[1];
+    expect(fill(SRC_A)).toMatchObject({ source_id: SRC_B, in: 15 });
+    // B comes right after the appended shot: C changes source on both cuts
+    expect(fill(SRC_B)).toMatchObject({ source_id: SRC_C, in: 15 });
+
+    // all scored alike: the first shot of B (plain quality took the first of A); with sizes, not wide after wide
+    const sized = (shot_sizes?: Record<string, string>) => fitEdl({
+      edl: edlFixture([{ source_id: SRC_A, in: 10, out: 13, order: 0 }]),
+      timing: timingFixture([{ line_id: "L001", edl_order: 0, duration_seconds: 6 }]),
+      shots: TWO_SOURCES,
+      survey: surveyFor(TWO_SOURCES, { "s000-003": { usable: false } }),
+      transcript: null,
+      voice: "tts",
+      ...(shot_sizes ? { shot_sizes } : {}),
+    }).edl.entries[1];
+    expect(sized()).toMatchObject({ source_id: SRC_B, in: 0 });
+    expect(sized({ "s000-002": "wide", "s001-000": "wide", "s001-001": "close" })).toMatchObject({ source_id: SRC_B, in: 5 });
+  });
+
   it("is deterministic: the same input twice gives a deep-equal result", () => {
     const input = {
       edl: edlFixture([{ source_id: SRC_A, in: 10, out: 13, order: 0 }]),

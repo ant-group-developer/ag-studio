@@ -85,7 +85,7 @@ describe("audioGraph", () => {
       musicIndex: 5,
     });
     expect(out).toBe("[aout]");
-    expect(filter).toContain("adelay=300|300");
+    expect(filter).toContain("[3:a]afade=t=in:d=0.01,adelay=300|300[n_0]");
     expect(filter).toContain("amix=inputs=2");
     // `amix ... duration=longest` ends at the last narration line (9s), well short of total_seconds (15) --
     // without padding the music fade-out (anchored at total-fade_out) never plays and the episode tail goes

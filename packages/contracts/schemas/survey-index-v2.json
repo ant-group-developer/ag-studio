@@ -55,6 +55,38 @@
                   "talking",
                   "ambient"
                 ]
+              },
+              "size": {
+                "type": "string",
+                "enum": [
+                  "wide",
+                  "medium",
+                  "close",
+                  "detail"
+                ]
+              },
+              "motion": {
+                "type": "string",
+                "enum": [
+                  "static",
+                  "pan_left",
+                  "pan_right",
+                  "tilt_up",
+                  "tilt_down",
+                  "push_in",
+                  "pull_out",
+                  "tracking",
+                  "handheld"
+                ]
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "left_to_right",
+                  "right_to_left",
+                  "toward",
+                  "away"
+                ]
               }
             },
             "required": [

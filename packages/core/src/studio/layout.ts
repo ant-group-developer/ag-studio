@@ -10,6 +10,7 @@
  * timeline and an edit returns the same version it was given, so a v3 episode stays v3 (ADR-0001 item 151).
  */
 import {
+  isTailTransition,
   upgradeTimelineV3,
   type CaptionMode, type EpisodeAsset, type MusicEnvelopePoint, type VideoLook, type StudioMusic, type TimelineClipV4, type TimelineOp, type TimelineText,
   type StoredTimeline, type TimelineTransitionKind, type TimelineV4,
@@ -21,6 +22,32 @@ const EPS = 1e-6;
 const RANGE_SLACK = 0.05;
 /** Shortest clip a shot-cut episode may hold. */
 export const MIN_CLIP_SECONDS = 0.5;
+/** Two pieces of one shot closer than this in the source jump when played back to back (jump cut). */
+export const JUMP_CUT_SECONDS = 2;
+/** A piece that starts this close to where the one before ended carries straight on: it plays as one shot. */
+const SEAMLESS_SECONDS = 0.05;
+
+/** One piece of footage as the jump-cut check reads it: a timeline clip or an edit-plan shot. */
+export interface FootagePiece {
+  source: string;
+  /** The detected shot it is cut from; null when unknown (the whole source is then one shot). */
+  shot: string | null;
+  in: number;
+  out: number;
+}
+
+/**
+ * Seconds of source between two pieces played back to back when they make a jump cut (negative: they overlap), or
+ * null when they do not: another source, two different detected shots (the source itself cuts there), more than
+ * `JUMP_CUT_SECONDS` apart, or the second carrying straight on from the first.
+ */
+export function jumpCutGap(a: FootagePiece, b: FootagePiece): number | null {
+  if (a.source !== b.source) return null;
+  if (a.shot !== null && b.shot !== null && a.shot !== b.shot) return null;
+  if (Math.abs(b.in - a.out) <= SEAMLESS_SECONDS) return null;
+  const gap = Math.max(b.in - a.out, a.in - b.out);
+  return gap < JUMP_CUT_SECONDS - EPS ? r3(gap) : null;
+}
 
 /** A timeline of either version (`StoredTimeline` of contracts). */
 export type AnyTimeline = StoredTimeline;
@@ -133,9 +160,10 @@ export interface ResolvedTransition {
 }
 
 /**
- * What actually plays across each cut, same rules as the harness `assignTransitions`: a dissolve needs a tail on the
- * outgoing asset (`out + seconds <= duration`) and a next clip at least `2 × seconds` long; a dip to black needs both
- * clips at least `seconds` long; anything else becomes a cut. The last clip always cuts. Never moves a clip.
+ * What actually plays across each cut, same rules as the harness `assignTransitions`: a dissolve (and every transition
+ * `xfade` draws, `isTailTransition`) needs a tail on the outgoing asset (`out + seconds <= duration`) and a next clip at
+ * least `2 × seconds` long; a dip needs both clips at least `seconds` long; anything else becomes a cut. The last clip
+ * always cuts. Never moves a clip.
  */
 export function resolveTransitions(layout: TimelineLayout): ResolvedTransition[] {
   return layout.clips.map((c, k) => {
@@ -143,7 +171,7 @@ export function resolveTransitions(layout: TimelineLayout): ResolvedTransition[]
     const next = layout.clips[k + 1];
     if (!next || kind === "cut") return { kind: "cut", seconds, tail_available: false, downgraded: null };
     const cut = (downgraded: TransitionDowngrade): ResolvedTransition => ({ kind: "cut", seconds, tail_available: false, downgraded });
-    if (kind === "dissolve") {
+    if (isTailTransition(kind)) {
       const assetDuration = layout.assetSeconds[c.asset_id];
       if (assetDuration === undefined || c.source_out + seconds > assetDuration + EPS) return cut("no_tail");
       if (next.duration < 2 * seconds - EPS) return cut("next_too_short");
@@ -245,6 +273,21 @@ function shotIssues(t: TimelineV4, layout: TimelineLayout): TimelineIssue[] {
     }
   }
 
+  // Back to back, the same shot with little or no time between: the picture jumps (jump cut)
+  const piece = (c: LaidClip): FootagePiece => ({ source: c.asset_id, shot: c.shot_id, in: c.in, out: c.source_out });
+  for (let k = 1; k < layout.clips.length; k++) {
+    const a = layout.clips[k - 1]!;
+    const b = layout.clips[k]!;
+    const gap = jumpCutGap(piece(a), piece(b));
+    if (gap === null) continue;
+    const apart = gap < 0 ? `chồng nhau ${(-gap).toFixed(1)}s` : `chỉ cách ${gap.toFixed(1)}s`;
+    issues.push({
+      severity: "warning", code: "jump_cut",
+      message: `clip ${a.clip_id} và ${b.clip_id} liền nhau, cùng video ${a.asset_id}, ${apart} trong video gốc: hình bị giật (jump cut) — chèn một shot khác vào giữa (cutaway) hoặc lấy đoạn cách xa hơn ${JUMP_CUT_SECONDS}s`,
+      clip_id: b.clip_id,
+    });
+  }
+
   // Narration anchors
   const lines = new Map(t.narration.lines.map((l) => [l.line_id, l]));
   const anchors = new Map<string, string>();
@@ -282,6 +325,33 @@ function shotIssues(t: TimelineV4, layout: TimelineLayout): TimelineIssue[] {
       issues.push({ severity: "warning", code: "transition_no_tail", message: `chuyển cảnh sau clip ${c.clip_id} sẽ thành cắt thẳng (${r.downgraded})`, clip_id: c.clip_id });
     }
   });
+  issues.push(...transitionUseIssues(t.clips.slice(0, -1).map((c) => c.transition_out.kind)));
+  return issues;
+}
+
+/** Transitions over this share of the joins, in a video with at least `TRANSITION_USE.min_joins`: too many. */
+const TRANSITION_USE = { min_joins: 6, max_share: 0.3, max_zoom: 2 } as const;
+/** The wipes and slides: one of them is a video's style, two read as a template. */
+const MOTION_TRANSITIONS: readonly TimelineTransitionKind[] = ["wipe_left", "wipe_right", "slide_left", "slide_right", "smooth_left"];
+
+/**
+ * How the video uses its transitions (edit-plan skill, round 2026-10-27): most joins should be cuts, one wipe/slide style
+ * per video (left and right of one count as one), a zoom only once or twice.
+ */
+export function transitionUseIssues(kinds: readonly TimelineTransitionKind[]): TimelineIssue[] {
+  const issues: TimelineIssue[] = [];
+  const used = kinds.filter((k) => k !== "cut");
+  if (kinds.length >= TRANSITION_USE.min_joins && used.length > TRANSITION_USE.max_share * kinds.length) {
+    issues.push({ severity: "warning", code: "transitions_overused", message: `${used.length}/${kinds.length} chỗ nối là chuyển cảnh: nhiều quá, phần lớn nên là cắt thẳng (tối đa khoảng ${Math.round(TRANSITION_USE.max_share * 100)}%)` });
+  }
+  const styles = new Set(used.filter((k) => MOTION_TRANSITIONS.includes(k)).map((k) => k.replace(/_(left|right)$/, "")));
+  if (styles.size > 1) {
+    issues.push({ severity: "warning", code: "transitions_mixed", message: `video trộn ${[...styles].join(", ")}: chọn một kiểu lau/trượt cho cả video` });
+  }
+  const zooms = used.filter((k) => k === "zoom_in").length;
+  if (zooms > TRANSITION_USE.max_zoom) {
+    issues.push({ severity: "warning", code: "zoom_overused", message: `${zooms} lần zoom_in: chỉ nên một hai lần mỗi video` });
+  }
   return issues;
 }
 
@@ -479,6 +549,12 @@ export function setLook(t: TimelineV4, look: VideoLook): TimelineV4 {
   return look === "none" ? rest : { ...rest, look };
 }
 
+/** The clips' colour matched to one another (`color_match`), or each as filmed again. Timeline v4 only. */
+export function setColorMatch(t: TimelineV4, match: boolean): TimelineV4 {
+  const { color_match: _was, ...rest } = requireV4(t, "Khớp màu");
+  return match ? { ...rest, color_match: true } : rest;
+}
+
 /** Burnt-in subtitles from the narration. Timeline v4 only. */
 export function setCaptions(t: TimelineV4, mode: CaptionMode): TimelineV4 {
   return { ...requireV4(t, "Phụ đề"), captions: { mode } };
@@ -552,6 +628,7 @@ function applyOne<T extends AnyTimeline>(t: T, op: TimelineOp, allowed: Record<s
     case "setSourceEven": return setSourceEven(requireV4(t, "Đều tiếng gốc"), op.even) as T;
     case "setMusicEnvelope": return setMusicEnvelope(requireV4(t, "Đường âm lượng nhạc"), op.points) as T;
     case "setLook": return setLook(requireV4(t, "Màu"), op.look) as T;
+    case "setColorMatch": return setColorMatch(requireV4(t, "Khớp màu"), op.match) as T;
   }
 }
 

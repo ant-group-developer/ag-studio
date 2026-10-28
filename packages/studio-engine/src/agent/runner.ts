@@ -28,8 +28,8 @@ import { threadMarkdown } from "./history.js";
 import { agentSystemPrompt, agentTurnPrompt, youtubeBlockLines } from "./prompt.js";
 import { youtubeBlock } from "../settings.js";
 import {
-  AUTO_TURNS_IN_A_ROW, automaticTurnsInARow, cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
-  orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, setTurnChangedFiles, turnInput, updateRunningTurn, type MessageRecord,
+  automaticTurnsInARow, cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
+  orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, setTurnChangedFiles, TIMEOUT_TURNS_IN_A_ROW, turnInput, updateRunningTurn, type MessageRecord,
 } from "./threads-db.js";
 import { signAgentToken } from "./token.js";
 
@@ -61,7 +61,10 @@ export interface AgentRunnerOptions {
   configDir: string;
   model: string;
   maxTurns: number;
+  /** Hard cap of a turn, however busy the agent is (the MCP token lasts as long). */
   deadlineMs: number;
+  /** A turn stops after this long with no output from the CLI; none or 0: only the hard cap. */
+  idleMs?: number;
   /** `mcp__studio__<tool>` names the turn may call without asking. */
   mcpTools: () => string[];
   /** Skills: Studio's own (`agent-skills/`) and where each turn's plugin folder is written. */
@@ -94,10 +97,14 @@ export interface AgentRunner {
 
 const plusMinutes = (now: string, m: number) => new Date(Date.parse(now) + m * 60_000).toISOString();
 
-/** The note a turn out of time leaves for the turn that goes on (it resumes the same session). */
-function timeoutNote(deadlineMs: number): string {
-  const limit = deadlineMs >= 60_000 ? `${Math.round(deadlineMs / 60_000)} phút` : `${Math.round(deadlineMs / 1000)} giây`;
-  return `Lượt trước hết thời gian của một lượt (${limit}) khi đang làm dở. Các file đã ghi vẫn còn: làm tiếp từ chỗ dừng, đừng làm lại phần đã xong; việc dài thì chia ra, ghi kết quả dần.`;
+const duration = (ms: number) => ms >= 60_000 ? `${Math.round(ms / 60_000)} phút` : `${Math.round(ms / 1000)} giây`;
+
+/** The note a turn out of time leaves for the turn that goes on (it resumes the same session): which limit stopped it. */
+function timeoutNote(limit: "idle" | "deadline" | null, o: { deadlineMs: number; idleMs?: number }): string {
+  const why = limit === "idle" && o.idleMs
+    ? `dừng vì ${duration(o.idleMs)} không thấy tiến triển`
+    : `hết thời gian tối đa của một lượt (${duration(o.deadlineMs)})`;
+  return `Lượt trước ${why} khi đang làm dở. Các file đã ghi vẫn còn: làm tiếp từ chỗ dừng, đừng làm lại phần đã xong; việc dài thì chia ra, ghi kết quả dần.`;
 }
 
 export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
@@ -201,7 +208,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         tools: AGENT_BUILTIN_TOOLS, allowedTools: o.mcpTools(), appendSystemPrompt: agentSystemPrompt(dir, { useLessons: thread.use_lessons, ...(o.siteName ? { siteName: o.siteName() } : {}) }),
         settingsPath: join(turnDir, "settings.json"), mcpConfigPath: join(turnDir, "mcp.json"),
         pluginDirs, maxTurns: o.maxTurns, baseEnv: o.baseEnv ?? process.env, configDir: o.configDir,
-        deadlineMs: Math.max(1000, deadline - Date.now()), signal,
+        deadlineMs: Math.max(1000, deadline - Date.now()), ...(o.idleMs !== undefined ? { idleMs: o.idleMs } : {}), signal,
         onUpdate: (state, text) => {
           if (!sessionMarked && state.session_id) { write("session start", () => markSessionStarted(db, thread.id, dir)); sessionMarked = true; }
           pending = { state, text };
@@ -274,9 +281,10 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       let llmCallId: string | null = null;
       try { llmCallId = await record(message, out, wall); } catch (e) { logger.warn("agent turn not logged", { error: String(e) }); }
       const base = { text: out.text, parts: out.state.parts, costUsd: out.state.result?.cost_usd ?? null, llmCallId };
-      // out of time: goes on by itself while the project allows it and a person spoke not too many turns ago
+      // out of time: goes on by itself while the project allows it and it has not timed out too often since a person
+      // spoke (turns jobs started do not count here)
       const goesOnAfterTimeout = out.status === "timeout" && projectSettings(project).auto_continue
-        && await automaticTurnsInARow(db, thread.id) < AUTO_TURNS_IN_A_ROW;
+        && await automaticTurnsInARow(db, thread.id, "timeout") < TIMEOUT_TURNS_IN_A_ROW;
       if (out.status === "rate_limited") {
         const wait = AGENT_RATE_LIMIT_BACKOFF_MINUTES[Math.min(message.attempts - 1, AGENT_RATE_LIMIT_BACKOFF_MINUTES.length - 1)] ?? 60;
         await finishTurn(db, messageId, { ...base, status: "rate_limited", error: "rate_limited", notBefore: plusMinutes(now(), wait) }, now());
@@ -305,7 +313,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         const followed = fixing ? null : await queueFollowUp(db, thread.id, now());
         if (!fixing && !followed && goesOnAfterTimeout) {
           const actor = message.created_by && message.actor_role ? { id: message.created_by, role: message.actor_role } : null;
-          await postSystemMessage(db, { threadId: thread.id, text: timeoutNote(o.deadlineMs), trigger: "timeout", continueAgent: true, actor }, now());
+          await postSystemMessage(db, { threadId: thread.id, text: timeoutNote(out.timeout, o), trigger: "timeout", continueAgent: true, actor }, now());
         }
       }
       await auditTurn(message, thread.video_id, project, out, Date.now() - started, changed);

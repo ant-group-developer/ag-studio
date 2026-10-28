@@ -18,6 +18,7 @@ hashtags: ["#DiBoCham"]        # 1–5, chỉ chữ/số/_ sau dấu #
 banned_words: ["sốc", "không thể tin nổi"]
 music_mood: [calm, warm]       # 1–5 mood; Studio chọn nhạc trong kho theo mood
 look: natural                  # màu hình của mọi video: none | natural | vivid | warm | cinematic (tuỳ chọn)
+color_match: true              # khớp màu các clip với nhau khi render (tuỳ chọn, mặc định false)
 text_look:                     # chữ trên video vẽ đúng như vậy
   text_color: "#FFFFFF"
   outline_color: "#1A1A1A"     # viền chữ
@@ -33,18 +34,47 @@ thumbnail:
 ```
 Độ tương phản chữ/hộp (hoặc chữ/viền khi không có hộp) phải ≥ 3:1, nếu không Studio báo `text_look_no_contrast`.
 
-Font chữ trên video (`text_look.font`) chỉ chọn trong danh sách máy render có sẵn — viết đúng tên:
-- `Arial` (mặc định): trung tính, dễ đọc.
-- `Be Vietnam Pro`: sans hiện đại, dấu tiếng Việt đẹp — hợp kênh tiếng Việt.
-- `Noto Sans JP`, `Noto Sans KR`: sans cho kênh tiếng Nhật / Hàn.
-- `Noto Serif`: có chân, trang trọng, đủ dấu tiếng Việt.
-- `Playfair Display`: có chân, tương phản cao, hợp tiêu đề sang trọng (du lịch, ẩm thực cao cấp).
-Chữ Nhật và chữ Hàn luôn được vẽ bằng Noto Sans JP / KR dù font của kênh là gì, nên chữ song ngữ không bị ô vuông.
+Font chữ trên video (`text_look.font`) chỉ chọn trong danh sách máy render có sẵn, viết đúng tên. Chọn theo khán giả của
+kênh và giọng của kênh. Kênh tiếng Anh nên dùng font Latin, kênh tiếng Nhật/Hàn nên dùng font Nhật/Hàn để chữ Latin và chữ
+bản địa cùng một nét. Dấu `(VN)` là font có đủ dấu tiếng Việt.
+
+Mặc định và đa dụng:
+- `Arial` (mặc định, VN): trung tính, dễ đọc.
+- `Be Vietnam Pro` (VN): sans hiện đại, dấu tiếng Việt đẹp, hợp kênh tiếng Việt.
+- `Noto Sans JP`, `Noto Sans KR` (VN): sans cho kênh tiếng Nhật / Hàn.
+- `Noto Serif` (VN): có chân, trang trọng.
+- `Playfair Display` (VN): có chân, tương phản cao, hợp tiêu đề sang trọng (du lịch, ẩm thực cao cấp).
+
+Latin (kênh Anh, Âu Mỹ):
+- Sans trung tính, dễ đọc ở phụ đề: `Inter`, `Roboto`, `Lato`, `Montserrat` (VN cả bốn); `Poppins` (hình học, thân thiện).
+- Sans mảnh, thanh lịch: `Raleway`, `Josefin Sans` (VN); `Quicksand` (bo tròn, nhẹ nhàng, VN).
+- Sans hẹp đậm cho tiêu đề lớn, nhịp nhanh: `Oswald`, `Anton` (VN); `Bebas Neue` (chỉ chữ hoa).
+- Serif sang trọng, du lịch chậm: `Cormorant Garamond` (VN), `DM Serif Display`, `Libre Baskerville`; `Cinzel` (chữ
+  hoa kiểu La Mã, hợp di tích, lịch sử).
+- Viết tay, thư pháp (chỉ cho tiêu đề ngắn, không dùng cho phụ đề): `Great Vibes`, `Pacifico` (VN); `Caveat`.
+
+Nhật:
+- Gothic (không chân), dễ đọc: `Zen Kaku Gothic New`, `BIZ UDPGothic` (rất rõ ở cỡ nhỏ).
+- Maru (bo tròn, mềm, hợp du lịch, ẩm thực): `M PLUS Rounded 1c` (VN), `Zen Maru Gothic`, `Kiwi Maru`.
+- Mincho (có chân, trang nhã, đền chùa, lịch sử): `Noto Serif JP` (VN), `Shippori Mincho`.
+- Display cho tiêu đề kiểu telop: `Dela Gothic One` (VN), `RocknRoll One`; nét bút mềm: `Klee One`.
+
+Hàn:
+- Gothic (không chân): `Nanum Gothic`, `IBM Plex Sans KR`; `Gowun Dodum` (mềm, VN).
+- Myeongjo / Batang (có chân, cổ điển, cung điện): `Noto Serif KR` (VN), `Nanum Myeongjo`, `Gowun Batang` (VN).
+- Tiêu đề đậm: `Black Han Sans`, `Do Hyeon`; dễ thương: `Jua`; viết tay: `Nanum Pen Script`.
+
+Chữ thuộc bộ chữ mà font của kênh không có sẽ tự đổi font, nên chữ song ngữ không bị ô vuông: chữ Hàn dùng Noto Sans KR,
+chữ Nhật dùng Noto Sans JP, chữ có dấu tiếng Việt dùng Be Vietnam Pro.
 Font khác (không có trong danh sách) không dùng được.
 
 Màu hình (`look`) áp cho mọi clip khi render: `none` giữ nguyên như quay; `natural` tăng nhẹ tương phản và màu (an toàn cho
 mọi kênh); `vivid` màu rực (ẩm thực, lễ hội); `warm` ấm, vàng nhẹ (du lịch chậm, hoàng hôn); `cinematic` tương phản mềm,
 bóng xanh, sáng ấm (phim tài liệu, cảm xúc). Một video có thể đổi riêng bằng `look` trong kế hoạch dựng.
+
+Khớp màu (`color_match: true`): máy render đo độ sáng, tương phản và ám màu từng clip rồi kéo các clip về gần nhau, sau
+`look`. Bật cho kênh có footage từ nhiều máy, nhiều người quay; kênh quay một máy một buổi thì không cần. Một video có
+thể đổi riêng bằng `color_match` trong kế hoạch dựng.
 
 ## Thân file
 - **Giọng văn**: 2–6 tính từ; nên/không nên viết thế nào (xưng hô, độ dài câu); câu cửa miệng.

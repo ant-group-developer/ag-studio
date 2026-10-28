@@ -100,7 +100,21 @@ describe("runAgentTurn with the fake CLI", { timeout: 60_000 }, () => {
 
   it("a turn past its deadline is stopped as a timeout", async () => {
     const { options } = setup();
-    expect((await runAgentTurn(options({ prompt: "@fake hang", deadlineMs: 1500 }))).status).toBe("timeout");
+    expect(await runAgentTurn(options({ prompt: "@fake hang", deadlineMs: 1500 }))).toMatchObject({ status: "timeout", timeout: "deadline" });
+  });
+
+  it("a CLI that keeps printing outlives the idle limit; a quiet one is stopped after it", async () => {
+    const { options } = setup();
+    // 3 s of quiet at most (the fake CLI may take more than a second to start on a busy machine), working twice that
+    expect(await runAgentTurn(options({ prompt: "@fake busy 6000 200\n@fake say xong", idleMs: 3000 }))).toMatchObject({ status: "done", text: "xong", timeout: null });
+    const started = Date.now();
+    expect(await runAgentTurn(options({ prompt: "@fake say đang làm\n@fake hang", idleMs: 3000, resume: true }))).toMatchObject({ status: "timeout", timeout: "idle", text: "đang làm" });
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("the hard cap stops a CLI however busy it is", async () => {
+    const { options } = setup();
+    expect(await runAgentTurn(options({ prompt: "@fake busy 20000 200", idleMs: 3000, deadlineMs: 4000 }))).toMatchObject({ status: "timeout", timeout: "deadline" });
   });
 
   it("the plan's limit is a rate limit, not a failure", async () => {

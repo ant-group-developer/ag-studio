@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { shotId, studioSourceId } from "@harness/core";
 import type { StudioDb } from "../studio-db.js";
 import type { InputShots } from "./prepare.js";
-import { getPrepared, listSources, videoAssetIds } from "./sources-db.js";
+import { FOOTAGE_KIND_SQL, getPrepared, isFootageKind, listSources, videoAssetIds } from "./sources-db.js";
 
 export const VIDEO_INDEX_SCHEMA = "studio.video-sources/v1";
 export const videoIndexPath = (videoId: string) => `videos/${videoId}/sources/index.json`;
@@ -42,7 +42,7 @@ function readShots(dir: string, assetId: string): InputShots | null {
 }
 
 export async function buildVideoIndex(db: StudioDb, dir: string, projectId: string, videoId: string): Promise<VideoIndex> {
-  const labels = new Map((await listSources(db, projectId, { videoId })).filter((s) => s.kind === "ag_go_asset").map((s) => [s.ref, s.label]));
+  const labels = new Map((await listSources(db, projectId, { videoId })).filter((s) => isFootageKind(s.kind)).map((s) => [s.ref, s.label]));
   const assetIds = await videoAssetIds(db, projectId, videoId);
   const prepared = await Promise.all(assetIds.map((assetId) => getPrepared(db, projectId, assetId)));
   const sources = assetIds.map((assetId, index): VideoIndexSource => {
@@ -73,7 +73,7 @@ export async function writeVideoIndex(db: StudioDb, dir: string, projectId: stri
 /** Every video of the project cut from `assetId` gets its index written again (after the asset was prepared). */
 export async function writeVideoIndexesFor(db: StudioDb, dir: string, projectId: string, assetId: string): Promise<string[]> {
   const videos = (await db.all<{ video_id: string }>(
-    "SELECT DISTINCT video_id FROM project_sources WHERE project_id = ? AND kind = 'ag_go_asset' AND ref = ? AND video_id IS NOT NULL", [projectId, assetId],
+    `SELECT DISTINCT video_id FROM project_sources WHERE project_id = ? AND ${FOOTAGE_KIND_SQL} AND ref = ? AND video_id IS NOT NULL`, [projectId, assetId],
   )).map((r) => r.video_id);
   for (const v of videos) await writeVideoIndex(db, dir, projectId, v);
   return videos;

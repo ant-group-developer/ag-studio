@@ -5,7 +5,7 @@
  */
 import { join } from "node:path";
 import { z } from "zod";
-import { TimelineOpSchema, type TimelineV4 } from "@harness/contracts";
+import { isTailTransition, TimelineOpSchema, type TimelineV4 } from "@harness/contracts";
 import { applyTimelineOps, timelineIssues, type TimelineIssue } from "@harness/core";
 import { StudioRunError } from "../errors.js";
 import { AUDIO_MAX_BYTES, AudioImportError, MUSIC_CROSSFADE_MAX_SECONDS, MUSIC_MIX_MAX_PARTS } from "../audio-import.js";
@@ -49,13 +49,14 @@ export function timelineSummary(t: TimelineV4, revision: number, label: string |
       shot_id: c.shot_id, line_id: c.line_id, section_title: c.section_title, transition: c.transition_out.kind, ...(c.muted ? { muted: true } : {}),
       ...(c.gain_db ? { gain_db: c.gain_db } : {}),
     };
-    at += len - (c.transition_out.kind === "dissolve" ? c.transition_out.seconds : 0);
+    at += len - (isTailTransition(c.transition_out.kind) ? c.transition_out.seconds : 0);
     return row;
   });
   return {
     revision, label, approx_seconds: r2(at), canvas: t.canvas, fps: t.fps, clips, texts: t.texts,
     narration: { voice: t.narration.voice, lines: t.narration.lines.map((l) => ({ line_id: l.line_id, text: l.text })) },
     music: t.music, captions: t.captions, source_muted: t.source_audio.muted, ...(t.source_audio.even ? { source_even: true } : {}),
+    ...(t.color_match ? { color_match: true } : {}),
     issues: timelineIssues(t).map((i) => `[${i.severity}] ${i.message}`),
   };
 }
@@ -120,7 +121,7 @@ export function timelineView(t: TimelineV4, revision: number, label: string | nu
       gain_clips: t.clips.filter((c) => c.gain_db).length,
     },
     sections, music: t.music, narration_voice: t.narration.voice, captions: t.captions.mode, source_muted: t.source_audio.muted,
-    ...(t.source_audio.even ? { source_even: true } : {}), look: t.look ?? "none",
+    ...(t.source_audio.even ? { source_even: true } : {}), look: t.look ?? "none", ...(t.color_match ? { color_match: true } : {}),
     issues: full.issues,
     read_more: "Đọc từng khúc: view \"clips\" hoặc \"texts\" với from_s/to_s (giây trong video); view \"full\" khi thật cần cả timeline.",
   };
@@ -182,11 +183,11 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     description: [
       "Sửa timeline bằng các thao tác (tối đa 50), lưu thành bản mới. `base_revision` là bản bạn đã đọc (timeline_get); bản mới hơn đã có thì bị từ chối: đọc lại rồi sửa.",
       "Thao tác: addClip {asset_id, index}, removeClip {clip_id}, moveClip {from, to}, replaceClipAsset {clip_id, asset_id}, trimClip {clip_id, in, out|null},",
-      "setTransition {clip_id, kind: cut|dissolve|dip_black, seconds}, setClipMuted {clip_id, muted}, setClipGain {clip_id, gain_db (-30..20; 0 = như gốc)}, setSectionTitle {clip_id, title|null},",
+      "setTransition {clip_id, kind: cut|dissolve|dip_black|dip_white|wipe_left|wipe_right|slide_left|slide_right|zoom_in|smooth_left, seconds}, setClipMuted {clip_id, muted}, setClipGain {clip_id, gain_db (-30..20; 0 = như gốc)}, setSectionTitle {clip_id, title|null},",
       "addText {kind, text (≤ 120 ký tự), start, duration (≤ 600 s), position, size?: s|m|l}, updateText {text_id, kind|null, text|null, start|null, duration|null, position|null, size?}, removeText {text_id} (chữ cùng vị trí cùng lúc tự xếp chồng),",
       "setMusic {music: {track: 'library:…', gain_db, ducking} | null} (giữ đường âm lượng nhạc), setMusicEnvelope {points: [{at (giây trong video), gain_db (-60..0)}] — nhạc theo đường thẳng nối các điểm; [] = bỏ},",
       "setSourceMuted {muted}, setSourceEven {even: tiếng gốc các clip về cùng một mức, máy render đo và bù tối đa ±12 dB}, setCaptions {mode},",
-      "setLook {look: none|natural|vivid|warm|cinematic — màu của hình}. asset_id phải là video đã chuẩn bị của video này.",
+      "setLook {look: none|natural|vivid|warm|cinematic — màu của hình}, setColorMatch {match: máy render đo độ sáng, tương phản, ám màu từng clip và kéo các clip lại gần nhau}. asset_id phải là video đã chuẩn bị của video này.",
     ].join(" "),
     input: z.object({
       video_id: z.string().min(1).optional(),
