@@ -40,11 +40,12 @@ function useStreamUrl(file: WorkspaceFile | undefined, refetch: () => Promise<{ 
 /**
  * One file of the workspace: read (markdown rendered), edit in place and save against the copy you opened (a newer
  * copy is never overwritten silently), its history, delete. Studio's own files are read-only. `tree`: the folder tree
- * beside it, shown or hidden from here.
+ * beside it, shown or hidden from here. `title`: the file's name in words (the Documents tab), shown for its path.
  */
-export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, onAttach, tree }: {
+export function FileView({ projectId, path, title, access, canEdit, onBack, onDeleted, onAttach, tree }: {
   projectId: string;
   path: string;
+  title?: string | undefined;
   /** What the workspace lets a person do with this path (Studio's own files are read-only). */
   access: FileAccess;
   canEdit: boolean;
@@ -129,7 +130,7 @@ export function FileView({ projectId, path, access, canEdit, onBack, onDeleted, 
           </Tooltip>
         ) : null}
         <Tooltip title={t("ws.files.back")}><button type="button" className="ws-icon-button" onClick={onBack} aria-label={t("ws.files.back")}><ArrowLeft size={16} /></button></Tooltip>
-        <span className="ws-file__path" title={path}>{path}</span>
+        {title ? <span className="ws-file__path ws-file__path--name">{title}</span> : <span className="ws-file__path" title={path}>{path}</span>}
         {file && !file.binary && mode !== "edit" && writable ? (
           <Tooltip title={t("ws.files.edit")}><button type="button" className="ws-icon-button" onClick={startEdit} aria-label={t("ws.files.edit")}><Pencil size={16} /></button></Tooltip>
         ) : null}

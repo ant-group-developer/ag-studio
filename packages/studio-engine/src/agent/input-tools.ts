@@ -99,7 +99,7 @@ export const INPUT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "footage_search",
-    description: "Tìm video đã phân tích trong các project {{site}} của dự án (người dùng chọn ở tab Đầu vào). `q` tìm theo nội dung (tiếng Việt được), bỏ trống để liệt kê. Trả id, tên, độ dài, có lời nói không, tóm tắt, trạng thái chuẩn bị.",
+    description: "Tìm video đã phân tích trong các project {{site}} của dự án (người dùng chọn ở tab Nguồn). `q` tìm theo nội dung (tiếng Việt được), bỏ trống để liệt kê. Trả id, tên, độ dài, có lời nói không, tóm tắt, trạng thái chuẩn bị.",
     input: z.object({
       q: z.string().trim().min(1).max(200).optional(),
       ag_go_project_id: z.string().min(1).optional(),
@@ -108,7 +108,7 @@ export const INPUT_TOOLS: AgentTool[] = [
     }).strict(),
     run: async (ctx, a) => {
       const { footage, projects } = await footageOf(ctx);
-      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào. Nhờ người dùng chọn ở tab Đầu vào.`, isError: true };
+      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào. Nhờ người dùng chọn ở tab Nguồn.`, isError: true };
       if (a.ag_go_project_id && !projects.includes(a.ag_go_project_id)) {
         return { text: `Project ${siteOf(ctx)} ${a.ag_go_project_id} không thuộc đầu vào của dự án (có: ${projects.join(", ")}).`, isError: true };
       }
@@ -135,7 +135,7 @@ export const INPUT_TOOLS: AgentTool[] = [
     run: async (ctx, a) => {
       const videoId = await targetVideo(ctx, a.video_id);
       const { footage, projects } = await footageOf(ctx);
-      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào: video phải thuộc một project người dùng đã chọn ở tab Đầu vào. Không thêm gì.`, isError: true };
+      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào: video phải thuộc một project người dùng đã chọn ở tab Nguồn. Không thêm gì.`, isError: true };
       const { missing } = await footage.check(projects, a.assets.map((x) => x.asset_id));
       if (missing.length) {
         return { text: `Các video không thuộc project ${siteOf(ctx)} nào của dự án: ${missing.join(", ")}. Không thêm gì. Tìm lại bằng footage_search.`, isError: true };

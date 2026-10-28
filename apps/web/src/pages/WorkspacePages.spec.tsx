@@ -46,7 +46,11 @@ const ws = {
     { path: "context", kind: "dir", size: 0, mtime: "", access: "write" },
     { path: "context/notes.md", kind: "file", size: 10, mtime: "", access: "write" },
     { path: ".studio", kind: "dir", size: 0, mtime: "", access: "read" },
+    { path: ".studio/status.json", kind: "file", size: 10, mtime: "", access: "read" },
+    { path: "videos/v2/brief.md", kind: "file", size: 10, mtime: "", access: "write" },
+    { path: "videos/v2/timeline.json", kind: "file", size: 10, mtime: "", access: "read" },
   ] }),
+  listResearch: vi.fn().mockResolvedValue({ files: [] }),
   readFile: vi.fn(async (_p: string, path: string) => ({
     path, size: 10, sha256: "a".repeat(64), mtime: new Date().toISOString(), mime: "text/markdown", binary: false,
     text: path === "CLAUDE.md" ? "# Du lịch chậm\n\nKênh đi bộ." : "# Ghi chú\n\nmột dòng",
@@ -405,7 +409,7 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     ws.writeFile.mockRejectedValueOnce(new StudioHttpError(409, { code: "file_conflict", message: "x", currentSha256: "b".repeat(64) }));
     mount("/p/p1?tab=files&file=context%2Fnotes.md");
     expect(await screen.findByRole("heading", { name: "Ghi chú" })).toBeInTheDocument();
-    const aside = screen.getByRole("complementary", { name: "Tệp và cài đặt" });
+    const aside = screen.getByRole("complementary", { name: "Tài liệu và nguồn" });
     fireEvent.click(within(aside).getByRole("button", { name: "Sửa" }));
     const editor = await screen.findByLabelText("context/notes.md");
     fireEvent.change(editor, { target: { value: "# Ghi chú\n\nhai dòng" } });
@@ -417,11 +421,28 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.writeFile).toHaveBeenLastCalledWith("p1", { path: "context/notes.md", content: "# Ghi chú\n\nhai dòng", baseSha256: "b".repeat(64) }));
   });
 
-  it("keeps the folder tree beside an open file: the file is marked, another opens from it, the tree hides", async () => {
+  it("lists the documents by channel and video, without Studio's files, and opens one", async () => {
+    mount("/p/p1");
+    const aside = await screen.findByRole("complementary", { name: "Tài liệu và nguồn" });
+    const channel = await within(aside).findByRole("region", { name: "Kênh" });
+    fireEvent.click(within(channel).getByRole("button", { name: /Ghi chú cho Claude/ }));
+    expect(await screen.findByRole("heading", { name: "Du lịch chậm" })).toBeInTheDocument();
+    fireEvent.click(within(aside).getByRole("button", { name: "Quay lại danh sách tệp" }));
+    expect(within(await within(aside).findByRole("region", { name: "#2 Huế mưa" })).getByRole("button", { name: /Brief/ })).toBeInTheDocument();
+    expect(within(aside).getByRole("region", { name: "Tệp đã thêm" })).toHaveTextContent("notes.md");
+    expect(within(aside).queryByText(/status.json|timeline.json/)).toBeNull();
+    // the folder tree is an admin's
+    expect(within(aside).queryByText("Thư mục")).toBeNull();
+    expect(within(aside).queryByRole("list", { name: "Tệp của dự án" })).toBeNull();
+  });
+
+  it("an admin keeps the folder tree beside an open file: the file is marked, another opens from it, the tree hides", async () => {
+    studio.getMe.mockResolvedValue({ userId: "admin", isAdmin: true });
     localStorage.removeItem("studio.files.tree");
+    localStorage.setItem("studio.docs.view", "tree");
     mount("/p/p1?tab=files&file=context%2Fnotes.md");
     expect(await screen.findByRole("heading", { name: "Ghi chú" })).toBeInTheDocument();
-    const aside = screen.getByRole("complementary", { name: "Tệp và cài đặt" });
+    const aside = screen.getByRole("complementary", { name: "Tài liệu và nguồn" });
     const tree = await within(aside).findByRole("list", { name: "Tệp của dự án" });
     expect(within(tree).getByRole("button", { name: "notes.md" })).toHaveAttribute("aria-current", "true");
     fireEvent.click(within(tree).getByRole("button", { name: "CLAUDE.md" }));
@@ -431,6 +452,7 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     expect(localStorage.getItem("studio.files.tree")).toBe("hidden");
     fireEvent.click(within(aside).getByRole("button", { name: "Hiện cây thư mục" }));
     expect(within(aside).getByRole("list", { name: "Tệp của dự án" })).toBeInTheDocument();
+    localStorage.removeItem("studio.docs.view");
   });
 
   it("adds a video with what it is about and what it learns from", async () => {

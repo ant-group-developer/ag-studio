@@ -44,7 +44,7 @@ describe("research tools", () => {
   it("refuse large crawls: a person runs those", async () => {
     const s = await setup();
     const r = await callAgentTool(s.tools, s.ctx, "youtube_top_channels", { q: "du lịch", max: 25 });
-    expect(r).toMatchObject({ isError: true, text: expect.stringContaining("tab Nghiên cứu") });
+    expect(r).toMatchObject({ isError: true, text: expect.stringContaining("\"Chạy nghiên cứu\" ở tab Tài liệu") });
     expect(await listJobs(s.db, s.project.id)).toEqual([]);
     expect(await callAgentTool(s.tools, { ...s.ctx, role: "viewer" }, "youtube_trending", {})).toMatchObject({ isError: true, text: expect.stringContaining("cần vai editor") });
   });

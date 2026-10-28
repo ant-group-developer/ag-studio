@@ -227,6 +227,32 @@
 .ws-tree__row svg { flex-shrink: 0; color: var(--ws-faint); }
 .ws-tree__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-tree__hint { flex-shrink: 0; font-size: 11px; color: var(--ws-faint); }
+/* The Documents tab: groups of named documents (the tree stays an admin's view) */
+.ws-docs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ws-docs__bar { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--ws-line); }
+.ws-docs__bar .ws-spacer { flex: 1; }
+.ws-docs--tree > .ws-files { min-height: 0; }
+.ws-docs__groups { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 6px 16px; }
+.ws-docs__group + .ws-docs__group { margin-top: 6px; }
+.ws-docs__head { display: flex; align-items: center; gap: 4px; }
+.ws-docs__toggle {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 3px 8px; border: 0; border-radius: 6px;
+  background: none; font: inherit; font-size: 12px; font-weight: 600; color: var(--ws-muted); text-align: left; cursor: pointer;
+}
+.ws-docs__toggle:hover { background: var(--ws-chip); }
+.ws-docs__toggle svg { flex-shrink: 0; color: var(--ws-faint); }
+.ws-docs__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-docs__list { list-style: none; margin: 0; padding: 0 0 0 14px; }
+.ws-docs__item {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; box-sizing: border-box; padding: 3px 8px; border: 0; border-radius: 6px;
+  background: none; font: inherit; font-size: 13px; color: var(--ws-text); text-align: left; cursor: pointer;
+}
+.ws-docs__item:hover { background: var(--ws-chip); }
+.ws-docs__item svg { flex-shrink: 0; color: var(--ws-faint); }
+.ws-docs__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-docs__item .ws-hint { flex-shrink: 0; font-size: 11px; }
+.ws-docs__empty { margin: 2px 0 6px 36px; }
+.ws-file__path--name { direction: ltr; }
 .ws-file { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .ws-file__head { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--ws-line); background: var(--ws-surface); }
 .ws-file__path { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }

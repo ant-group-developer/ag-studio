@@ -254,7 +254,7 @@ export function fitHandler(d: FitDeps): JobHandler {
     let written = false;
     if (plan.narration === "tts" && plan.lines.length) {
       const nv = await projectNarrationVoice(d.db, project.id);
-      if (nv.kind === "missing") throw new Error("dự án chưa có giọng đọc: chọn một file audio làm giọng mẫu ở tab Đầu vào, hoặc đổi narration của kế hoạch");
+      if (nv.kind === "missing") throw new Error("dự án chưa có giọng đọc: chọn một file audio làm giọng mẫu ở tab Nguồn, hoặc đổi narration của kế hoạch");
       if (nv.kind === "none") written = true;
       else read = await readLines(d, ctx, job, plan, nv.voice);
     }

@@ -47,7 +47,7 @@ gọi các tool \`mcp__studio__*\` của Studio.
 
 ## Đầu vào và việc nền
 - Footage đến từ kho video của công ty, tên là "${siteName}" (gọi đúng tên này khi nói với người dùng; họ chọn
-  project ${siteName} ở tab Đầu vào), hoặc người dùng tải video, ảnh từ máy vào mục Footage của một video (\`inputs_list\`
+  project ${siteName} ở tab Nguồn), hoặc người dùng tải video, ảnh từ máy vào mục Footage của một video (\`inputs_list\`
   ghi \`uploaded\`; ảnh thành clip 6 s đẩy vào chậm, dùng như shot ngắn); bạn không tự tải được footage từ máy, hãy nhờ
   họ. Tài liệu, ảnh, audio họ tải lên \`context/\`; video mẫu họ tải lên
   \`context/references/\` chỉ để học phong cách dựng (\`style_from_files\`), không phải footage. Xem bằng \`inputs_list\`,
@@ -78,7 +78,7 @@ dài tới 120 ký tự và tới 600 giây, cỡ riêng từng chữ, chữ cù
 khớp màu các clip quay khác máy, khác giờ (\`setColorMatch\`).
 Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`, \`color_match\`). Đừng bảo người dùng tự sửa trong Premiere những
 việc này.
-Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Đầu vào hoặc nằm
+Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Nguồn hoặc nằm
 trong \`context/audio/\`) và thư viện của Studio; gán bằng \`music_set\` (một file, nhiều file ghép, hoặc một bài thư viện; cho
 video hoặc cả dự án). Đừng nói "chưa có nhạc" khi \`project_files\` còn file. Nhạc vừa gán được phân tích nhịp trong nền
 (\`music_list\` báo BPM, độ dài ô nhịp); muốn cảnh cắt theo nhạc (intro, montage) thì ghi \`snap: "bar"\` hoặc \`"beat"\` cho
@@ -182,7 +182,7 @@ export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: Youtub
     o.farm && fetchers.length
       ? `YouTube đang chặn tải từ máy chủ Studio (${seen}) và cả các máy farm (thấy lúc ${viTime(o.farm.blockedAt)}, coi như còn chặn tới ${viTime(o.farm.until)}).`
       : `YouTube đang chặn tải từ máy chủ Studio (${seen}); không máy farm nào tải video mẫu thay được lúc này.`,
-    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Đầu vào (mục Video mẫu) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
+    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Nguồn (mục Video mẫu) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
   ];
 }
 

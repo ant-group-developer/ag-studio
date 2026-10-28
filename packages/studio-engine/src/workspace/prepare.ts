@@ -186,7 +186,7 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
   if (!ASSET_ID.test(assetId)) throw new Error(`id video ${site} không hợp lệ: ${assetId}`);
   if (!d.preps) throw new Error(`worker này không nối ${site} nên chưa chuẩn bị được video ${site}`);
   const projectIds = await agGoProjectIds(d.db, job.project_id);
-  if (!projectIds.length) throw new Error(`dự án chưa có project ${site} nào: thêm project chứa video này ở tab Đầu vào`);
+  if (!projectIds.length) throw new Error(`dự án chưa có project ${site} nào: thêm project chứa video này ở tab Nguồn`);
 
   const prep = await readyPrep({ ...d, preps: d.preps }, ctx, { projectIds, requestedBy: job.created_by }, assetId, site, req.duration_s ?? null);
   const name = req.name?.trim() || assetId;
@@ -298,7 +298,7 @@ async function readyPrep(
       const call = () => (how === "read" ? d.preps.read(from.projectIds, [assetId]) : d.preps.run(from.projectIds, [assetId], from.requestedBy));
       return pick(await retryBusy(call, ctx.signal, d.retryDelaysMs));
     } catch (e) {
-      if ((e as { status?: number }).status === 404) throw new Error(`video không thuộc project ${site} nào của dự án (hoặc không còn trên ${site}): thêm project chứa nó ở tab Đầu vào`);
+      if ((e as { status?: number }).status === 404) throw new Error(`video không thuộc project ${site} nào của dự án (hoặc không còn trên ${site}): thêm project chứa nó ở tab Nguồn`);
       throw e;
     }
   };

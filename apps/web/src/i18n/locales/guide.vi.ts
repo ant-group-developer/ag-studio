@@ -30,11 +30,11 @@ Tạo dự án: trang danh sách dự án của nhóm, bấm **Dự án mới**,
 
 Mỗi dự án có chat **Kênh** cho việc chung (nghiên cứu thị trường, chiến lược kênh, phong cách dựng, branding) và thêm chat tự do khi cần. Mỗi **video** là một chat riêng với {{ai}}, có các bước gợi ý từ ý tưởng tới bản cuối.
 
-Mẹo: sửa file **CLAUDE.md** ở tab Tệp để nói về kênh, khán giả, giọng văn và những điều không được làm. Mọi chat của dự án đều đọc file này.`,
+Mẹo: sửa file **CLAUDE.md** ở tab Tài liệu để nói về kênh, khán giả, giọng văn và những điều không được làm. Mọi chat của dự án đều đọc file này.`,
     },
     footage: {
       title: "Thêm footage từ {{site}}",
-      body: `Footage của video chỉ đến từ {{site}}. Mở tab **Đầu vào** ở cột phải của dự án:
+      body: `Footage của video chỉ đến từ {{site}}. Mở tab **Nguồn** ở cột phải của dự án:
 - **Thêm project**: chọn một hay nhiều project {{site}}. {{ai}} tìm video trong đó khi làm từng video.
 - Trong một video: chọn đúng các video {{site}} muốn dùng (dạng bảng hoặc lưới, lọc và tìm như trên {{site}}).
 
@@ -48,7 +48,7 @@ Tài liệu (PDF, markdown, CSV…), ảnh và audio: **Tải lên** ở mục T
     },
     audio: {
       title: "Giọng đọc và nhạc nền",
-      body: `Thẻ đầu tiên của tab **Đầu vào**. Giọng và nhạc không bao giờ lấy từ {{site}}.
+      body: `Thẻ đầu tiên của tab **Nguồn**. Giọng và nhạc không bao giờ lấy từ {{site}}.
 
 **Giọng đọc** (vai nhà sản xuất):
 - **Tải giọng mẫu** (3–20 giây) hoặc **Chọn file đã tải**, rồi khai nguồn gốc giọng (giọng máy, giọng của tôi, có bản quyền). Chỉ dùng giọng bạn có quyền dùng.
@@ -83,10 +83,10 @@ Thanh bước trên chat cho biết bước nào xong, bước nào nên làm ti
 - "Mở đầu nhanh hơn, cả video còn khoảng 60 giây."
 - "Đổi nhạc nền sang bài vui hơn."
 
-{{ai}} sửa file rồi dựng lại. Dưới câu trả lời có thẻ **file đã đổi** (Mở, Xem thay đổi). Bạn cũng có thể tự sửa file ở tab Tệp rồi bảo {{ai}} dựng lại.
+{{ai}} sửa file rồi dựng lại. Dưới câu trả lời có thẻ **file đã đổi** (Mở, Xem thay đổi). Bạn cũng có thể tự sửa file ở tab Tài liệu rồi bảo {{ai}} dựng lại.
 
 Gợi ý:
-- Ở tab Tệp, nút **Đưa vào tin nhắn** gắn một file vào tin nhắn đang soạn.
+- Ở tab Tài liệu, nút **Đưa vào tin nhắn** gắn một file vào tin nhắn đang soạn.
 - Việc nặng (render, chuẩn bị footage) chạy nền. Nút **Đang chạy** trên thanh trên cùng cho biết ai đang làm gì, bao lâu, và dừng được.
 - Khi {{ai}} đề xuất một bài học, bấm **Lưu vào bài học dự án** để các video sau làm đúng ngay từ đầu.
 - Việc có tác dụng thật (render bản cuối, xuất Premiere, xoá video) luôn chờ người có vai bấm xác nhận; {{ai}} không tự làm.`,
@@ -102,7 +102,7 @@ Timeline đổi sau khi có thẻ đề xuất thì thẻ hết hiệu lực; nh
     problems: {
       title: "Lỗi thường gặp",
       body: `- **Việc nền đứng ở "đang chờ máy"**: chưa có máy farm nào nhận loại việc này (máy tắt hoặc đang bận). Sau một lúc việc tự dừng và báo vào chat; thử lại sau hoặc báo quản trị.
-- **Footage không chuẩn bị được**: bấm **Thử lại các video lỗi** ở tab Đầu vào. Vẫn lỗi thì xem video đó còn trên {{site}} và còn thuộc một project {{site}} của dự án không.
+- **Footage không chuẩn bị được**: bấm **Thử lại các video lỗi** ở tab Nguồn. Vẫn lỗi thì xem video đó còn trên {{site}} và còn thuộc một project {{site}} của dự án không.
 - **Không thêm được project {{site}}**: thẻ project nói lý do (chỉ xem bản watermark, chưa có video đã phân tích). Cần quyền tải bản gốc của project đó trên {{site}}.
 - **Tin nhắn báo hết hạn mức**: {{ai}} chờ hạn mức gói rồi tự chạy lại tới giờ hẹn. Muốn thôi thì bấm Dừng.
 - **Thẻ xác nhận "hết hiệu lực"**: timeline đã đổi hoặc đã quá 24 giờ. Nhờ {{ai}} đề xuất lại.

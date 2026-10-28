@@ -278,7 +278,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     name: "music_list",
     description: [
       "Mọi nhạc dùng được cho video: nhạc đang gán cho video và cho dự án (`video_music`, `project_music`), file audio của dự án",
-      "(`project_files`: tải lên ở tab Đầu vào hoặc nằm trong context/audio/; gán bằng music_set) và nhạc trong thư viện của Studio",
+      "(`project_files`: tải lên ở tab Nguồn hoặc nằm trong context/audio/; gán bằng music_set) và nhạc trong thư viện của Studio",
       "(`library`, lọc theo tâm trạng `mood`; dùng `track` của bài cho music_set hoặc setMusic, hoặc ghi `music_mood` trong edit-plan.json).",
       "Nhịp của nhạc đang gán (`video_music_beats`, `project_music_beats`: BPM, số phách một ô nhịp, độ dài ô nhịp) để cắt cảnh theo nhịp",
       "(`shots[].snap` trong edit-plan.json).",
@@ -340,7 +340,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
           if (scope === "video") await setVideoLibraryMusic(ctx.db, video!.id, track, level);
           else await setProjectLibraryMusic(ctx.db, ctx.project.id, track, level);
         } else {
-          if (!ctx.audio) return { text: "Máy chủ chưa bật xử lý audio (ffmpeg) nên chưa ghép được file nhạc: dùng bài trong thư viện, hoặc nhờ người dùng chọn nhạc ở tab Đầu vào.", isError: true };
+          if (!ctx.audio) return { text: "Máy chủ chưa bật xử lý audio (ffmpeg) nên chưa ghép được file nhạc: dùng bài trong thư viện, hoặc nhờ người dùng chọn nhạc ở tab Nguồn.", isError: true };
           const known = new Map((await projectAudioFiles(ctx.db, ctx.workspaceDir, ctx.project.id)).map((f) => [f.path, f]));
           const files: { path: string; filename: string }[] = [];
           for (const path of a.files) {

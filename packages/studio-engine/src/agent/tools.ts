@@ -74,7 +74,7 @@ const videoBrief = (title: string, brief: string, now: string) =>
 export const PROJECT_TOOLS: AgentTool[] = [
   tool({
     name: "project_info",
-    description: "Thông tin dự án (kênh) đang làm: tên, kênh YouTube, mô tả, ngôn ngữ, khung hình, cài đặt, giọng đọc và nhạc nền, danh sách video (id, số, tên, trạng thái), và video của luồng này nếu có (kèm nhạc của video: nhạc riêng do người dùng chọn ở tab Đầu vào của video, không có thì nhạc dự án).",
+    description: "Thông tin dự án (kênh) đang làm: tên, kênh YouTube, mô tả, ngôn ngữ, khung hình, cài đặt, giọng đọc và nhạc nền, danh sách video (id, số, tên, trạng thái), và video của luồng này nếu có (kèm nhạc của video: nhạc riêng do người dùng chọn ở tab Nguồn của video, không có thì nhạc dự án).",
     input: z.object({}).strict(),
     run: async (ctx) => ({
       text: json({

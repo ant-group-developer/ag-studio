@@ -18,7 +18,7 @@
 | Bước | Trạng thái | Commit |
 |---|---|---|
 | P1 nhanh | xong: đo trên máy 62 nút (trang Dự án, mọi tab trang dự án, ngăn ag-go) lệch ≤ 0,3 px; nút Bảng/Lưới chỉ còn icon, giữa ô | (commit này) |
-| P2 tab Tài liệu | chưa làm | |
+| P2 tab Tài liệu | xong: tab Tài liệu · Nguồn (+ Xem trước), ⚙ Cài đặt dự án (drawer, `?tab=settings` cũ vẫn mở), Chạy nghiên cứu trong nhóm Nghiên cứu; `CLAUDE.md` hiện là "Ghi chú cho agent"; admin có Tài liệu/Thư mục; render trùng tên kèm giờ. Xem trên máy (tài khoản admin); người thường qua test | (commit này) |
 | P3 tab Phong cách + chữ theo video | chưa làm | |
 | P4 tự chuyển sang chat video | chưa làm | |
 | P5 kiểm tra | chưa làm | |
