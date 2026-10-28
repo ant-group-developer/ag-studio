@@ -180,7 +180,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
               <section aria-label={t("ws.inputs.agGoProjects")}>
                 <div className="ws-inputs__head">
                   <h4 className="ws-inputs__h">{t("ws.inputs.agGoProjects")} <span className="ws-hint">{agGoProjects.length || ""}</span></h4>
-                  {canEdit ? <Button size="small" icon={<Plus size={13} />} onClick={() => setProjectPicker(true)}>{t("ws.inputs.addProject")}</Button> : null}
+                  {canEdit ? <Button size="small" icon={<Plus size={14} />} onClick={() => setProjectPicker(true)}>{t("ws.inputs.addProject")}</Button> : null}
                 </div>
                 {agGoProjects.length ? <AgGoProjectList projects={agGoProjects} canEdit={canEdit} onRemove={(s) => remove.mutate({ source: s })} />
                   : <p className="ws-hint">{t("ws.inputs.noProjectYet")}</p>}
@@ -192,8 +192,8 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                     <h4 className="ws-inputs__h">{videoId ? t("ws.inputs.videoFootage") : t("ws.inputs.preparedFootage")}</h4>
                     {videoId && canEdit ? (
                       <span className="ws-inputs__actions">
-                        <Button size="small" icon={<Plus size={13} />} disabled={!agGoProjects.length} onClick={() => setFootagePicker(true)}>{t("ws.inputs.pickVideos")}</Button>
-                        <Button size="small" icon={<Upload size={13} />} loading={uploadFootage.isPending} title={t("ws.inputs.uploadFootageHint")} onClick={() => footageInput.current?.click()}>
+                        <Button size="small" icon={<Plus size={14} />} disabled={!agGoProjects.length} onClick={() => setFootagePicker(true)}>{t("ws.inputs.pickVideos")}</Button>
+                        <Button size="small" icon={<Upload size={14} />} loading={uploadFootage.isPending} title={t("ws.inputs.uploadFootageHint")} onClick={() => footageInput.current?.click()}>
                           {uploadingFootage.percent !== null ? t("common.uploading", { pct: uploadingFootage.percent }) : t("ws.inputs.uploadFootage")}
                         </Button>
                         <input ref={footageInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadFootage")}
@@ -216,7 +216,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                   <h4 className="ws-inputs__h">{t("ws.inputs.files")}</h4>
                   {canEdit ? (
                     <>
-                      <Button size="small" icon={<Upload size={13} />} loading={upload.isPending} onClick={() => fileInput.current?.click()}>
+                      <Button size="small" icon={<Upload size={14} />} loading={upload.isPending} onClick={() => fileInput.current?.click()}>
                         {uploading.percent !== null ? t("common.uploading", { pct: uploading.percent }) : t("ws.inputs.upload")}
                       </Button>
                       <input ref={fileInput} type="file" multiple hidden accept={UPLOAD_ACCEPT} aria-label={t("ws.inputs.upload")}
@@ -247,7 +247,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
                   <h4 className="ws-inputs__h">{t("ws.inputs.references")}</h4>
                   {canEdit ? (
                     <>
-                      <Button size="small" icon={<Upload size={13} />} loading={uploadReference.isPending} onClick={() => referenceInput.current?.click()}>
+                      <Button size="small" icon={<Upload size={14} />} loading={uploadReference.isPending} onClick={() => referenceInput.current?.click()}>
                         {uploadingReference.percent !== null ? t("common.uploading", { pct: uploadingReference.percent }) : t("ws.inputs.uploadReference")}
                       </Button>
                       <input ref={referenceInput} type="file" multiple hidden accept={REFERENCE_ACCEPT} aria-label={t("ws.inputs.uploadReference")}

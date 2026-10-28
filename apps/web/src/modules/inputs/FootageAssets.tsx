@@ -238,7 +238,7 @@ export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEd
       ) : null}
       {failed.length ? (
         <Popconfirm title={t("ws.inputs.retryAllConfirm", { count: failed.length })} onConfirm={() => onBulk(failed)} okText={t("ws.inputs.retry")} cancelText={t("common.cancel")}>
-          <Button size="small" icon={<RotateCcw size={12} />} loading={bulkBusy}>{t("ws.inputs.retryAll", { count: failed.length })}</Button>
+          <Button size="small" icon={<RotateCcw size={14} />} loading={bulkBusy}>{t("ws.inputs.retryAll", { count: failed.length })}</Button>
         </Popconfirm>
       ) : null}
     </div>

@@ -230,11 +230,11 @@ function MusicActions({ projectId, target, files, enabled, canEdit, current, ext
   const noFiles = files.length ? null : t("ws.audio.whyNoFiles");
   return (
     <div className="ws-audio__actions">
-      <AudioButton why={role ?? noFfmpeg} icon={<Upload size={12} />} loading={upload.isPending} onClick={() => input.current?.click()}>
+      <AudioButton why={role ?? noFfmpeg} icon={<Upload size={14} />} loading={upload.isPending} onClick={() => input.current?.click()}>
         {uploadingLabel ?? t("ws.audio.uploadMusic")}
       </AudioButton>
-      <AudioButton why={role} icon={<Library size={12} />} onClick={() => setLibrary(true)}>{t("ws.audio.fromLibrary")}</AudioButton>
-      <AudioButton why={role ?? noFfmpeg ?? noFiles} icon={<ListMusic size={12} />} onClick={() => setPicking([])}>{t("ws.audio.pickUploaded")}</AudioButton>
+      <AudioButton why={role} icon={<Library size={14} />} onClick={() => setLibrary(true)}>{t("ws.audio.fromLibrary")}</AudioButton>
+      <AudioButton why={role ?? noFfmpeg ?? noFiles} icon={<ListMusic size={14} />} onClick={() => setPicking([])}>{t("ws.audio.pickUploaded")}</AudioButton>
       {extra}
       <input ref={input} type="file" multiple hidden accept={AUDIO_ACCEPT} aria-label={t("ws.audio.uploadMusic")}
         onChange={(e) => { const list = [...(e.target.files ?? [])]; e.target.value = ""; if (list.length) upload.mutate({ list, intoPicker: picking !== null }); }} />
@@ -323,7 +323,7 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
           <AlertTriangle size={14} aria-hidden /> {t("ws.audio.loadFailed")}
           {audio.error instanceof StudioHttpError ? `: ${audio.error.message}` : ""}
         </p>
-        <Button size="small" icon={<RotateCcw size={12} />} onClick={() => void audio.refetch()}>{t("ws.audio.retry")}</Button>
+        <Button size="small" icon={<RotateCcw size={14} />} onClick={() => void audio.refetch()}>{t("ws.audio.retry")}</Button>
       </section>
     );
   }
@@ -344,12 +344,12 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
         <div className="ws-audio__body">
           <div className="ws-audio__line"><strong>{t("ws.audio.voice")}</strong><span className="ws-audio__status">{voiceStatus(t, a.voice)}</span></div>
           <div className="ws-audio__actions">
-            <AudioButton why={voiceRole ?? noFfmpeg} icon={<Upload size={12} />} loading={uploadVoice.isPending} onClick={() => voiceInput.current?.click()}>
+            <AudioButton why={voiceRole ?? noFfmpeg} icon={<Upload size={14} />} loading={uploadVoice.isPending} onClick={() => voiceInput.current?.click()}>
               {uploadVoice.isPending && voiceUpload.percent !== null ? t("common.uploading", { pct: voiceUpload.percent }) : t("ws.audio.uploadVoice")}
             </AudioButton>
-            <AudioButton why={voiceRole ?? noFfmpeg ?? noFiles} icon={<ListMusic size={12} />} onClick={() => setPickingVoice(true)}>{t("ws.audio.pickUploaded")}</AudioButton>
+            <AudioButton why={voiceRole ?? noFfmpeg ?? noFiles} icon={<ListMusic size={14} />} onClick={() => setPickingVoice(true)}>{t("ws.audio.pickUploaded")}</AudioButton>
             {voiceMode !== "none" ? (
-              <AudioButton why={voiceRole} icon={<VolumeX size={12} />} loading={decline.isPending} onClick={() => decline.mutate()}>{t("ws.audio.noNarration")}</AudioButton>
+              <AudioButton why={voiceRole} icon={<VolumeX size={14} />} loading={decline.isPending} onClick={() => decline.mutate()}>{t("ws.audio.noNarration")}</AudioButton>
             ) : null}
             {voiceMode ? (
               <AudioButton why={voiceRole} icon={<X size={12} />} loading={clear.isPending && clear.variables === "voice"} onClick={() => clear.mutate("voice")}>{t("ws.audio.clear")}</AudioButton>
@@ -366,7 +366,7 @@ export function AudioCard({ projectId, canEdit, canProduce }: { projectId: strin
             extra={a.music ? (
               <Tooltip title={t("ws.audio.autoHint")}>
                 <span className="ws-audio__disabled">
-                  <Button size="small" icon={<Sparkles size={12} />} disabled={musicRole !== null} loading={clear.isPending && clear.variables === "music"} onClick={() => clear.mutate("music")}>
+                  <Button size="small" icon={<Sparkles size={14} />} disabled={musicRole !== null} loading={clear.isPending && clear.variables === "music"} onClick={() => clear.mutate("music")}>
                     {t("ws.audio.auto")}
                   </Button>
                 </span>
@@ -416,7 +416,7 @@ export function VideoMusicCard({ projectId, videoId, canEdit }: { projectId: str
     return (
       <section className="ws-audio" aria-label={t("ws.audio.videoMusic")}>
         <p className="ws-error ws-audio__error" role="alert"><AlertTriangle size={14} aria-hidden /> {t("ws.audio.loadFailed")}</p>
-        <Button size="small" icon={<RotateCcw size={12} />} onClick={() => void video.refetch()}>{t("ws.audio.retry")}</Button>
+        <Button size="small" icon={<RotateCcw size={14} />} onClick={() => void video.refetch()}>{t("ws.audio.retry")}</Button>
       </section>
     );
   }
@@ -434,7 +434,7 @@ export function VideoMusicCard({ projectId, videoId, canEdit }: { projectId: str
           <MusicActions projectId={projectId} target={target} files={p?.files ?? v.files} enabled={v.enabled} canEdit={canEdit}
             current={v.uses === "video" && typeof v.music?.track === "string" ? v.music.track : null}
             extra={v.uses === "video" ? (
-              <AudioButton why={canEdit ? null : t("ws.audio.whyEditor")} icon={<RotateCcw size={12} />} loading={back.isPending} onClick={() => back.mutate()}>
+              <AudioButton why={canEdit ? null : t("ws.audio.whyEditor")} icon={<RotateCcw size={14} />} loading={back.isPending} onClick={() => back.mutate()}>
                 {t("ws.audio.useProjectMusic")}
               </AudioButton>
             ) : null} />
@@ -462,8 +462,8 @@ export function UseAudioButtons({ projectId, path, canEdit, canProduce }: { proj
   const noFfmpeg = audio.data && !audio.data.enabled ? t("ws.audio.whyNoFfmpeg") : null;
   return (
     <>
-      {canProduce ? <AudioButton why={noFfmpeg} icon={<Mic size={12} />} onClick={() => setVoicePath(path)}>{t("ws.audio.useAsVoice")}</AudioButton> : null}
-      {canEdit ? <AudioButton why={noFfmpeg} icon={<Music size={12} />} loading={music.isPending} onClick={() => music.mutate()}>{t("ws.audio.useAsMusic")}</AudioButton> : null}
+      {canProduce ? <AudioButton why={noFfmpeg} icon={<Mic size={14} />} onClick={() => setVoicePath(path)}>{t("ws.audio.useAsVoice")}</AudioButton> : null}
+      {canEdit ? <AudioButton why={noFfmpeg} icon={<Music size={14} />} loading={music.isPending} onClick={() => music.mutate()}>{t("ws.audio.useAsMusic")}</AudioButton> : null}
       <VoiceOriginModal projectId={projectId} path={voicePath} onClose={() => setVoicePath(null)} />
     </>
   );

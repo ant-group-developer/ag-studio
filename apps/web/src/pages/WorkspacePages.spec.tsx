@@ -149,7 +149,8 @@ describe("workspace pages", { timeout: 20_000 }, () => {
   it("lists the team's projects and makes a new one for a channel", async () => {
     mount("/t/team-1");
     expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
-    expect(screen.getByText(/^2 video ·/)).toBeInTheDocument();
+    // the list opens as a table
+    expect(within(screen.getByRole("row", { name: /Du lịch chậm/ })).getByText("2")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: /Dự án mới/ })[0]!);
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Tên dự án"), { target: { value: "Ẩm thực Huế" } });
@@ -220,7 +221,7 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.listProjects).toHaveBeenCalledWith("team-205"));
   });
 
-  it("lists a team's projects as cards or a table, found by name and sorted", async () => {
+  it("lists a team's projects as a table or cards, found by name and sorted", async () => {
     localStorage.removeItem("studio.projects.viewMode");
     ws.listProjects.mockResolvedValueOnce({ projects: [
       { ...project, videoCount: 2, lastActivityAt: "2026-10-10T08:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z" },
@@ -228,7 +229,16 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     ] });
     mount("/t/team-1");
     expect(await screen.findByText("Du lịch chậm")).toBeInTheDocument();
+    // a table first; a sticky header is a table of its own above the rows
+    await screen.findAllByRole("table");
+    const table = document.querySelector<HTMLElement>(".ws-page .ant-table-sticky-holder")!.closest<HTMLElement>(".ant-table")!;
+    expect(within(table).getByRole("link", { name: "Ẩm thực Huế" })).toHaveAttribute("href", "/p/p2");
+    expect(within(table).getByText("@dulichcham")).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Người tạo" })).toBeInTheDocument();
+    expect(within(table).getByText("An Nguyễn")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Lưới"));
     expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Ẩm thực Huế", "Du lịch chậm"]);
+    expect(localStorage.getItem("studio.projects.viewMode")).toBe("grid");
     // who made each: the name, else the email
     expect([...document.querySelectorAll(".ws-card .ws-creator__name")].map((e) => e.textContent)).toEqual(["binh@ant-group.net", "An Nguyễn"]);
     fireEvent.click(screen.getByText("Do tôi tạo"));
@@ -236,16 +246,6 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     fireEvent.click(screen.getByText("Tất cả"));
     fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "phố cổ" } });
     expect([...document.querySelectorAll(".ws-card__title")].map((e) => e.textContent)).toEqual(["Du lịch chậm"]);
-    fireEvent.change(screen.getByLabelText("Tìm dự án theo tên, kênh, mô tả"), { target: { value: "" } });
-    fireEvent.click(screen.getByTitle("Bảng"));
-    // a sticky header is a table of its own above the rows
-    await screen.findAllByRole("table");
-    const table = document.querySelector<HTMLElement>(".ws-page .ant-table-sticky-holder")!.closest<HTMLElement>(".ant-table")!;
-    expect(within(table).getByRole("link", { name: "Ẩm thực Huế" })).toHaveAttribute("href", "/p/p2");
-    expect(within(table).getByText("@dulichcham")).toBeInTheDocument();
-    expect(within(table).getByRole("columnheader", { name: "Người tạo" })).toBeInTheDocument();
-    expect(within(table).getByText("An Nguyễn")).toBeInTheDocument();
-    expect(localStorage.getItem("studio.projects.viewMode")).toBe("table");
   });
 
   it("someone in no team yet makes one from the home page", async () => {

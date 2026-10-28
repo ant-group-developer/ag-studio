@@ -145,7 +145,7 @@ export function MusicPicker({ files, initial, busy, onUse, onUploadMore, uploadi
           {!shown.length ? <li className="ws-hint ws-mpick__none">{t("ws.audio.noFileMatch")}</li> : null}
         </ul>
         {onUploadMore ? (
-          <Button size="small" icon={<Plus size={13} />} loading={!!uploading} onClick={onUploadMore} className="ws-mpick__more">
+          <Button size="small" icon={<Plus size={14} />} loading={!!uploading} onClick={onUploadMore} className="ws-mpick__more">
             {uploading ?? t("ws.audio.uploadMore")}
           </Button>
         ) : null}

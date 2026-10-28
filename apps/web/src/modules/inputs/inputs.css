@@ -75,7 +75,6 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-action__buttons { display: flex; gap: 8px; }
 
 /* the pickers' filter column, table/grid and pages (after ag-go's Projects and Footage pages) */
-.ws-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .ws-nowrap { white-space: nowrap; }
 .ws-picker2 { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
 .ws-picker2--nofilters { grid-template-columns: minmax(0, 1fr); }
