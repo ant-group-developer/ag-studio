@@ -101,6 +101,8 @@ export async function sweepMediaLibrary(db: StudioDb, bucket: StudioBucket, cuto
   )) for (const k of [r.key, r.clip_key]) if (k) keep.add(k);
   const stale = (await bucket.list("library/studio/users/"))
     .filter((o) => !keep.has(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
+  // footage uploaded before the library keeps its project key (scripts/migrate-media-library.mjs): gone with its item
+  for (const m of gone) for (const k of [m.key, m.clip_key]) if (k && !k.startsWith("library/studio/users/") && !keep.has(k)) stale.push(k);
   if (stale.length) await bucket.deleteMany(stale);
   for (const m of gone) await db.run("DELETE FROM media_items WHERE id = ? AND NOT EXISTS (SELECT 1 FROM project_sources WHERE media_id = ?)", [m.id, m.id]);
   return stale.length;

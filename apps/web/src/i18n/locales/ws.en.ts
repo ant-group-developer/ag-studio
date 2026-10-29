@@ -249,7 +249,7 @@ export const wsEn: Messages<typeof wsVi> = {
     references: "See the reference videos",
     addReferences: "Upload reference videos",
     learn: "Ask {{ai}} to learn the style",
-    learnPrompt: "Learn the edit style from the reference videos I uploaded (Sources tab, Reference videos), then write it to channel/style.md.",
+    learnPrompt: "Learn the edit style from the reference videos I uploaded (Style tab, Reference videos), then write it to channel/style.md.",
     font: "Font",
     hasVietnamese: "Vietnamese accents",
     fontGroup: { latin: "Latin", japanese: "Japanese", korean: "Korean" },
@@ -747,6 +747,7 @@ export const wsEn: Messages<typeof wsVi> = {
     render_frames: "looking at frames of the render",
     music_list: "looking at the music",
     music_set: "setting the background music",
+    look_set: "setting the text and colour look",
     propose_action: "proposing an action",
   },
   toolTarget: {
@@ -1211,8 +1212,8 @@ export const wsEn: Messages<typeof wsVi> = {
     expires: "expires {{when}}",
     expired: "The card has expired (the timeline changed or a day passed). Ask the agent to propose it again.",
     failed: "Could not do it",
-    youtubeBlocked: "YouTube is blocking downloads from the Studio server (since {{since}}) and no farm machine can fetch instead: confirming now will most likely fail. Instead, upload reference videos in the Inputs tab (Reference videos), or describe the edit style in words in the chat.",
-    youtubeBlockedFarm: "YouTube is blocking downloads from the Studio server and from the farm machines (since {{since}}): confirming now will most likely fail. Instead, upload reference videos in the Inputs tab (Reference videos), or describe the edit style in words in the chat.",
+    youtubeBlocked: "YouTube is blocking downloads from the Studio server (since {{since}}) and no farm machine can fetch instead: confirming now will most likely fail. Instead, upload reference videos in the Style tab (Reference videos), or describe the edit style in words in the chat.",
+    youtubeBlockedFarm: "YouTube is blocking downloads from the Studio server and from the farm machines (since {{since}}): confirming now will most likely fail. Instead, upload reference videos in the Style tab (Reference videos), or describe the edit style in words in the chat.",
     kind: {
       render_final: "Final render",
       export_premiere: "Premiere export",

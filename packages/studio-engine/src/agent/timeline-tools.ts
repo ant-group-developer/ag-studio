@@ -5,20 +5,23 @@
  */
 import { join } from "node:path";
 import { z } from "zod";
-import { isTailTransition, TimelineOpSchema, type TimelineV4 } from "@harness/contracts";
+import { isTailTransition, TextLookSchema, TimelineOpSchema, VIDEO_LOOKS, type TimelineV4 } from "@harness/contracts";
 import { applyTimelineOps, timelineIssues, type TimelineIssue } from "@harness/core";
 import { StudioRunError } from "../errors.js";
 import { AUDIO_MAX_BYTES, AudioImportError, MUSIC_CROSSFADE_MAX_SECONDS, MUSIC_MIX_MAX_PARTS } from "../audio-import.js";
 import { listLibraryMusic } from "../music-library.js";
 import { fitInputProblems, queueFit, timelineSnapshotPath, videoAssets, writeTimelineSnapshot } from "../workspace/fit.js";
 import { getJob } from "../workspace/jobs-db.js";
-import { getVideoRevision, latestVideoRevision, requireVideo, saveVideoRevision } from "../workspace/project-db.js";
+import {
+  getVideoRevision, latestVideoRevision, projectOwnLook, requireVideo, saveVideoRevision, setVideoOwnLook, videoOwnLook, type VideoOwnLook,
+} from "../workspace/project-db.js";
 import { RevisionConflictError } from "../studio-db.js";
 import {
   importProjectMusic, importVideoMusic, keepVideoMusicLevels, musicForVideo, projectAudio, projectAudioFiles, projectAudioSummary, setProjectLibraryMusic,
   setVideoLibraryMusic, videoMusicSummary, type MusicFiles,
 } from "../workspace/project-audio.js";
 import { videoMusicToTimeline } from "../workspace/video-music.js";
+import { projectLookView, setProjectLook, videoLookToTimeline, videoLookView } from "../workspace/video-look.js";
 import { musicBeatsStatus, queueMusicBeats } from "../workspace/music-beats.js";
 import { queueRender } from "../workspace/renders.js";
 import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
@@ -281,7 +284,8 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     name: "music_list",
     description: [
       "Mọi nhạc dùng được cho video: nhạc đang gán cho video và cho dự án (`video_music`, `project_music`), file audio của dự án",
-      "(`project_files`: tải lên ở tab Nguồn hoặc nằm trong context/audio/; gán bằng music_set) và nhạc trong thư viện của Studio",
+      "(`project_files`: tải lên ở tab Nguồn hoặc nằm trong context/audio/; file `in_library` nằm trong thư viện của người tải trên kho R2,",
+      "không có trên đĩa nên đừng mở bằng Read/Glob; gán bằng music_set) và nhạc trong thư viện của Studio",
       "(`library`, lọc theo tâm trạng `mood`; dùng `track` của bài cho music_set hoặc setMusic, hoặc ghi `music_mood` trong edit-plan.json).",
       "Nhịp của nhạc đang gán (`video_music_beats`, `project_music_beats`: BPM, số phách một ô nhịp, độ dài ô nhịp) để cắt cảnh theo nhịp",
       "(`shots[].snap` trong edit-plan.json).",
@@ -303,7 +307,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
           ...(videoTrack ? { video_music_beats: await musicBeatsStatus(beats, ctx.project.id, videoTrack) } : {}),
           project_music: (await projectAudioSummary(ctx.db, ctx.project.id)).music,
           ...(projectTrack && projectTrack !== videoTrack ? { project_music_beats: await musicBeatsStatus(beats, ctx.project.id, projectTrack) } : {}),
-          project_files: files.slice(0, 100).map((f) => ({ path: f.path, name: f.name, mb: Math.round(f.bytes / 1024 / 102.4) / 10 })),
+          project_files: files.slice(0, 100).map((f) => ({ path: f.path, name: f.name, mb: Math.round(f.bytes / 1024 / 102.4) / 10, ...(f.key ? { in_library: true } : {}) })),
           library: tracks.slice(0, 60).map((t) => ({ name: t.display_name, mood: t.mood, seconds: Math.round(t.duration_seconds), loop_ok: t.loop_ok, track: t.file })),
           ...(ctx.audio ? {} : { note: "Máy chủ này chưa bật xử lý audio (ffmpeg): music_set chỉ dùng được bài trong thư viện." }),
         }),
@@ -315,7 +319,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     description: [
       "Gán nhạc nền cho video (`scope: video`, mặc định) hoặc cho cả dự án (`scope: project`): một file audio của dự án, hoặc nhiều",
       "file ghép theo thứ tự (`crossfade_s` giây chuyển mờ giữa các bài, 0 = nối thẳng), hoặc một bài thư viện (`files: [\"library:music/…\"]`).",
-      "`files` lấy từ music_list (project_files.path / library.track). `gain_db` (-40..0, mặc định -18), `ducking` (nhạc nhỏ lại khi có lời,",
+      "`files` lấy từ music_list (project_files.path, kể cả file in_library: Studio tự lấy từ kho / library.track). `gain_db` (-40..0, mặc định -18), `ducking` (nhạc nhỏ lại khi có lời,",
       "mặc định có). Timeline mới nhất của video phát nhạc mới ngay (bản timeline mới, giữ đường âm lượng nhạc: có đường đó thì mức nhạc theo đường, không theo gain_db); dựng lại từ kế hoạch cũng dùng nó.",
       "Studio phân tích nhịp của nhạc mới trong nền (job music_beats, vài phút; music_list báo BPM khi xong).",
     ].join(" "),
@@ -375,6 +379,59 @@ export const TIMELINE_TOOLS: AgentTool[] = [
           music: scope === "video" ? await videoMusicSummary(ctx.db, ctx.project.id, video!.id) : (await projectAudioSummary(ctx.db, ctx.project.id)).music,
           timeline_revision: revision,
           note: revision ? `Timeline bản ${revision} phát nhạc này; render_preview để nghe.` : "Timeline chưa có hoặc đã phát nhạc này: lần dựng sau dùng nó.",
+        }),
+      };
+    },
+  }),
+  tool({
+    name: "look_set",
+    description: [
+      "Đổi chữ trên hình (`text_look`: font, cỡ, màu chữ, viền, hộp, bóng) và màu hình (`look`, `color_match`) như tab Phong cách:",
+      "cho video (`scope: video`, mặc định ở luồng video) hoặc cho cả dự án (`scope: project`: mọi video chưa chọn riêng).",
+      "Chỉ gửi phần cần đổi; `null` bỏ phần đó (video thì theo dự án, dự án thì theo kế hoạch dựng rồi branding).",
+      "`every_video` (chỉ với scope project) bỏ phong cách riêng của mọi video để tất cả theo dự án: hỏi người dùng trước và nói video nào bị thay.",
+      "Timeline mới nhất của các video nhận ngay (bản timeline mới). Chỉ dùng khi người dùng nhờ; đừng ghi những thứ này vào edit-plan.json.",
+    ].join(" "),
+    input: z.object({
+      scope: z.enum(["video", "project"]).optional(),
+      video_id: z.string().min(1).optional(),
+      text_look: TextLookSchema.nullable().optional(),
+      look: z.enum(VIDEO_LOOKS).nullable().optional(),
+      color_match: z.boolean().nullable().optional(),
+      every_video: z.boolean().optional(),
+    }).strict(),
+    role: "editor",
+    run: async (ctx, a) => {
+      const scope = a.scope ?? (a.video_id ?? ctx.video ? "video" : "project");
+      if (a.text_look === undefined && a.look === undefined && a.color_match === undefined && !a.every_video) {
+        return { text: "Không có gì để đổi: gửi text_look, look, color_match (null = bỏ), hoặc every_video.", isError: true };
+      }
+      // only what was sent changes; the rest of the pick stays
+      const changed = (own: VideoOwnLook): VideoOwnLook => ({
+        text_look: a.text_look === undefined ? own.text_look : a.text_look,
+        look: a.look === undefined ? own.look : a.look,
+        color_match: a.color_match === undefined ? own.color_match : a.color_match,
+      });
+      if (scope === "video") {
+        if (a.every_video) return { text: "every_video chỉ dùng với scope: project.", isError: true };
+        const v = await videoOf(ctx, a.video_id);
+        await setVideoOwnLook(ctx.db, v.id, changed(await videoOwnLook(ctx.db, v.id)), ctx.now());
+        const revision = await videoLookToTimeline(ctx.db, { workspaceDir: ctx.workspaceDir, projectId: ctx.project.id, videoId: v.id, authorId: ctx.claims.sub, now: ctx.now() });
+        const view = await videoLookView(ctx.db, ctx.workspaceDir, v.id);
+        return { text: json({ scope, video_id: v.id, own: view.own, effective: view.effective, timeline_revision: revision }) };
+      }
+      const r = await setProjectLook(ctx.db, {
+        workspaceDir: ctx.workspaceDir, projectId: ctx.project.id, look: changed(await projectOwnLook(ctx.db, ctx.project.id)), everyVideo: a.every_video ?? false,
+        authorId: ctx.claims.sub, now: ctx.now(),
+      });
+      const view = await projectLookView(ctx.db, ctx.workspaceDir, ctx.project.id);
+      const idx = new Map(view.videos.map((v) => [v.id, v.idx]));
+      return {
+        text: json({
+          scope, project_look: view.own,
+          cleared: r.cleared.map((id) => `#${idx.get(id)}`),
+          own_look_kept: view.videos.filter((v) => v.ownLook).map((v) => `#${v.idx}`),
+          timelines: r.revisions.map((x) => ({ video: `#${idx.get(x.videoId)}`, revision: x.revision })),
         }),
       };
     },

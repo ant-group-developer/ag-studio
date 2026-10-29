@@ -126,7 +126,7 @@ Kế hoạch ban đầu:
 - Phong cách: `GET/PUT /projects/:id/look`, `POST /videos/:id/look/apply-to-project`.
 - Link nghe/xem: 302 tới GET ký sẵn.
 
-### P3 — Web (xong 2026-10-29, chưa commit)
+### P3 — Web (xong 2026-10-29, commit 2b2fc4f)
 
 Đã làm:
 - `common/SectionCard.tsx` (+ `AddMenu`): khung section chung cho ba tab.
@@ -147,19 +147,43 @@ Kế hoạch ban đầu:
 - Modal tải lên chọn nhiều video; chip video trên từng footage.
 - Form phong cách dự án/video.
 
-### P4 — Agent
-- `inputs_list`, `music_list`, `music_set`, `style_from_files` dùng ref như cũ, mô tả rõ file nằm trên R2 (không mở bằng
-  Read/Glob); tool phong cách có `scope`.
-- Chạy một lượt agent thật trên local: chọn nhạc từ file tải lên, học phong cách từ video mẫu, áp phong cách cho mọi video.
+### P4 — Agent (xong 2026-10-29)
 
-### P5 — Chuyển dữ liệu cũ (chạy tay trên VPS)
-- Script `scripts/migrate-media-library.cjs --dry-run | --apply`:
-  - footage đã trên R2 (`…/projects/<p>/footage/`): tạo `media_items` cho người đã tải, **không copy** object (key cũ
-    giữ nguyên);
-  - audio và video mẫu trên đĩa: `putFile` lên thư viện của người tải (`added_by`), gắn `media_id`, chuyển bản trên đĩa
-    vào `.trash/`.
-  - In số file và dung lượng đĩa giải phóng.
-- Thứ tự deploy: migration DB → API + worker cùng lúc → script.
+Đã làm:
+- `inputs_list` và `music_list` (`project_files`) ghi `in_library: true` cho file thư viện. Mô tả tool và prompt nói rõ
+  đường dẫn `context/audio/…`, `context/references/…` của file thư viện chỉ là tên: không mở bằng Read/Glob, audio gán
+  bằng `music_set`, video mẫu đưa cho `style_from_files` (Studio tự tải từ R2).
+- Tool mới `look_set` (`scope: video | project`, chỉ đổi phần được gửi, `null` = bỏ, `every_video` bỏ phong cách riêng của
+  mọi video); prompt bảo agent dùng nó khi người dùng nhờ và hỏi lại trước `every_video`. Nhãn tool vi/en ở web.
+- Gợi ý "tải video mẫu lên tab Nguồn" (prompt, thẻ YouTube bị chặn, `STYLE_INSTEAD`, chuỗi web) đổi sang tab Phong cách.
+- Test: engine (`look_set`, `in_library`), danh sách tool.
+- Lượt agent thật trên local (dự án Du lịch Ninh Bình, luồng Kênh, Claude thật): file `Nhạc sáng.mp3` và `Mẫu nhịp
+  nhanh.mp4` tải lên qua API vào thư viện. Agent gọi `inputs_list` → `music_list` (thấy `in_library`) → `music_set`
+  scope project (API tải từ R2, chuẩn hoá) → `style_from_files` (worker tải video mẫu từ R2: 13 lần cắt/phút, shot
+  trung vị 3,5 s) → `look_set` scope project + `every_video` (Montserrat cỡ lớn, tông ấm; timeline #1, #2 bản mới).
+  Job `music_beats` lỗi vì farm local không chạy.
+- Lỗi có từ trước (không thuộc P4): job `continue_agent` xong **trong lúc** lượt đã tạo nó còn chạy thì không có lượt
+  tiếp (`queueTurn` bỏ khi đang chạy, `queueFollowUp` chỉ theo tin của người) → agent không viết `channel/style.md` sau
+  khi học xong.
+
+### P5 — Chuyển dữ liệu cũ (xong 2026-10-29, chạy tay trên VPS)
+
+Đã làm:
+- `workspace/media-migrate.ts` `migrateMediaLibrary(db, bucket, {workspacesRoot, apply})`:
+  - footage `upload_asset` chưa có `media_id`: một `media_items` mỗi asset (id = asset id, chủ = `added_by`, **key cũ**,
+    không copy), mọi dòng nguồn của asset gắn `media_id`; key không còn trên kho thì bỏ qua;
+  - audio và video dưới `context/` trên đĩa (dòng `upload`, và file tải qua tab Tài liệu không có dòng → chủ dự án):
+    `putFile` lên thư viện, dòng nguồn gắn `media_id` + `meta.key` (giữ nguyên `ref`), file đĩa chuyển vào
+    `.trash/media-library-<giờ>/` (sweep xoá sau `workspaceDays`); video thành video mẫu; quá cỡ hoặc mất file thì bỏ qua
+    và liệt kê; tài liệu, ảnh ở lại;
+  - chạy lại chỉ làm phần còn lại.
+- `sweepMediaLibrary` xoá cả key cũ (`…/projects/<p>/footage/…`) của item đã xoá khỏi thư viện và không dự án nào dùng.
+- CLI `packages/studio-engine/scripts/migrate-media-library.mjs --dry-run | --apply` (đặt cạnh script chuyển SQLite; cần
+  `dist/`), đọc env như API: `DATABASE_URL`, `STUDIO_R2_*`, `STUDIO_WORKSPACES_ROOT` hoặc `STUDIO_DATA_ROOT`; in từng
+  file, số file, dung lượng đĩa giải phóng, số bỏ qua.
+- Test `media-migrate.test.ts` (3). Chạy trên local: dry-run rồi apply, 5 file audio (6,7 MB) lên R2 dev, dự án đọc lại
+  qua API (`mediaId` có, thư viện thấy file).
+- Thứ tự deploy: migration DB (API tự áp khi khởi động) → API + worker cùng lúc → `--dry-run` → `--apply`.
 
 ## Cần chốt
 

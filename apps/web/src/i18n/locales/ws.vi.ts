@@ -246,7 +246,7 @@ export const wsVi = {
     references: "Xem video tham khảo",
     addReferences: "Tải video tham khảo",
     learn: "Nhờ {{ai}} học phong cách",
-    learnPrompt: "Hãy học phong cách dựng từ các video tham khảo tôi đã tải lên (tab Nguồn, mục Video tham khảo), rồi viết vào channel/style.md.",
+    learnPrompt: "Hãy học phong cách dựng từ các video tham khảo tôi đã tải lên (tab Phong cách, mục Video tham khảo), rồi viết vào channel/style.md.",
     font: "Font chữ",
     hasVietnamese: "có dấu tiếng Việt",
     fontGroup: { latin: "Chữ Latin", japanese: "Tiếng Nhật", korean: "Tiếng Hàn" },
@@ -744,6 +744,7 @@ export const wsVi = {
     render_frames: "xem khung hình bản render",
     music_list: "xem nhạc dùng được",
     music_set: "gán nhạc nền",
+    look_set: "đặt phong cách chữ và màu",
     propose_action: "đề xuất thao tác",
   },
   toolTarget: {
@@ -1209,8 +1210,8 @@ export const wsVi = {
     expires: "hết hạn {{when}}",
     expired: "Thẻ đã hết hiệu lực (timeline đã đổi hoặc quá 24 giờ). Nhờ agent đề xuất lại.",
     failed: "Không thực hiện được",
-    youtubeBlocked: "YouTube đang chặn tải từ máy chủ Studio (từ {{since}}) và không máy farm nào tải thay được: xác nhận lúc này nhiều khả năng sẽ lỗi. Cách khác: tải video mẫu lên tab Nguồn (mục Video tham khảo), hoặc tả phong cách dựng bằng lời trong chat.",
-    youtubeBlockedFarm: "YouTube đang chặn tải từ máy chủ Studio lẫn các máy farm (từ {{since}}): xác nhận lúc này nhiều khả năng sẽ lỗi. Cách khác: tải video mẫu lên tab Nguồn (mục Video tham khảo), hoặc tả phong cách dựng bằng lời trong chat.",
+    youtubeBlocked: "YouTube đang chặn tải từ máy chủ Studio (từ {{since}}) và không máy farm nào tải thay được: xác nhận lúc này nhiều khả năng sẽ lỗi. Cách khác: tải video mẫu lên tab Phong cách (mục Video tham khảo), hoặc tả phong cách dựng bằng lời trong chat.",
+    youtubeBlockedFarm: "YouTube đang chặn tải từ máy chủ Studio lẫn các máy farm (từ {{since}}): xác nhận lúc này nhiều khả năng sẽ lỗi. Cách khác: tải video mẫu lên tab Phong cách (mục Video tham khảo), hoặc tả phong cách dựng bằng lời trong chat.",
     kind: {
       render_final: "Render bản cuối",
       export_premiere: "Xuất Premiere",

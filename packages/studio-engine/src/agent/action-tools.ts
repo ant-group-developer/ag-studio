@@ -40,7 +40,7 @@ export const ACTION_TOOLS: AgentTool[] = [
           blocked.where === "farm"
             ? "Chưa tạo thẻ: YouTube đang chặn tải từ máy chủ Studio và cả các máy farm (đòi đăng nhập để xác nhận không phải bot), nên tải video mẫu chắc chắn hỏng."
             : "Chưa tạo thẻ: YouTube đang chặn tải từ máy chủ Studio (đòi đăng nhập để xác nhận không phải bot) và không máy farm nào tải thay được, nên tải video mẫu chắc chắn hỏng.",
-          "Studio không dùng cookie hay đăng nhập để lách. Hãy nói rõ với người dùng và đề nghị: tải video mẫu lên tab Nguồn",
+          "Studio không dùng cookie hay đăng nhập để lách. Hãy nói rõ với người dùng và đề nghị: tải video mẫu lên tab Phong cách",
           "(mục Video tham khảo) rồi học bằng style_from_files, hoặc tả phong cách dựng bằng lời.",
         ].join(" "), { code: "youtube_blocked", where: blocked.where, until: blocked.until });
       }

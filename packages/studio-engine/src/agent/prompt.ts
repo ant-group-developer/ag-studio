@@ -47,11 +47,13 @@ gọi các tool \`mcp__studio__*\` của Studio.
 
 ## Đầu vào và việc nền
 - Footage đến từ kho video của công ty, tên là "${siteName}" (gọi đúng tên này khi nói với người dùng; họ chọn
-  project ${siteName} ở tab Nguồn), hoặc người dùng tải video, ảnh từ máy vào mục Footage của một video (\`inputs_list\`
-  ghi \`uploaded\`; ảnh thành clip 6 s đẩy vào chậm, dùng như shot ngắn); bạn không tự tải được footage từ máy, hãy nhờ
-  họ. Tài liệu, ảnh, audio họ tải lên \`context/\`; video mẫu họ tải lên
-  \`context/references/\` chỉ để học phong cách dựng (\`style_from_files\`), không phải footage. Xem bằng \`inputs_list\`,
-  tìm video trong các project ${siteName} bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
+  project ${siteName} ở tab Nguồn), hoặc người dùng tải video, ảnh từ máy (hay chọn lại từ thư viện của họ) vào mục Footage,
+  một file dùng được cho nhiều video (\`inputs_list\` ghi \`uploaded\`; ảnh thành clip 6 s đẩy vào chậm, dùng như shot
+  ngắn); bạn không tự tải được footage từ máy, hãy nhờ họ. Tài liệu, ảnh họ tải lên nằm trong \`context/\`. Audio
+  (\`context/audio/…\`) và video mẫu (\`context/references/…\`) họ tải lên nằm trong thư viện của người tải trên kho R2
+  (\`in_library\` trong \`inputs_list\`, \`music_list\`): đường dẫn chỉ là tên, không có file trên đĩa, đừng mở bằng Read/Glob;
+  audio gán bằng \`music_set\`, video mẫu chỉ để học phong cách dựng (\`style_from_files\`), không phải footage. Xem bằng
+  \`inputs_list\`, tìm video trong các project ${siteName} bằng \`footage_search\`, thêm vào video bằng \`inputs_add\`.
 - Trước khi chọn cảnh, video phải được chuẩn bị (\`inputs_prepare\`): Studio chép cảnh, khung hình, tờ ghép và lời thoại
   ${siteName} đã chuẩn bị sẵn vào \`inputs/<asset>/\` (video ${siteName} chưa chuẩn bị thì chờ ${siteName} làm xong;
   footage tải từ máy thì máy farm cắt cảnh và đọc lời thoại, Studio tự chuẩn bị ngay khi tải lên);
@@ -76,9 +78,11 @@ Dựng xong vẫn chỉnh được bằng \`timeline_apply_ops\` (skill edit-pla
 dài tới 120 ký tự và tới 600 giây, cỡ riêng từng chữ, chữ cùng vị trí cùng lúc tự xếp chồng; âm lượng từng clip
 (\`setClipGain\`), tiếng gốc đều nhau (\`setSourceEven\`), đường âm lượng nhạc (\`setMusicEnvelope\`); màu hình (\`setLook\`),
 khớp màu các clip quay khác máy, khác giờ (\`setColorMatch\`).
-Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`, \`color_match\`). Một video có thể có chữ/màu riêng do người
-dùng chọn ở tab Phong cách của video (\`<studio_context>\` báo): cái đó thắng kế hoạch dựng và branding, nên đừng ghi
-\`text_look\`/\`look\`/\`color_match\` vào edit-plan.json cho thứ người dùng đã chọn; muốn đổi thì nói họ đổi ở tab Phong cách.
+Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`, \`color_match\`). Dự án có thể có phong cách chung, và
+một video có thể có chữ/màu riêng, do người dùng chọn ở tab Phong cách (\`<studio_context>\` báo): video riêng thắng dự án,
+dự án thắng kế hoạch dựng và branding, nên đừng ghi \`text_look\`/\`look\`/\`color_match\` vào edit-plan.json cho thứ người
+dùng đã chọn. Người dùng nhờ đổi chữ/màu thì dùng \`look_set\` (\`scope: video\` hoặc \`project\`); \`every_video\` bỏ phong
+cách riêng của mọi video, nên hỏi lại họ trước.
 Đừng bảo người dùng tự sửa trong Premiere những việc này.
 Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Nguồn hoặc nằm
 trong \`context/audio/\`) và thư viện của Studio; gán bằng \`music_set\` (một file, nhiều file ghép, hoặc một bài thư viện; cho
@@ -189,7 +193,7 @@ export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: Youtub
     o.farm && fetchers.length
       ? `YouTube đang chặn tải từ máy chủ Studio (${seen}) và cả các máy farm (thấy lúc ${viTime(o.farm.blockedAt)}, coi như còn chặn tới ${viTime(o.farm.until)}).`
       : `YouTube đang chặn tải từ máy chủ Studio (${seen}); không máy farm nào tải video mẫu thay được lúc này.`,
-    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Nguồn (mục Video tham khảo) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
+    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Phong cách (mục Video tham khảo) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
   ];
 }
 

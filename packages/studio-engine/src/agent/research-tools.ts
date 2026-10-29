@@ -99,11 +99,12 @@ export const RESEARCH_TOOLS: AgentTool[] = [
   tool({
     name: "style_from_files",
     description: [
-      "Học phong cách dựng từ video mẫu người dùng đã tải lên dự án (file video trong context/, thường context/references/; tối đa 5):",
+      "Học phong cách dựng từ video mẫu người dùng đã tải lên dự án (file video trong context/, thường context/references/, kể cả",
+      "file in_library nằm trên kho R2: Studio tự tải về máy làm việc; tối đa 5):",
       "Studio đo nhịp cắt (độ dài shot, số lần cắt/phút, mở đầu) và ghép khung hình thành tờ ghép trong research/style-<ngày>-<n>/",
       "(README.md, watch.json, *-sheet-*.jpg), không đổi hay xoá file của người dùng. Chạy nền, không cần thẻ xác nhận;",
       "Studio báo vào luồng khi xong, rồi bạn đọc README và tờ ghép để viết channel/style.md.",
-      "Dùng khi người dùng có video mẫu, nhất là khi YouTube đang chặn tải từ máy chủ Studio. Xem file đã tải lên bằng inputs_list.",
+      "Dùng khi người dùng có video mẫu, nhất là khi YouTube đang chặn tải từ máy chủ Studio. Lấy `path` từ inputs_list (reference_video).",
     ].join(" "),
     input: z.object({
       paths: z.array(z.string().min(1).max(300)).min(1).max(STYLE_WATCH_MAX),
