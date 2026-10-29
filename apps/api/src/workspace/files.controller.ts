@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
-  AUDIO_FILE_EXTS, AUDIO_MAX_BYTES, deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, normalizeRelPath, readWorkspaceFile,
+  AUDIO_FILE_EXTS, AUDIO_MAX_BYTES, deleteWorkspaceFile, getFileVersion, listFileVersions, listWorkspaceTree, mimeOf, normalizeRelPath, projectMediaFile, readWorkspaceFile,
   statWorkspaceFile, StudioRunError, validateFileText, versionDiff, writeWorkspaceFile, type FileIssue, type FileVersionRow, type VersionDiff, type WorkspaceEntry,
   type WorkspaceFile,
 } from '@ag-studio/engine';
@@ -20,7 +20,11 @@ import { mapErrors } from '../studio/http-errors';
 import { FileLinkService } from './file-links';
 import { dropRawUpload, RawUploadFields, takeRawUpload, type UploadedTmp } from './raw-uploads';
 import { WorkspaceService } from './workspace.service';
+import { defaultUse, MediaLibraryService } from './media-library.service';
 import { parseBody } from './zod-body';
+import { safeFileName } from './file-names';
+
+export { safeFileName };
 
 /** Largest file a person uploads into the workspace. */
 export const WORKSPACE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
@@ -50,22 +54,6 @@ export function checkFileUpload(name: string, size: number): void {
   if (size > max) throw new PayloadTooLargeException({ code: 'file_too_large', message: `File lớn hơn ${max / 1024 / 1024} MB` });
 }
 
-/** Multipart parsers may hand a UTF-8 file name over as Latin-1 ("Ghi chÃº"): read those bytes as UTF-8 again. */
-function utf8Name(name: string): string {
-  if (/[^\u0000-ÿ]/.test(name) || !/[\u0080-ÿ]/.test(name)) return name;
-  const bytes = Buffer.from(name, 'latin1');
-  const text = bytes.toString('utf8');
-  return Buffer.from(text, 'utf8').equals(bytes) ? text : name;
-}
-
-/** A file name a person gave, made safe for any disk: no folders, no reserved characters, at most 120 characters. */
-export function safeFileName(name: string): string {
-  const base = utf8Name(name).split(/[\\/]/).pop() ?? '';
-  const cleaned = base.replace(/[<>:"|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').trim();
-  const out = cleaned.length > 120 ? cleaned.slice(cleaned.length - 120) : cleaned;
-  if (!out || out === '.' || out === '..') throw new BadRequestException({ code: 'bad_name', message: 'Tên file không hợp lệ' });
-  return out;
-}
 
 /**
  * The project's workspace as files (spec 2026-10-10 agent-workspace §3.1, §6): the tree, a file's text or bytes,
@@ -78,6 +66,7 @@ export class FilesController {
     private readonly engine: EngineService,
     private readonly workspace: WorkspaceService,
     private readonly links: FileLinkService,
+    private readonly media: MediaLibraryService,
   ) {}
 
   @Get()
@@ -95,7 +84,16 @@ export class FilesController {
   @Roles('viewer')
   content(@Param('projectId') projectId: string, @Query('path') path: string, @Req() req: Request): Promise<WorkspaceFile & { issues: FileIssue[]; streamUrl: string | null }> {
     return mapErrors(async () => {
-      const file = readWorkspaceFile(await this.workspace.dir(projectId), this.visible(path));
+      const rel = this.visible(path);
+      // audio and reference videos of someone's media library: on the bucket, played through the same link
+      const stored = await projectMediaFile(this.engine.db, projectId, rel);
+      if (stored) {
+        return {
+          path: rel, size: stored.bytes, mtime: '', mime: mimeOf(rel), sha256: null, binary: true, text: null, issues: [],
+          streamUrl: this.links.url(projectId, rel, req.authContext!.userId),
+        };
+      }
+      const file = readWorkspaceFile(await this.workspace.dir(projectId), rel);
       return {
         ...file, issues: file.text === null ? [] : validateFileText(file.path, file.text),
         streamUrl: file.binary ? this.links.url(projectId, file.path, req.authContext!.userId) : null,
@@ -103,10 +101,15 @@ export class FilesController {
     });
   }
 
-  /** The bytes as they are (images, PDFs, audio), for the web to show: streamed from disk, never held whole. */
+  /**
+   * The bytes as they are (images, PDFs, audio), for the web to show: streamed from disk, never held whole; a file of
+   * someone's media library is a redirect to a short link on the bucket.
+   */
   @Get('raw')
   @Roles('viewer')
-  async raw(@Param('projectId') projectId: string, @Query('path') path: string, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+  async raw(@Param('projectId') projectId: string, @Query('path') path: string, @Res({ passthrough: true }) res: Response): Promise<StreamableFile | void> {
+    const stored = await mapErrors(() => projectMediaFile(this.engine.db, projectId, this.visible(path)));
+    if (stored) return res.redirect(302, await this.engine.bucket.signedGetUrl(stored.key, 900));
     const file = await mapErrors(async () => statWorkspaceFile(await this.workspace.dir(projectId), this.visible(path)));
     res.setHeader('Content-Type', file.mime);
     res.setHeader('Content-Length', String(file.size));
@@ -143,7 +146,9 @@ export class FilesController {
   /**
    * Multipart `file`, or `{uploadKey, name}` once the browser put the file on the bucket (`POST projects/:id/uploads`
    * with `purpose: "file"`); `dir` defaults to `context/uploads`. Saved under its own name, ` (2)`… when taken. Audio
-   * ≤ 300 MB, else ≤ 50 MB.
+   * ≤ 300 MB, else ≤ 50 MB. Audio and video never land on the disk (plan 2026-10-29): they become items of the
+   * person's media library and sources of the project (`context/audio/…`, a video as a reference video), answered as
+   * `{path, size, mediaId, sourceId}` with no checksum or version.
    */
   @Post('upload')
   @Roles('editor')
@@ -154,11 +159,23 @@ export class FilesController {
     let form: z.infer<typeof UploadFormSchema> | null = null;
     try {
       form = parseBody(UploadFormSchema, raw);
+      const userId = req.authContext!.userId;
+      if (!file && this.media.isLibraryKey(userId, form.uploadKey)) {
+        if (!form.name) throw new BadRequestException({ code: 'name_missing', message: 'Thiếu tên file' });
+        const key = form.uploadKey;
+        const name = form.name;
+        return await mapErrors(async () => this.libraryUpload(projectId, await this.media.take(userId, key, name), userId));
+      }
       if (!file && form.uploadKey) {
         if (!form.name) throw new BadRequestException({ code: 'name_missing', message: 'Thiếu tên file' });
         file = await takeRawUpload(this.engine.bucket, projectId, form.uploadKey, form.name, uploadMaxBytes);
       }
       if (!file) throw new BadRequestException({ code: 'file_missing', message: 'Chọn file' });
+      const kind = this.media.kindOf(safeFileName(file.originalname));
+      if (kind === 'audio' || kind === 'video') {
+        const at = file;
+        return await mapErrors(async () => this.libraryUpload(projectId, await this.media.putLocal(userId, at.path, at.originalname, at.size, defaultUse(kind)), userId));
+      }
       checkFileUpload(file.originalname, file.size);
       const dir = await this.workspace.dir(projectId);
       const folder = normalizeRelPath(form.dir ?? 'context/uploads');
@@ -222,6 +239,14 @@ export class FilesController {
   }
 
   /** A path a person may see (hidden folders answer 404, as if absent). */
+  /** An audio file or video of the person's library just uploaded, into the project as audio or a reference video. */
+  private async libraryUpload(projectId: string, item: { id: string; kind: 'video' | 'image' | 'audio' }, userId: string) {
+    const [s] = await this.media.addToProject({
+      projectId, ownerId: userId, mediaIds: [item.id], use: defaultUse(item.kind), workspaceDir: await this.workspace.dir(projectId),
+    });
+    return { path: s!.ref, size: Number((s!.meta as { bytes?: number }).bytes ?? 0), sha256: null, versionId: null, mediaId: item.id, sourceId: s!.id };
+  }
+
   private visible(path: string): string {
     const rel = normalizeRelPath(path);
     if (/^(\.claude|\.git|\.trash)(\/|$)/.test(rel)) throw new StudioRunError('not_found', `không có file ${rel}`);

@@ -279,3 +279,15 @@ export function sourceKey(s: Pick<SourceRecord, "meta">): string | null {
   const m = s.meta as Record<string, unknown> | null;
   return m && typeof m.key === "string" ? m.key : null;
 }
+
+/**
+ * The file on the bucket a project's audio or reference video is named by (`context/audio/…`, `context/references/…`),
+ * or null when the path is no such source (a file of the workspace, or nothing).
+ */
+export async function projectMediaFile(db: StudioDb, projectId: string, ref: string): Promise<{ sourceId: string; key: string; bytes: number; name: string } | null> {
+  const row = await db.get<SourceRecord>(
+    "SELECT * FROM project_sources WHERE project_id = ? AND kind = 'upload' AND ref = ? AND media_id IS NOT NULL ORDER BY added_at, id LIMIT 1", [projectId, ref],
+  );
+  const key = row ? sourceKey(row) : null;
+  return row && key ? { sourceId: row.id, key, bytes: Number((row.meta as Record<string, unknown>).bytes) || 0, name: row.label } : null;
+}

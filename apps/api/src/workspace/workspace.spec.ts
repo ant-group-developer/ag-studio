@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { StreamableFile } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { MemoryBucket } from '@ag-studio/engine';
@@ -18,6 +19,7 @@ import { FilesController, safeFileName } from './files.controller';
 import { ProjectsController } from './projects.controller';
 import { VideosController } from './videos.controller';
 import { WorkspaceService } from './workspace.service';
+import { MediaLibraryService } from './media-library.service';
 
 const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as unknown as Request;
 const OWNER = 'auth0|owner';
@@ -44,7 +46,7 @@ describe('workspace routes (real database and folder)', () => {
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
     projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
-    files = new FilesController(engine, ws, new FileLinkService({ get: () => 's'.repeat(32) } as unknown as ConfigService));
+    files = new FilesController(engine, ws, new FileLinkService({ get: () => 's'.repeat(32) } as unknown as ConfigService), new MediaLibraryService(engine));
     await insertTeam(s.db, 'team-1', OWNER);
   });
   afterEach(async () => { await s.close(); });
@@ -146,7 +148,7 @@ describe('workspace routes (real database and folder)', () => {
     expect([first.path, second.path]).toEqual(['context/uploads/Kịch bản.md', 'context/uploads/Kịch bản (2).md']);
     expect(await failure(files.upload(p.id, {}, undefined, req(OWNER)))).toBe('BadRequestException:file_missing');
     const res = { setHeader: () => undefined } as unknown as Response;
-    expect((await files.raw(p.id, 'context/uploads/Kịch bản.md', res)).getStream()).toBeDefined();
+    expect((await files.raw(p.id, 'context/uploads/Kịch bản.md', res) as StreamableFile).getStream()).toBeDefined();
   });
 
   it('tells a file that is not text from its size alone, with a link to play it, and streams its bytes', async () => {
@@ -161,7 +163,7 @@ describe('workspace routes (real database and folder)', () => {
     const headers: Record<string, string> = {};
     const res = { setHeader: (k: string, v: string) => { headers[k] = v; } } as unknown as Response;
     const chunks: Buffer[] = [];
-    for await (const c of (await files.raw(p.id, 'context/clips/Hội An.mp4', res)).getStream()) chunks.push(c as Buffer);
+    for await (const c of (await files.raw(p.id, 'context/clips/Hội An.mp4', res) as StreamableFile).getStream()) chunks.push(c as Buffer);
     expect(Buffer.concat(chunks).length).toBe(4096);
     expect(headers).toMatchObject({ 'Content-Type': 'video/mp4', 'Content-Length': '4096' });
     expect(await failure(files.raw(p.id, 'context/clips/khong.mp4', res))).toBe('NotFoundException:not_found');

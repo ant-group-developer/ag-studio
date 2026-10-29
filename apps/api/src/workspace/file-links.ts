@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import type { Response } from 'express';
 import {
-  FILE_LINK_TTL_SECONDS, getProject, mimeOf, normalizeRelPath, resolveInside, signFileLink, StudioRunError, verifyFileLink, type FileLinkClaims,
+  FILE_LINK_TTL_SECONDS, getProject, mimeOf, normalizeRelPath, projectMediaFile, resolveInside, signFileLink, StudioRunError, verifyFileLink, type FileLinkClaims,
 } from '@ag-studio/engine';
 import { Public } from '../auth/public.decorator';
 import { EngineService } from '../studio/engine.service';
@@ -47,6 +47,7 @@ export class FileLinkService {
  * Plays a workspace file to a browser element that cannot send a bearer token (`<audio>`, `<video>`, `<img>`, a PDF
  * frame, a download link): no login, the signed link instead, for the one file of the one project it names. Served
  * from disk with ranges (206), so a player seeks without reading the whole file; `download=1` saves it under its name.
+ * Audio and reference videos of someone's media library (plan 2026-10-29) are a redirect to a short link on the bucket.
  */
 @Controller('projects/:projectId/files')
 export class FileStreamController {
@@ -78,6 +79,12 @@ export class FileStreamController {
     if (claims.project !== projectId || claims.path !== rel) throw new ForbiddenException({ code: 'bad_scope', message: 'link không dành cho file này' });
     const project = await getProject(this.engine.db, projectId);
     if (!project || project.archived_at || /^(\.claude|\.git|\.trash)(\/|$)/.test(rel)) throw new NotFoundException({ code: 'not_found', message: `không có file ${rel}` });
+    const stored = await projectMediaFile(this.engine.db, projectId, rel);
+    if (stored) {
+      const url = await this.engine.bucket.signedGetUrl(stored.key, FILE_LINK_TTL_SECONDS, download === '1' ? { downloadName: stored.name } : {});
+      res.redirect(302, url);
+      return;
+    }
     const dir = await this.workspace.dir(projectId);
     let abs: string;
     try {

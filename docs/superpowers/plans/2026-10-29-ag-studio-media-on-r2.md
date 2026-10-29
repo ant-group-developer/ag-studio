@@ -104,7 +104,22 @@ Kế hoạch ban đầu:
 - Cleanup: sweep object thư viện không còn ai dùng và đã xoá mềm.
 - Test với `MemoryBucket`.
 
-### P2 — API
+### P2 — API (xong 2026-10-29)
+
+Đã làm:
+- **Thư viện**: `GET/POST me/media`, `POST me/media/uploads` (ký PUT, `use` kiểm như lúc dùng), `PATCH`/`DELETE me/media/:id`
+  (409 `media_in_use` kèm `projects`); mỗi item có `previewUrl` ký sẵn (1 giờ). `MediaLibraryService` dùng chung.
+- **Tab Nguồn**: `POST projects/:id/uploads` ký vào thư viện cho footage, audio, video mẫu (tài liệu/ảnh vẫn khu tạm
+  `uploads/`); `sources/footage` nhận `videoIds` (vẫn nhận `videoId` và key kiểu cũ theo dự án); `sources/upload`
+  với audio/video mẫu (key thư viện hoặc multipart) thành item + nguồn, không ghi đĩa; mới: `POST sources/from-media`
+  `{mediaIds, use, videoIds?, prepare?}` và `PUT footage/:assetId/videos {videoIds}`.
+- **Tab Tài liệu**: `files/upload` với audio/video vào thư viện (video = video mẫu), trả `{path, size, mediaId, sourceId}`;
+  `files/content` của file thư viện trả thông tin + `streamUrl`; `files/raw` và `files/stream` chuyển 302 tới link R2.
+- **Giọng/nhạc**: `audio/:kind/from-file` và `music/from-files` đọc file thư viện từ R2 (kiểm dung lượng theo `bytes`).
+- **Phong cách dự án**: `GET/PUT projects/:id/look` (`everyVideo` = áp cho mọi video), trả `cleared` và `timelines`.
+- Test: `apps/api/src/workspace/media.spec.ts` (6); `inputs.spec.ts` cập nhật cho key thư viện.
+
+Kế hoạch ban đầu:
 - `POST /me/media/uploads` (ký PUT), `POST /me/media` (nhận key), `GET /me/media`, `DELETE /me/media/:id`.
 - `POST /projects/:id/sources/from-media` `{mediaIds, videoIds | project}`; `PUT …/sources/:id/videos` để thêm/gỡ video.
 - `sources/upload` cho audio/video chuyển qua thư viện; tài liệu/ảnh giữ như cũ (về đĩa).

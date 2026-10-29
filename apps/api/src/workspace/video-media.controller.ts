@@ -11,7 +11,7 @@ import {
   AUDIO_MAX_BYTES, AudioImportError, clearProjectAudio, clearVideoMusic, declineProjectNarration, getLibraryMusic, importProjectAudio,
   importProjectMusic, importVideoMusic, jobView, latestVideoRevision, listJobs, listVideoRevisions, musicForVideo, MUSIC_CROSSFADE_MAX_SECONDS,
   MUSIC_MIX_MAX_PARTS, projectAudio, projectAudioFiles, projectAudioSummary, projectLibraryTrack, queueFit, queueMusicBeats, queueRender, readWorkspaceBytes, RENDER_RESOLUTIONS, requireProject,
-  requireVideo, resolveInside, setProjectLibraryMusic, setVideoLibraryMusic, StudioRunError, timelineSummary, videoLibraryTrack, videoMusicSummary,
+  requireVideo, resolveInside, projectMediaFile, setProjectLibraryMusic, type AudioInput, type MusicFiles, setVideoLibraryMusic, StudioRunError, timelineSummary, videoLibraryTrack, videoMusicSummary,
   videoMusicToTimeline, videoOwnMusic, videoRender, videoRenders, VOICE_ORIGINS, type ActorRole, type JobView, type ProjectAudioFile, type RenderKind,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
@@ -271,13 +271,10 @@ export class VideoMediaController {
         throw new ForbiddenException({ code: 'role', message: 'Chọn giọng đọc cần vai producer' });
       }
       if (kind === 'voice' && !body.origin) throw new UnprocessableEntityException({ code: 'origin', message: 'Cho biết giọng này từ đâu: giọng máy, giọng của bạn, hay có bản quyền' });
-      const dir = await this.workspace.dir(projectId);
-      const { abs } = resolveInside(dir, body.path);
-      readWorkspaceBytes(dir, body.path); // exists and readable
-      if (statSync(abs).size > AUDIO_MAX_BYTES[kind]) throw new PayloadTooLargeException({ code: 'audio_too_large', message: `File lớn hơn ${AUDIO_MAX_BYTES[kind] / 1024 / 1024} MB` });
+      const { input: file } = await this.audioInput(projectId, body.path, AUDIO_MAX_BYTES[kind]);
       try {
         await importProjectAudio({ db: this.engine.db, bucket: this.engine.bucket, ...requireAudioTools(this.config) }, {
-          projectId, kind, file: { path: abs }, source: { kind: 'upload', filename: body.path.split('/').pop()!.slice(0, 255) }, userId: req.authContext!.userId,
+          projectId, kind, file, source: { kind: 'upload', filename: body.path.split('/').pop()!.slice(0, 255) }, userId: req.authContext!.userId,
           ...(body.origin ? { origin: body.origin } : {}), ...(body.referenceText !== undefined ? { referenceText: body.referenceText } : {}),
           ...(body.gainDb !== undefined ? { gainDb: body.gainDb } : {}), ...(body.ducking !== undefined ? { ducking: body.ducking } : {}),
         });
@@ -419,17 +416,32 @@ export class VideoMediaController {
   }
 
   /** Workspace audio files to make music of, each there and not larger than a music track may be. */
-  private async musicFiles(projectId: string, paths: string[]): Promise<{ path: string; filename: string }[]> {
+  private async musicFiles(projectId: string, paths: string[]): Promise<MusicFiles['files']> {
+    const out: MusicFiles['files'] = [];
+    for (const p of paths) {
+      const { input, name } = await this.audioInput(projectId, p, AUDIO_MAX_BYTES.music);
+      out.push({ ...input, filename: name });
+    }
+    return out;
+  }
+
+  /**
+   * An audio file of the project by its path: an item of someone's media library (read from the bucket when it is
+   * used, plan 2026-10-29) or a file of the workspace. Larger than `max`: 413.
+   */
+  private async audioInput(projectId: string, path: string, max: number): Promise<{ input: AudioInput; name: string }> {
+    const stored = await projectMediaFile(this.engine.db, projectId, path);
+    const name = stored?.name ?? path.split('/').pop()!;
+    const tooLarge = () => new PayloadTooLargeException({ code: 'audio_too_large', message: `${name}: lớn hơn ${max / 1024 / 1024} MB` });
+    if (stored) {
+      if (stored.bytes > max) throw tooLarge();
+      return { input: { key: stored.key }, name };
+    }
     const dir = await this.workspace.dir(projectId);
-    return paths.map((p) => {
-      const { abs } = resolveInside(dir, p);
-      readWorkspaceBytes(dir, p); // exists and readable
-      const name = p.split('/').pop()!;
-      if (statSync(abs).size > AUDIO_MAX_BYTES.music) {
-        throw new PayloadTooLargeException({ code: 'audio_too_large', message: `${name}: lớn hơn ${AUDIO_MAX_BYTES.music / 1024 / 1024} MB` });
-      }
-      return { path: abs, filename: name };
-    });
+    const { abs } = resolveInside(dir, path);
+    readWorkspaceBytes(dir, path); // exists and readable
+    if (statSync(abs).size > max) throw tooLarge();
+    return { input: { path: abs }, name };
   }
 
   /** An audio file ffmpeg could not use (too short, no sound, a fade too long…) is a 422 saying why. */

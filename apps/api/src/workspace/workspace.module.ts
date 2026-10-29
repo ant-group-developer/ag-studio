@@ -12,14 +12,16 @@ import { ProjectsController } from './projects.controller';
 import { ThreadsController } from './threads.controller';
 import { VideosController } from './videos.controller';
 import { WorkspaceService } from './workspace.service';
+import { MediaController } from './media.controller';
+import { MediaLibraryService } from './media-library.service';
 import { ProjectFootageService } from './project-footage.service';
 
 /** Projects, videos and their workspace files (spec 2026-10-10 agent-workspace). */
 @Module({
   imports: [StudioModule],
   controllers: [ProjectsController, VideosController, FilesController, ThreadsController, PlaybookController, InputsController, ResearchController, ActionsController, VideoMediaController, VideoLookController,
-    FileStreamController],
-  providers: [WorkspaceService, ProjectFootageService, FileLinkService],
-  exports: [WorkspaceService, ProjectFootageService, FileLinkService],
+    FileStreamController, MediaController],
+  providers: [WorkspaceService, ProjectFootageService, FileLinkService, MediaLibraryService],
+  exports: [WorkspaceService, ProjectFootageService, FileLinkService, MediaLibraryService],
 })
 export class WorkspaceModule {}
