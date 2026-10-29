@@ -319,6 +319,34 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     setClaudeMaxConcurrent(claudeMaxConcurrent: number): Promise<ClaudeUsage> {
       return request(getAccessToken, "PUT", "/api/studio/settings", { claudeMaxConcurrent });
     },
+    /** Studio admin: the Claude accounts, the turns on each now; `canStoreTokens`: the server can keep a token. */
+    listClaudeAccounts(): Promise<{ accounts: ClaudeAccount[]; canStoreTokens: boolean }> {
+      return request(getAccessToken, "GET", "/api/studio/claude-accounts");
+    },
+    createClaudeAccount(input: { name: string; token: string; maxConcurrent?: number | null }): Promise<ClaudeAccount> {
+      return request(getAccessToken, "POST", "/api/studio/claude-accounts", input);
+    },
+    updateClaudeAccount(id: string, patch: { name?: string; token?: string; maxConcurrent?: number | null; enabled?: boolean }): Promise<ClaudeAccount> {
+      return request(getAccessToken, "PATCH", `/api/studio/claude-accounts/${encodeURIComponent(id)}`, patch);
+    },
+    deleteClaudeAccount(id: string): Promise<void> {
+      return request(getAccessToken, "DELETE", `/api/studio/claude-accounts/${encodeURIComponent(id)}`);
+    },
+    /** A worker makes one tiny call on it; the list then says how it went. */
+    checkClaudeAccount(id: string): Promise<ClaudeAccount> {
+      return request(getAccessToken, "POST", `/api/studio/claude-accounts/${encodeURIComponent(id)}/check`);
+    },
+    /** Studio admin: the farm's pools of machines and how many machines each has (empty: none, or the farm out of reach). */
+    listFarmPools(): Promise<{ pools: { pool: string; machines: number }[] }> {
+      return request(getAccessToken, "GET", "/api/studio/farm/pools");
+    },
+    /** The team's Claude accounts and farm pool (owners read, a Studio admin sets). */
+    getTeamResources(teamId: string): Promise<TeamResources> {
+      return request(getAccessToken, "GET", `/api/teams/${encodeURIComponent(teamId)}/resources`);
+    },
+    setTeamResources(teamId: string, input: { claudeAccountIds?: string[]; farmPool?: string | null }): Promise<TeamResources> {
+      return request(getAccessToken, "PUT", `/api/teams/${encodeURIComponent(teamId)}/resources`, input);
+    },
     /** A blank name goes back to "Claude". */
     setAssistantName(assistantName: string): Promise<ClaudeUsage> {
       return request(getAccessToken, "PUT", "/api/studio/settings", { assistantName });
@@ -372,10 +400,28 @@ export interface MusicTrackInput {
 /** `assistantName`: what the web calls the AI ("Claude" until a Studio admin names it). */
 export interface ClaudeUsage { running: number; waiting: number; max: number; source: "settings" | "env"; assistantName?: string }
 
+/** A Claude account (plan 2026-10-30): never its token, only the last 4 characters. */
+export interface ClaudeAccount {
+  id: string; name: string; isDefault: boolean; tokenHint: string | null; maxConcurrent: number | null; enabled: boolean;
+  rateLimitedUntil: string | null; lastUsedAt: string | null; lastError: string | null; lastErrorAt: string | null;
+  check: { requestedAt: string | null; at: string | null; status: "ok" | "rate_limited" | "failed" | null; error: string | null };
+  teams: { id: string; name: string }[]; createdAt: string;
+  /** Turns running on it now (the list only). */
+  running?: number;
+}
+/** A Claude account on the Queue (admins only). */
+export interface QueueClaudeAccount {
+  id: string; name: string; isDefault: boolean; enabled: boolean; maxConcurrent: number | null; running: number;
+  rateLimitedUntil: string | null; lastError: string | null; teams: { id: string; name: string }[];
+}
+export interface TeamResources { claudeAccounts: { id: string; name: string; enabled: boolean }[]; farmPool: string | null }
+
 /** Something running in a project, with the project it belongs to (the Queue lists many projects). */
 export interface QueueItem extends Activity { projectId: string; projectName: string; teamId: string }
 export interface StudioQueueView {
   claude: ClaudeUsage;
+  /** Each Claude account, for a Studio admin; null for others (older APIs: absent). */
+  claudeAccounts?: QueueClaudeAccount[] | null;
   items: QueueItem[];
   /** Things running in projects the caller cannot see. */
   hidden: number;

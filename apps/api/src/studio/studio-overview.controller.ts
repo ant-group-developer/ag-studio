@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Request } from 'express';
 import {
-  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, referenceFetchNodes, setAssistantName, setClaudeMaxConcurrent, studioActivity,
+  assistantName, claudeMaxConcurrent, claudeUsage, claudeUsageByAccount, listClaudeAccounts, parseClaudeMaxConcurrent, referenceFetchNodes, setAssistantName, setClaudeMaxConcurrent, studioActivity,
   youtubeBlock,
 } from '@ag-studio/engine';
 import { StudioAdminService } from '../auth/studio-admin.service';
@@ -56,8 +56,17 @@ export class StudioOverviewController {
     let farm: { ok: true } | { ok: false; error: string } = { ok: true };
     try { machines = (await this.engine.farmNodes()).nodes; } catch (e) { farm = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
     const now = this.engine.core.clock.now();
+    // an admin sees each Claude account: turns on it now, and whether it waits for its plan's limit
+    let claudeAccounts = null;
+    if (isAdmin) {
+      const running = await claudeUsageByAccount(this.engine.db, now);
+      claudeAccounts = (await listClaudeAccounts(this.engine.db)).map((a) => ({
+        id: a.id, name: a.name, isDefault: a.isDefault, enabled: a.enabled, maxConcurrent: a.maxConcurrent, running: running.get(a.id) ?? 0,
+        rateLimitedUntil: a.rateLimitedUntil && a.rateLimitedUntil > now ? a.rateLimitedUntil : null, lastError: a.lastError, teams: a.teams,
+      }));
+    }
     return {
-      claude: await this.claude(), items, hidden, machines, farm,
+      claude: await this.claude(), claudeAccounts, items, hidden, machines, farm,
       youtube: await youtubeBlock(this.engine.db, now), youtubeFarm: await youtubeBlock(this.engine.db, now, 'farm'),
       referenceFetchers: machines ? referenceFetchNodes(machines).map((n) => n.name) : null,
     };
@@ -71,6 +80,19 @@ export class StudioOverviewController {
       return { nodes: nodes.filter((n) => n.kinds.includes('studio.render_final')) };
     } catch {
       return { nodes: [] };
+    }
+  }
+
+  /** Studio admin: the farm's pools (`pool` of each machine) and how many machines each has; none when out of reach. */
+  @Get('farm/pools')
+  async farmPools(@Req() req: Request) {
+    await this.admin.requireAdmin(req);
+    try {
+      const counts = new Map<string, number>();
+      for (const n of (await this.engine.farmNodes()).nodes) if (n.pool) counts.set(n.pool, (counts.get(n.pool) ?? 0) + 1);
+      return { pools: [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([pool, machines]) => ({ pool, machines })) };
+    } catch {
+      return { pools: [] };
     }
   }
 

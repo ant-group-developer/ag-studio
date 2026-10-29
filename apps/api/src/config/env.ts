@@ -31,6 +31,8 @@ export const envSchema = z.object({
   STUDIO_WORKSPACES_ROOT: z.string().optional(),
   /** Signs the token a running agent turn's MCP server calls /api/agent-tools with (the worker needs the same value). */
   STUDIO_AGENT_TOKEN_SECRET: z.string().min(16).optional(),
+  /** Seals the tokens of the Claude accounts admins add (same value as the worker); unset: adding one is refused. */
+  STUDIO_SECRET_KEY: z.string().min(16).optional(),
   /** Only whether it is set: the Research tab says if crawls use the YouTube Data API (quota) or yt-dlp. The worker crawls. */
   YOUTUBE_API_KEY: z.string().optional(),
   /** ffmpeg for audio people give (project voice and music, the music library); unset = no audio uploads. */
