@@ -11,7 +11,11 @@ import { gzipSync } from "node:zlib";
 import { runAgentTurn, runStructuredCall, type AgentTurnOutcome, type AgentTurnState } from "@harness/adapter-agent-cli";
 import type { HarnessLogger } from "@harness/core";
 import type { StudioBucket } from "../bucket.js";
-import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, heartbeatClaudeSlot, idsHoldingSlots, releaseClaudeSlot } from "../claude-slots.js";
+import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, claudeUsageByAccount, heartbeatClaudeSlot, idsHoldingSlots, releaseClaudeSlot } from "../claude-slots.js";
+import {
+  claimAccountCheck, claudeAccountsForTeam, claudeAccountToken, DEFAULT_CLAUDE_ACCOUNT, finishAccountCheck, looksLikeAuthError, noteAccountError,
+  noteAccountRateLimited, noteAccountWorked, pickClaudeAccount, type ClaudeAccountRow,
+} from "../claude-accounts.js";
 import type { StudioDb } from "../studio-db.js";
 import { logAudit } from "../audit-log.js";
 import { finalAnswer, thinAnswer } from "./answer.js";
@@ -28,13 +32,11 @@ import { threadMarkdown } from "./history.js";
 import { agentSystemPrompt, agentTurnPrompt, videoLookLines, youtubeBlockLines } from "./prompt.js";
 import { youtubeBlock } from "../settings.js";
 import {
-  automaticTurnsInARow, cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
+  automaticTurnsInARow, cancelRequested, deferAgentTurn, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
   orphanedAgentTurns, postSystemMessage, queueFollowUp, requeueAgentTurn, resetSession, setTurnChangedFiles, TIMEOUT_TURNS_IN_A_ROW, turnInput, updateRunningTurn, type MessageRecord,
 } from "./threads-db.js";
 import { signAgentToken } from "./token.js";
 
-/** Waits before the next try after the plan's limit: 5, 10, 20, 40, then 60 minutes. */
-export const AGENT_RATE_LIMIT_BACKOFF_MINUTES = [5, 10, 20, 40, 60];
 /** Built-in tools of a turn: files only, and skills (no shell, no web). */
 export const AGENT_BUILTIN_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Skill"];
 /** Settings every turn runs with (`--settings`): Studio's folders are read-only, and only Studio's skills exist. */
@@ -81,6 +83,8 @@ export interface AgentRunnerOptions {
   /** What people call the footage library (ag-go's `siteName`), told to the agent; default "AG Go". */
   siteName?: () => string;
   baseEnv?: Record<string, string | undefined>;
+  /** `STUDIO_SECRET_KEY` (`secretKey()`): opens the tokens of the teams' Claude accounts; null: only `default` works. */
+  secretKey?: Buffer | null;
   now?: () => string;
   pollMs?: number;
   heartbeatMs?: number;
@@ -107,16 +111,83 @@ function timeoutNote(limit: "idle" | "deadline" | null, o: { deadlineMs: number;
   return `Lượt trước ${why} khi đang làm dở. Các file đã ghi vẫn còn: làm tiếp từ chỗ dừng, đừng làm lại phần đã xong; việc dài thì chia ra, ghi kết quả dần.`;
 }
 
+/** A Claude account a turn runs on, with its token (null: `default` with no env token, the CLI's own login). */
+interface TurnAccount { row: ClaudeAccountRow; token: string | null }
+
+/** The team of the turn's project, and the account its thread ran on last (to keep the session's cache). */
+async function turnPlace(db: StudioDb, messageId: string): Promise<{ team_id: string; sticky: string | null } | undefined> {
+  return db.get(
+    `SELECT p.team_id,
+            (SELECT x.claude_account_id FROM agent_messages x WHERE x.thread_id = m.thread_id AND x.claude_account_id IS NOT NULL AND x.id <> m.id
+              ORDER BY x.seq DESC LIMIT 1) AS sticky
+       FROM agent_messages m JOIN agent_threads t ON t.id = m.thread_id JOIN projects p ON p.id = t.project_id WHERE m.id = ?`,
+    [messageId],
+  );
+}
+
 export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
   const { db, logger } = o;
   const now = o.now ?? (() => new Date().toISOString());
+  const baseEnv = () => o.baseEnv ?? process.env;
   const inFlight = new Map<string, Promise<void>>();
   const waiting = new Set<string>();
   /** Threads whose summary failed, and when to try again. */
   const summaryRetryAt = new Map<string, number>();
   let summarizing: Promise<void> | null = null;
+  let checking: Promise<void> | null = null;
 
-  async function summarize(threadId: string): Promise<void> {
+  /** The env of a call on this account: its token replaces the server's. */
+  const envFor = (account: TurnAccount) =>
+    account.row.id === DEFAULT_CLAUDE_ACCOUNT || !account.token ? baseEnv() : { ...baseEnv(), CLAUDE_CODE_OAUTH_TOKEN: account.token };
+
+  /** The team's accounts a call can run on: a token Studio cannot open (no or another STUDIO_SECRET_KEY) leaves it out. */
+  async function teamAccounts(teamId: string | null): Promise<TurnAccount[]> {
+    const out: TurnAccount[] = [];
+    for (const row of await claudeAccountsForTeam(db, teamId)) {
+      const token = claudeAccountToken(row, o.secretKey ?? null, baseEnv());
+      if (row.id !== DEFAULT_CLAUDE_ACCOUNT && !token) { logger.warn("Claude account token cannot be opened (STUDIO_SECRET_KEY?)", { account_id: row.id }); continue; }
+      out.push({ row, token });
+    }
+    return out;
+  }
+
+  /**
+   * Where a call goes now (`pickClaudeAccount`), given the slots each account holds (`usage`); `none` when the team has
+   * no account Studio can use.
+   */
+  async function chooseAccount(teamId: string | null, sticky: string | null, usage: Map<string, number>):
+    Promise<{ account: TurnAccount } | { wait: true; until: string | null } | { none: true }> {
+    const accounts = await teamAccounts(teamId);
+    if (!accounts.length) return { none: true };
+    const room = (a: ClaudeAccountRow) => a.max_concurrent === null || (usage.get(a.id) ?? 0) < a.max_concurrent;
+    const picked = pickClaudeAccount(accounts.map((a) => a.row), { now: now(), sticky, room });
+    return "account" in picked ? { account: accounts.find((a) => a.row.id === picked.account.id)! } : picked;
+  }
+
+  /** "Kiểm tra" on the web: one tiny call on the account, one at a time. */
+  async function maybeCheckAccount() {
+    if (checking) return;
+    const row = await claimAccountCheck(db, now());
+    if (!row) return;
+    checking = (async () => {
+      try {
+        const token = claudeAccountToken(row, o.secretKey ?? null, baseEnv());
+        if (row.id !== DEFAULT_CLAUDE_ACCOUNT && !token) { await finishAccountCheck(db, row.id, "failed", "Studio không mở được token (STUDIO_SECRET_KEY)", now()); return; }
+        const cwd = join(o.dataRoot, "agent-check");
+        mkdirSync(cwd, { recursive: true });
+        const out = await runStructuredCall({
+          command: o.claudeCommand, cwd, prompt: "Trả lời ok = true.", jsonSchema: JSON.stringify({ type: "object", properties: { ok: { type: "boolean" } } }),
+          model: "haiku", baseEnv: envFor({ row, token }), configDir: o.configDir, deadlineMs: 2 * 60_000,
+        });
+        await finishAccountCheck(db, row.id, out.status === "done" ? "ok" : out.status === "rate_limited" ? "rate_limited" : "failed", out.error, now());
+      } catch (e) {
+        logger.warn("Claude account check crashed", { account_id: row.id, error: e instanceof Error ? e.message : String(e) });
+        await finishAccountCheck(db, row.id, "failed", "Studio gặp lỗi khi kiểm", now()).catch(() => undefined);
+      }
+    })().finally(() => { checking = null; });
+  }
+
+  async function summarize(threadId: string, account: TurnAccount): Promise<void> {
     const slot = `sum-${threadId}`;
     try {
       const thread = await getThread(db, threadId);
@@ -127,8 +198,9 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       const lessons = existsSync(lessonsFile) ? readFileSync(lessonsFile, "utf8") : "";
       const out = await runStructuredCall({
         command: o.claudeCommand, cwd: dir, prompt: await summaryPrompt(db, thread, lessons), jsonSchema: THREAD_SUMMARY_JSON_SCHEMA,
-        model: (o.summaries && o.summaries.model) || "haiku", baseEnv: o.baseEnv ?? process.env, configDir: o.configDir, deadlineMs: 5 * 60_000,
+        model: (o.summaries && o.summaries.model) || "haiku", baseEnv: envFor(account), configDir: o.configDir, deadlineMs: 5 * 60_000,
       });
+      if (out.status === "rate_limited") await noteAccountRateLimited(db, account.row.id, now());
       const parsed = out.status === "done" ? ThreadSummarySchema.safeParse(out.output) : null;
       if (!parsed?.success) {
         summaryRetryAt.set(threadId, Date.now() + 30 * 60_000);
@@ -151,11 +223,20 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     const idle = (o.summaries && o.summaries.idleMinutes) ?? undefined;
     const candidate = (await threadsToSummarize(db, now(), 5, idle)).find((t) => (summaryRetryAt.get(t.id) ?? 0) <= Date.now());
     if (!candidate || summarizing) return;
-    if (!(await acquireClaudeSlot(db, "agent", `sum-${candidate.id}`, cap, now()))) { await releaseClaudeSlot(db, "agent", `sum-${candidate.id}`); return; }
-    summarizing = summarize(candidate.id).finally(() => { summarizing = null; });
+    // on the thread's team's account, only when one has room now
+    const team = (await getProject(db, candidate.project_id))?.team_id ?? null;
+    const choice = await chooseAccount(team, null, await claudeUsageByAccount(db, now()));
+    if (!("account" in choice)) return;
+    const { account } = choice;
+    const slot = `sum-${candidate.id}`;
+    if (!(await acquireClaudeSlot(db, "agent", slot, cap, now(), CHAT_SLOT_LEASE_SECONDS, { id: account.row.id, cap: account.row.max_concurrent }))) {
+      await releaseClaudeSlot(db, "agent", slot);
+      return;
+    }
+    summarizing = summarize(candidate.id, account).finally(() => { summarizing = null; });
   }
 
-  async function runOnce(message: MessageRecord, signal: AbortSignal, opts: { recap: boolean }): Promise<AgentTurnOutcome> {
+  async function runOnce(message: MessageRecord, account: TurnAccount, signal: AbortSignal, opts: { recap: boolean }): Promise<AgentTurnOutcome> {
     const thread = (await getThread(db, message.thread_id))!;
     const project = (await getProject(db, thread.project_id))!;
     const video = thread.video_id ? (await getVideo(db, thread.video_id)) ?? null : null;
@@ -207,7 +288,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         sessionId: thread.claude_session_id, resume: thread.session_started,
         tools: AGENT_BUILTIN_TOOLS, allowedTools: o.mcpTools(), appendSystemPrompt: agentSystemPrompt(dir, { useLessons: thread.use_lessons, ...(o.siteName ? { siteName: o.siteName() } : {}) }),
         settingsPath: join(turnDir, "settings.json"), mcpConfigPath: join(turnDir, "mcp.json"),
-        pluginDirs, maxTurns: o.maxTurns, baseEnv: o.baseEnv ?? process.env, configDir: o.configDir,
+        pluginDirs, maxTurns: o.maxTurns, baseEnv: envFor(account), configDir: o.configDir,
         deadlineMs: Math.max(1000, deadline - Date.now()), ...(o.idleMs !== undefined ? { idleMs: o.idleMs } : {}), signal,
         onUpdate: (state, text) => {
           if (!sessionMarked && state.session_id) { write("session start", () => markSessionStarted(db, thread.id, dir)); sessionMarked = true; }
@@ -223,7 +304,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     }
   }
 
-  async function record(message: MessageRecord, out: AgentTurnOutcome, wallSeconds: number): Promise<string | null> {
+  async function record(message: MessageRecord, account: TurnAccount, out: AgentTurnOutcome, wallSeconds: number): Promise<string | null> {
     const thread = (await getThread(db, message.thread_id))!;
     const id = randomUUID();
     const at = now();
@@ -241,16 +322,16 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     const teamId = (await getProject(db, thread.project_id))?.team_id ?? null;
     await db.run(
       `INSERT INTO llm_calls (id, created_at, source, production_id, episode_id, run_id, stage_key, attempt_id, skill, model, round, outcome,
-         problems, input_tokens, output_tokens, cost_usd, wall_seconds, payload_key, cache_read_tokens, cache_creation_tokens, num_turns, user_id, team_id)
-       VALUES (?, ?, 'claude-agent', ?, ?, ?, 'agent', ?, 'agent', ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         problems, input_tokens, output_tokens, cost_usd, wall_seconds, payload_key, cache_read_tokens, cache_creation_tokens, num_turns, user_id, team_id, claude_account_id)
+       VALUES (?, ?, 'claude-agent', ?, ?, ?, 'agent', ?, 'agent', ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, at, thread.project_id, thread.video_id, thread.id, message.id, out.state.model ?? "", message.attempts, outcome,
         r?.input_tokens ?? null, r?.output_tokens ?? null, r?.cost_usd ?? 0, wallSeconds, key,
-        r?.cache_read_tokens ?? null, r?.cache_creation_tokens ?? null, r?.num_turns ?? null, message.created_by ?? null, teamId],
+        r?.cache_read_tokens ?? null, r?.cache_creation_tokens ?? null, r?.num_turns ?? null, message.created_by ?? null, teamId, account.row.id],
     );
     return id;
   }
 
-  async function runTurn(messageId: string, signal?: AbortSignal): Promise<void> {
+  async function runTurn(messageId: string, account: TurnAccount, signal?: AbortSignal): Promise<void> {
     const ac = new AbortController();
     const onStop = () => ac.abort();
     signal?.addEventListener("abort", onStop, { once: true });
@@ -264,13 +345,14 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
         await finishTurn(db, messageId, { status: "failed", text: "", parts: [], error: "luồng hoặc dự án đã lưu trữ" }, now());
         return;
       }
-      let out = await runOnce(message, ac.signal, { recap: false });
+      let out = await runOnce(message, account, ac.signal, { recap: false });
       if (out.status === "session_lost") {
         logger.warn("agent session lost; starting a new one with a recap", { message_id: messageId, thread_id: thread.id });
         await resetSession(db, thread.id);
         message = (await getMessage(db, messageId))!;
-        out = await runOnce(message, ac.signal, { recap: true });
+        out = await runOnce(message, account, ac.signal, { recap: true });
       }
+      await noteAccountOutcome(account, out, project.team_id);
       if (signal?.aborted && out.status === "cancelled") {
         // the worker is stopping: the turn goes back in line and resumes its session later
         await requeueAgentTurn(db, messageId, now());
@@ -279,15 +361,17 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       const dir = projectDir(o.workspacesRoot, project.id);
       const wall = (Date.now() - started) / 1000;
       let llmCallId: string | null = null;
-      try { llmCallId = await record(message, out, wall); } catch (e) { logger.warn("agent turn not logged", { error: String(e) }); }
+      try { llmCallId = await record(message, account, out, wall); } catch (e) { logger.warn("agent turn not logged", { error: String(e) }); }
       const base = { text: out.text, parts: out.state.parts, costUsd: out.state.result?.cost_usd ?? null, llmCallId };
       // out of time: goes on by itself while the project allows it and it has not timed out too often since a person
       // spoke (turns jobs started do not count here)
       const goesOnAfterTimeout = out.status === "timeout" && projectSettings(project).auto_continue
         && await automaticTurnsInARow(db, thread.id, "timeout") < TIMEOUT_TURNS_IN_A_ROW;
       if (out.status === "rate_limited") {
-        const wait = AGENT_RATE_LIMIT_BACKOFF_MINUTES[Math.min(message.attempts - 1, AGENT_RATE_LIMIT_BACKOFF_MINUTES.length - 1)] ?? 60;
-        await finishTurn(db, messageId, { ...base, status: "rate_limited", error: "rate_limited", notBefore: plusMinutes(now(), wait) }, now());
+        // the account waits (noteAccountOutcome); the turn goes again once one of the team's accounts can take it
+        const next = await chooseAccount(project.team_id, null, new Map());
+        const notBefore = "account" in next ? now() : "wait" in next && next.until ? next.until : plusMinutes(now(), 5);
+        await finishTurn(db, messageId, { ...base, status: "rate_limited", error: "rate_limited", notBefore }, now());
       } else if (out.status === "done" || out.status === "max_turns") {
         await finishTurn(db, messageId, { ...base, status: "done", error: out.status === "max_turns" ? "max_turns" : null }, now());
       } else if (out.status === "cancelled") {
@@ -324,6 +408,22 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       clearInterval(watch);
       signal?.removeEventListener("abort", onStop);
     }
+  }
+
+  /** What a turn says of its account: the plan's limit (it waits), a token that does not work, or it works. */
+  async function noteAccountOutcome(account: TurnAccount, out: AgentTurnOutcome, teamId: string) {
+    const id = account.row.id;
+    try {
+      if (out.status === "rate_limited") {
+        const until = await noteAccountRateLimited(db, id, now());
+        logger.warn("Claude account hit its plan's limit", { account_id: id, team_id: teamId, until });
+      } else if (out.status === "failed" && looksLikeAuthError(`${out.error ?? ""}\n${out.stderr}`)) {
+        await noteAccountError(db, id, out.error ?? "authentication failed", now());
+        logger.warn("Claude account token refused", { account_id: id, team_id: teamId });
+      } else if (out.status === "done" || out.status === "max_turns" || out.status === "timeout") {
+        await noteAccountWorked(db, id, now());
+      }
+    } catch (e) { logger.warn("Claude account not updated after the turn", { account_id: id, error: String(e) }); }
   }
 
   /**
@@ -384,10 +484,10 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     writeFileSync(join(folder, `${thread.id}.md`), await threadMarkdown(db, thread));
   }
 
-  const start = (id: string, signal?: AbortSignal) => {
+  const start = (id: string, account: TurnAccount, signal?: AbortSignal) => {
     const beat = setInterval(() => { void heartbeatClaudeSlot(db, "agent", id, now()).catch((e: unknown) => logger.warn("agent slot not heartbeated", { message_id: id, error: String(e) })); }, o.heartbeatMs ?? (CHAT_SLOT_LEASE_SECONDS * 1000) / 4);
     const done = (async () => {
-      try { await runTurn(id, signal); }
+      try { await runTurn(id, account, signal); }
       finally {
         clearInterval(beat);
         await releaseClaudeSlot(db, "agent", id).catch((e: unknown) => logger.warn("agent slot not released", { message_id: id, error: String(e) }));
@@ -408,20 +508,43 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     const ready = (await nextPendingAgentTurns(db, now(), cap * 2)).filter((t) => !inFlight.has(t.id));
     const readyIds = new Set(ready.map((t) => t.id));
     for (const id of [...waiting]) if (!readyIds.has(id)) { await releaseClaudeSlot(db, "agent", id); waiting.delete(id); }
+    const usage = await claudeUsageByAccount(db, now());
     for (const t of ready) {
       if (inFlight.has(t.id)) continue;
-      if (!(await acquireClaudeSlot(db, "agent", t.id, cap, now()))) { waiting.add(t.id); continue; }
+      const place = await turnPlace(db, t.id);
+      if (!place) continue;
+      const choice = await chooseAccount(place.team_id, place.sticky, usage);
+      if ("none" in choice) {
+        await releaseClaudeSlot(db, "agent", t.id); waiting.delete(t.id);
+        await finishTurn(db, t.id, { status: "failed", text: "", parts: [], error: "Nhóm chưa có tài khoản Claude dùng được" }, now());
+        continue;
+      }
+      if ("wait" in choice) {
+        if (choice.until) {
+          // every account of the team is at its plan's limit: the turn waits for the first one back, out of line
+          await releaseClaudeSlot(db, "agent", t.id); waiting.delete(t.id);
+          await deferAgentTurn(db, t.id, choice.until, now());
+        } else {
+          await acquireClaudeSlot(db, "agent", t.id, 0, now());
+          waiting.add(t.id);
+        }
+        continue;
+      }
+      const { account } = choice;
+      if (!(await acquireClaudeSlot(db, "agent", t.id, cap, now(), CHAT_SLOT_LEASE_SECONDS, { id: account.row.id, cap: account.row.max_concurrent }))) { waiting.add(t.id); continue; }
       waiting.delete(t.id);
-      if (!(await markAgentTurnRunning(db, t.id, now()))) { await releaseClaudeSlot(db, "agent", t.id); continue; }
-      start(t.id, signal);
+      if (!(await markAgentTurnRunning(db, t.id, now(), account.row.id))) { await releaseClaudeSlot(db, "agent", t.id); continue; }
+      usage.set(account.row.id, (usage.get(account.row.id) ?? 0) + 1);
+      start(t.id, account, signal);
     }
     if (!ready.length && !waiting.size) await maybeSummarize(cap);
+    await maybeCheckAccount();
   };
 
   return {
     tick,
     get running() { return inFlight.size; },
-    idle: async () => { while (inFlight.size || summarizing) await Promise.all([...inFlight.values(), summarizing]); },
+    idle: async () => { while (inFlight.size || summarizing || checking) await Promise.all([...inFlight.values(), summarizing, checking]); },
     runForever: async (signal) => {
       while (!signal.aborted) {
         try { await tick(signal); }
@@ -434,7 +557,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
       }
       for (const id of waiting) await releaseClaudeSlot(db, "agent", id).catch(() => undefined);
       waiting.clear();
-      while (inFlight.size || summarizing) await Promise.all([...inFlight.values(), summarizing]);
+      while (inFlight.size || summarizing || checking) await Promise.all([...inFlight.values(), summarizing, checking]);
     },
   };
 }

@@ -39,6 +39,8 @@
  *   STUDIO_AGENT_TOKEN_SECRET   signs each turn's token for /api/agent-tools (same value as the API)
  *   STUDIO_API_INTERNAL_URL     where a turn's MCP server reaches the API (default http://127.0.0.1:3100)
  *   STUDIO_AGENT_CLAUDE_CONFIG_DIR  CLAUDE_CONFIG_DIR of agent sessions (default <STUDIO_DATA_ROOT>/agent-claude)
+ *   STUDIO_SECRET_KEY           opens the tokens of the Claude accounts admins add (same value as the API); unset: only
+ *                               the default account (CLAUDE_CODE_OAUTH_TOKEN) works
  *   STUDIO_AGENT_MODEL          model alias or name (default sonnet; a project's setting wins)
  *   STUDIO_AGENT_MAX_TURNS      tool rounds a turn may take (default 40)
  *   STUDIO_AGENT_IDLE_MINUTES   a turn stops after this long with no output from the CLI (default 10; 0: off)
@@ -51,7 +53,7 @@ import { join, resolve } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
   agentTools, claudeCap, createSiteNameCache, createStudioEngineCore, createStudioWorkerPool, DEFAULT_RETENTION, fetchAgGoSiteName, FarmOwnerClient, ffmpegThumbnailRenderer, ffprobeBeside,
-  httpDownload, mcpToolNames, migrateStudioDb, parseClaudeMaxConcurrent, S3Bucket, studioDbFromEnv, studioLogger, ytDlp, type CutMediaDeps,
+  httpDownload, mcpToolNames, migrateStudioDb, parseClaudeMaxConcurrent, S3Bucket, secretKey, studioDbFromEnv, studioLogger, ytDlp, type CutMediaDeps,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
 
@@ -119,6 +121,7 @@ async function main(): Promise<void> {
     idleMs: numberEnv("STUDIO_AGENT_IDLE_MINUTES", 10) * 60_000,
     mcpTools: () => mcpToolNames(agentTools()),
     skills: { builtinDir: join(harnessRoot, "agent-skills"), pluginsRoot: join(dataRoot, "agent-plugins") },
+    secretKey: secretKey(process.env.STUDIO_SECRET_KEY),
   } : undefined;
   const jobLanes = Math.max(1, numberEnv("STUDIO_JOB_LANES", 2));
   const pool = createStudioWorkerPool({

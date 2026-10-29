@@ -18,6 +18,8 @@ export * from "./audit-log.js";
 export * from "./claude-stats.js";
 export * from "./claude-turns.js";
 export * from "./claude-slots.js";
+export * from "./claude-accounts.js";
+export * from "./secret-box.js";
 export * from "./media-deps.js";
 export * from "./cut-media.js";
 export * from "./cut-ffmpeg.js";
