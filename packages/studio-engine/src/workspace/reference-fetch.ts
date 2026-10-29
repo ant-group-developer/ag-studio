@@ -23,32 +23,40 @@ export const REFERENCE_FETCH_KIND = "studio.reference_fetch";
 /** Bucket stage of the fetched videos: `productions/<project>/jobs/reference_fetch/<jobId>-r<n>/out/`. */
 export const REFERENCE_FETCH_STAGE = "reference_fetch";
 
-/** Farm machines online now that take `studio.reference_fetch`. */
-export function referenceFetchNodes<N extends { online: boolean; kinds: readonly string[] }>(nodes: readonly N[]): N[] {
-  return nodes.filter((n) => n.online && n.kinds.includes(REFERENCE_FETCH_KIND));
+/**
+ * Farm machines online now that take `studio.reference_fetch`; with `pool`, only those a job of that pool can run on
+ * (null: the shared machines). Without it (the Queue): every one.
+ */
+export function referenceFetchNodes<N extends { online: boolean; kinds: readonly string[]; pool?: string | null }>(nodes: readonly N[], pool?: string | null): N[] {
+  return nodes.filter((n) => n.online && n.kinds.includes(REFERENCE_FETCH_KIND) && (pool === undefined || (n.pool ?? null) === pool));
 }
 
 /**
- * `() => names of the machines that could fetch a reference video now`, the farm read at most every `everyMs`
- * (default 30 s). A farm that does not answer (or a client without `listNodes`) counts none: Studio's own yt-dlp then.
+ * `(pool) => names of the machines that could fetch a reference video now for a team of that pool` (null: the shared
+ * machines), the farm read at most every `everyMs` (default 30 s). A farm that does not answer (or a client without
+ * `listNodes`) counts none: Studio's own yt-dlp then.
  */
-export function referenceFetchers(farm: Pick<ProjectFarm, "listNodes">, everyMs = 30_000): () => Promise<string[]> {
-  let cached: { at: number; names: Promise<string[]> } | null = null;
-  return () => {
+export function referenceFetchers(farm: Pick<ProjectFarm, "listNodes">, everyMs = 30_000): ReferenceFetchers {
+  type Node = { name: string; online: boolean; kinds: string[]; pool?: string | null };
+  let cached: { at: number; nodes: Promise<Node[]> } | null = null;
+  return (pool) => {
     if (!farm.listNodes) return Promise.resolve([]);
-    if (cached && Date.now() - cached.at < everyMs) return cached.names;
-    const names = farm.listNodes().then((r) => referenceFetchNodes(r.nodes).map((n) => n.name), () => [] as string[]);
-    cached = { at: Date.now(), names };
-    return names;
+    if (!cached || Date.now() - cached.at >= everyMs) {
+      cached = { at: Date.now(), nodes: farm.listNodes().then((r) => r.nodes as Node[], () => [] as Node[]) };
+    }
+    return cached.nodes.then((nodes) => referenceFetchNodes(nodes, pool).map((n) => n.name));
   };
 }
+
+/** Names of the farm machines that could fetch a reference video now for a team of `pool` (null: shared machines). */
+export type ReferenceFetchers = (pool: string | null) => Promise<string[]>;
 
 /** What `style_watch` needs to fetch through the farm. */
 export interface ReferenceFarm {
   client: ProjectFarm;
   bucket: StudioBucket;
-  /** Machines that could take it now (`referenceFetchers`). */
-  fetchers: () => Promise<string[]>;
+  /** Machines that could take it now (`referenceFetchers`), for a team of that pool. */
+  fetchers: ReferenceFetchers;
   pollMs?: number;
   queueTimeoutMs?: number;
 }

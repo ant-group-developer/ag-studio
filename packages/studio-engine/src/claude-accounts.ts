@@ -249,7 +249,19 @@ export async function teamFarmPool(db: StudioDb, teamId: string): Promise<string
   return (await db.get<{ farm_pool: string | null }>("SELECT farm_pool FROM teams WHERE id = ?", [teamId]))?.farm_pool ?? null;
 }
 
-export const FARM_POOL_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+/** The farm pool of the project's team. */
+export async function projectFarmPool(db: StudioDb, projectId: string): Promise<string | null> {
+  return (await db.get<{ farm_pool: string | null }>(
+    "SELECT t.farm_pool FROM projects p JOIN teams t ON t.id = p.team_id WHERE p.id = ?", [projectId],
+  ))?.farm_pool ?? null;
+}
+
+/** Farm machines a team's jobs can run on: those of its pool (null: the shared ones, with no pool). */
+export function nodesOfPool<N extends { pool?: string | null }>(nodes: readonly N[], pool: string | null): N[] {
+  return nodes.filter((n) => (n.pool ?? null) === pool);
+}
+
+export const FARM_POOL_RE =/^[a-z0-9][a-z0-9_-]{0,39}$/;
 
 export async function setTeamFarmPool(db: StudioDb, teamId: string, pool: string | null, now: string): Promise<void> {
   const v = pool?.trim() || null;

@@ -43,8 +43,8 @@ export interface AgentToolContext {
   footage?: ProjectFootage;
   /** What people call the footage library (ag-go's `siteName`); default "AG Go". */
   siteName?: string;
-  /** Farm machines online that fetch reference videos (`studio.reference_fetch`); absent: none. */
-  referenceFetchers?: () => Promise<string[]>;
+  /** Farm machines online that fetch reference videos (`studio.reference_fetch`) for a team of that pool; absent: none. */
+  referenceFetchers?: (pool: string | null) => Promise<string[]>;
   /** ffmpeg and the bucket, to make music of the project's audio files (`music_set`); absent: this server has no ffmpeg. */
   audio?: AudioImportDeps;
   /** Studio's bucket, where the beats of a track sit beside it (`music_list`); absent: the tempo is not read. */

@@ -10,7 +10,7 @@ import type { TimelineV4 } from "@harness/contracts";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import {
   createJobRunner, createProject, createThread, createVideo, getJob, getVideo, latestVideoRevision, queueRender, renderHandler, RENDER_KINDS, RevisionConflictError, savePrepared, saveVideoRevision, seedWorkspace,
-  studioLogger, videoRenders, type JobHandler, type JobKind, type ProjectFarm,
+  setTeamFarmPool, studioLogger, videoRenders, type JobHandler, type JobKind, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -124,6 +124,19 @@ describe("video renders", () => {
     await s.run();
     expect(s.submitted[2]!.requirements).toEqual({ studio_render_min: 2 });
     expect(s.submitted[3]!.requirements).toBeUndefined();
+  });
+
+  it("a team with its own farm pool sends every job to it", async () => {
+    const s = await setup();
+    await setTeamFarmPool(s.db, "team-1", "hcm", NOW);
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
+    await s.run();
+    await s.run();
+    expect(s.submitted.map((j) => j.requirements)).toEqual([{ studio_render_min: 2, pool: "hcm" }, { pool: "hcm" }]);
+    // what was sent is what Studio keeps (the fake farm answers one job id, so one row)
+    expect(await s.db.get("SELECT requirements FROM project_farm_jobs")).toEqual({ requirements: { studio_render_min: 2, pool: "hcm" } });
   });
 
   it("keeps every worker warning in the result but leaves loudnorm_not_linear out of the note", async () => {

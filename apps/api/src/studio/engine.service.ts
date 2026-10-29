@@ -17,12 +17,13 @@ const FARM_NODES_TTL_MS = 3000;
 export type FarmNodes = Awaited<ReturnType<FarmOwnerClient['listNodes']>>;
 
 /**
- * Names of the farm machines online now that fetch reference videos (`studio.reference_fetch`): while YouTube blocks
- * the Studio server, a reference download goes through them. A farm out of reach counts none.
+ * Names of the farm machines online now that fetch reference videos (`studio.reference_fetch`) for a team of `pool`
+ * (null: the shared machines): while YouTube blocks the Studio server, a reference download goes through them. A farm
+ * out of reach counts none.
  */
-export async function referenceFetcherNames(engine: Pick<EngineService, 'farmNodes'>): Promise<string[]> {
+export async function referenceFetcherNames(engine: Pick<EngineService, 'farmNodes'>, pool: string | null): Promise<string[]> {
   try {
-    return referenceFetchNodes((await engine.farmNodes()).nodes).map((n) => n.name);
+    return referenceFetchNodes((await engine.farmNodes()).nodes, pool).map((n) => n.name);
   } catch {
     return [];
   }

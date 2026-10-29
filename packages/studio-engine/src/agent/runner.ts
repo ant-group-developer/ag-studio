@@ -14,7 +14,7 @@ import type { StudioBucket } from "../bucket.js";
 import { acquireClaudeSlot, CHAT_SLOT_LEASE_SECONDS, claudeUsageByAccount, heartbeatClaudeSlot, idsHoldingSlots, releaseClaudeSlot } from "../claude-slots.js";
 import {
   claimAccountCheck, claudeAccountsForTeam, claudeAccountToken, DEFAULT_CLAUDE_ACCOUNT, finishAccountCheck, looksLikeAuthError, noteAccountError,
-  noteAccountRateLimited, noteAccountWorked, pickClaudeAccount, type ClaudeAccountRow,
+  noteAccountRateLimited, noteAccountWorked, pickClaudeAccount, projectFarmPool, type ClaudeAccountRow,
 } from "../claude-accounts.js";
 import type { StudioDb } from "../studio-db.js";
 import { logAudit } from "../audit-log.js";
@@ -76,7 +76,7 @@ export interface AgentRunnerOptions {
   /** More `<studio_context>` lines for a turn (jobs — later phases). */
   contextLines?: (projectId: string, videoId: string | null) => string[];
   /** Farm machines that fetch reference videos now (`referenceFetchers`): while YouTube blocks the server, the agent is told they can. */
-  referenceFetchers?: () => Promise<string[]>;
+  referenceFetchers?: (pool: string | null) => Promise<string[]>;
   /** Summaries of quiet threads and the lessons they propose (`false`: off); the model of that small call. */
   summaries?: false | { model?: string; idleMinutes?: number };
   cap: () => number | Promise<number>;
@@ -258,7 +258,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     const status = await playbookStatus(db, dir, { projectId: project.id, videoId: video?.id ?? null, ...(o.stepFacts ? { facts: o.stepFacts } : {}), now: now() });
     writeStudioFile(dir, "status.json", JSON.stringify({ updated_at: now(), video_id: video?.id ?? null, ...status }, null, 2));
     const studioBlock = await youtubeBlock(db, now());
-    const fetchers = studioBlock && o.referenceFetchers ? await o.referenceFetchers().catch(() => [] as string[]) : [];
+    const fetchers = studioBlock && o.referenceFetchers ? await o.referenceFetchers(await projectFarmPool(db, project.id)).catch(() => [] as string[]) : [];
     const blockLines = youtubeBlockLines(studioBlock, { farm: await youtubeBlock(db, now(), "farm"), fetchers });
     const prompt = agentTurnPrompt({
       project, thread, video, refs: await listThreadRefs(db, thread.id), messages: await turnInput(db, message),

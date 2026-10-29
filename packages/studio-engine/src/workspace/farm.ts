@@ -8,6 +8,7 @@ import { jobOutputPrefix, stageInputPrefix } from "@harness/executors";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import type { StudioBucket } from "../bucket.js";
+import { projectFarmPool } from "../claude-accounts.js";
 import type { StudioDb } from "../studio-db.js";
 
 export type ProjectFarm = Pick<FarmOwnerClient, "submitJob" | "getJob" | "cancelJob" | "ackJob"> & Partial<Pick<FarmOwnerClient, "listNodes">>;
@@ -112,15 +113,18 @@ export async function runFarmStep(
   for (const u of step.uploads ?? []) await d.bucket.putFile(`${inPrefix}${u.relPath}`, u.localPath);
   const stop0 = await watch.stopRequested();
   if (stop0) throw new JobStopped(stop0);
+  // the team's own machines (plan 2026-10-30): its jobs run only on its pool; none: the shared machines
+  const pool = await projectFarmPool(d.db, job.project_id);
+  const requirements = { ...(step.requirements ?? {}), ...(pool ? { pool } : {}) };
   const { job: sent } = await d.farm.submitJob({
     type: step.type as never, correlation_id: `studio-job-${step.stageKey}-${step.attemptId}`, affinity_key: job.project_id,
     max_attempts: step.maxAttempts ?? 2, payload: step.payload,
-    ...(step.requirements && Object.keys(step.requirements).length ? { requirements: step.requirements as never } : {}),
+    ...(Object.keys(requirements).length ? { requirements: requirements as never } : {}),
   });
   await d.db.run(
     `INSERT INTO project_farm_jobs (farm_job_id, job_id, project_id, video_id, stage_key, attempt_id, job_type, is_final_render, requirements, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-    [sent.id, job.id, job.project_id, job.video_id, step.stageKey, step.attemptId, step.type, step.isFinalRender === true, JSON.stringify(step.requirements ?? {}), now()],
+    [sent.id, job.id, job.project_id, job.video_id, step.stageKey, step.attemptId, step.type, step.isFinalRender === true, JSON.stringify(requirements), now()],
   );
   const nameOf = nodeNames(d.farm);
   const pollMs = d.pollMs ?? 3000;

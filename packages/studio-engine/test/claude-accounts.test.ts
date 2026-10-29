@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  acquireClaudeSlot, claimAccountCheck, claudeAccountsForTeam, claudeAccountToken, claudeUsageByAccount, createClaudeAccount, deleteClaudeAccount,
+  acquireClaudeSlot, claimAccountCheck, createProject, nodesOfPool, projectFarmPool, referenceFetchNodes, claudeAccountsForTeam, claudeAccountToken, claudeUsageByAccount, createClaudeAccount, deleteClaudeAccount,
   finishAccountCheck, getClaudeAccount, listClaudeAccounts, looksLikeAuthError, noteAccountRateLimited, noteAccountWorked, openSecret,
   pickClaudeAccount, requestClaudeAccountCheck, sealSecret, secretKey, setTeamClaudeAccounts, setTeamFarmPool, teamClaudeAccountIds, teamFarmPool,
   updateClaudeAccount, type StudioDb,
@@ -119,11 +119,23 @@ describe("Claude accounts", () => {
     expect(looksLikeAuthError("exit 1")).toBe(false);
   });
 
-  it("a team's farm pool", async () => {
+  it("a team's farm pool, and the machines its jobs (and its reference downloads) can run on", async () => {
     const db = await fresh();
+    const nodes = [
+      { name: "shared", online: true, kinds: ["studio.reference_fetch"] },
+      { name: "hcm-1", online: true, kinds: ["studio.reference_fetch"], pool: "hcm" },
+      { name: "hcm-off", online: false, kinds: ["studio.reference_fetch"], pool: "hcm" },
+    ];
+    expect(nodesOfPool(nodes, "hcm").map((n) => n.name)).toEqual(["hcm-1", "hcm-off"]);
+    expect(nodesOfPool(nodes, null).map((n) => n.name)).toEqual(["shared"]);
+    expect(referenceFetchNodes(nodes, "hcm").map((n) => n.name)).toEqual(["hcm-1"]);
+    expect(referenceFetchNodes(nodes, null).map((n) => n.name)).toEqual(["shared"]);
+    expect(referenceFetchNodes(nodes).map((n) => n.name)).toEqual(["shared", "hcm-1"]);
     expect(await teamFarmPool(db, "team-a")).toBeNull();
     await setTeamFarmPool(db, "team-a", " hcm-1 ", T0);
     expect(await teamFarmPool(db, "team-a")).toBe("hcm-1");
+    const project = await createProject(db, "team-a", { name: "P", description: "", language: "vi", aspect: "16:9" }, "u", T0);
+    expect(await projectFarmPool(db, project.id)).toBe("hcm-1");
     await expect(setTeamFarmPool(db, "team-a", "Bad Pool", T0)).rejects.toThrow(/pool/);
     await setTeamFarmPool(db, "team-a", "", T0);
     expect(await teamFarmPool(db, "team-a")).toBeNull();

@@ -1,7 +1,7 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import {
-  actionView, decideAction, getAction, listActions, referenceDownloadBlock, requireProject, requireThread, StudioRunError, type ActionView, type ActorRole,
+  actionView, decideAction, getAction, listActions, projectFarmPool, referenceDownloadBlock, requireProject, requireThread, StudioRunError, type ActionView, type ActorRole,
   type YoutubeBlock,
 } from '@ag-studio/engine';
 import { Roles } from '../auth/roles.decorator';
@@ -27,9 +27,9 @@ export class ActionsController {
   @Get('threads/:threadId/actions')
   @Roles('viewer')
   async list(@Param('threadId') threadId: string): Promise<{ actions: ActionView[]; youtubeBlocked: YoutubeBlock | null }> {
-    const fetchers = await referenceFetcherNames(this.engine);
     return mapErrors(async () => {
-      await requireThread(this.engine.db, threadId);
+      const thread = await requireThread(this.engine.db, threadId);
+      const fetchers = await referenceFetcherNames(this.engine, await projectFarmPool(this.engine.db, thread.project_id));
       return {
         actions: (await listActions(this.engine.db, { threadId })).map(actionView),
         youtubeBlocked: await referenceDownloadBlock(this.engine.db, this.engine.core.clock.now(), fetchers.length),
