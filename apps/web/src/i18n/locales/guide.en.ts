@@ -30,7 +30,7 @@ To make a project: on the team's projects page, press **New project** and give a
 
 Each project has a **Channel** chat for the shared work (market research, channel strategy, edit style, branding), plus free chats when you need them. Each **video** is its own chat with {{ai}}, with suggested steps from the idea to the final cut.
 
-Tip: edit **CLAUDE.md** in the Files tab to describe the channel, the audience, the tone and what never to do. Every chat of the project reads it.`,
+Tip: edit **CLAUDE.md** in the Documents tab to describe the channel, the audience, the tone and what never to do. Every chat of the project reads it.`,
     },
     footage: {
       title: "Adding footage from {{site}}",
@@ -83,10 +83,10 @@ The step bar above the chat shows which steps are done and which to do next. Cli
 - "A faster opening, about 60 seconds overall."
 - "Switch the music to something more upbeat."
 
-{{ai}} edits the files and rebuilds. Under its answer, a **changed files** card has Open and See changes. You can also edit the files yourself in the Files tab and ask {{ai}} to rebuild.
+{{ai}} edits the files and rebuilds. Under its answer, a **changed files** card has Open and See changes. You can also edit the files yourself in the Documents tab and ask {{ai}} to rebuild.
 
 Tips:
-- In the Files tab, **Add to the message** attaches a file to the message being written.
+- In the Documents tab, **Add to the message** attaches a file to the message being written.
 - Heavy work (renders, preparing footage) runs in the background. The **Running** button in the top bar shows who does what and for how long, and stops it.
 - When {{ai}} proposes a lesson, **Keep in the project's lessons** so the next videos get it right from the start.
 - Work with real effects (final render, Premiere export, deleting a video) always waits for someone with the role to confirm; {{ai}} never does it alone.`,
@@ -102,7 +102,7 @@ When the timeline changes after a card was proposed, the card expires; ask {{ai}
     problems: {
       title: "Common problems",
       body: `- **A job stuck at "waiting for a machine"**: no farm machine takes this kind of work right now (off or busy). After a while the job stops and says so in the chat; try again later or tell an admin.
-- **Footage that will not prepare**: press **Retry the failed videos** in the Inputs tab. If it still fails, check the video is still on {{site}} and still in one of the project's {{site}} projects.
+- **Footage that will not prepare**: press **Retry the failed videos** in the Sources tab. If it still fails, check the video is still on {{site}} and still in one of the project's {{site}} projects.
 - **A {{site}} project cannot be added**: its card says why (watermarked view only, no analysed video yet). You need the right to download its originals on {{site}}.
 - **A message says the quota ran out**: {{ai}} waits for the plan's quota and runs again at the time shown. Press Stop to give up.
 - **A confirm card "expired"**: the timeline changed or 24 hours passed. Ask {{ai}} to propose it again.

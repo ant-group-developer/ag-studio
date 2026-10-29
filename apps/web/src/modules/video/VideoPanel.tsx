@@ -88,7 +88,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
         <div className="ws-inputs__head">
           <h4 className="ws-inputs__h">{t("ws.video.timeline")}</h4>
           {atLeast("editor") ? (
-            <Button size="small" icon={<Hammer size={13} />} loading={fit.isPending} onClick={() => fit.mutate()}>{t("ws.video.fit")}</Button>
+            <Button size="small" icon={<Hammer size={14} />} loading={fit.isPending} onClick={() => fit.mutate()}>{t("ws.video.fit")}</Button>
           ) : null}
         </div>
         {timeline.isLoading ? <Spin size="small" /> : latest ? (
@@ -108,7 +108,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
         </div>
         <div className="ws-video__buttons">
           {atLeast("editor") ? (
-            <Button size="small" icon={<Play size={13} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "render_preview"}
+            <Button size="small" icon={<Play size={14} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "render_preview"}
               onClick={() => start.mutate("render_preview")}>{t("ws.video.renderPreview")}</Button>
           ) : null}
           {atLeast("producer") ? (
@@ -117,7 +117,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
                 title={t("ws.video.finalConfirm", { revision: latest?.revision ?? "?" })}
                 description={<ResolutionPicker value={resolution} onChange={setResolution} label={t("ws.video.resolution")} />}
                 onConfirm={() => start.mutate("render_final")} okText={t("ws.video.renderFinal")} cancelText={t("common.cancel")}>
-                <Button size="small" icon={<Clapperboard size={13} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "render_final"}>{t("ws.video.renderFinal")}</Button>
+                <Button size="small" icon={<Clapperboard size={14} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "render_final"}>{t("ws.video.renderFinal")}</Button>
               </Popconfirm>
               <Popconfirm
                 title={t("ws.video.premiereConfirm", { revision: latest?.revision ?? "?" })}
@@ -128,7 +128,7 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
                   </div>
                 )}
                 onConfirm={() => start.mutate("export_premiere")} okText={t("ws.video.exportPremiere")} cancelText={t("common.cancel")}>
-                <Button size="small" icon={<Film size={13} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "export_premiere"}>{t("ws.video.exportPremiere")}</Button>
+                <Button size="small" icon={<Film size={14} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "export_premiere"}>{t("ws.video.exportPremiere")}</Button>
               </Popconfirm>
             </>
           ) : null}

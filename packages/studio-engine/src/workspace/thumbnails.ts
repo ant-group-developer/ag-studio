@@ -8,7 +8,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { THUMBNAIL_SIZES, ThumbnailStyleSchema, type ThumbnailStyle } from "@harness/contracts";
+import { THUMBNAIL_SIZES, ThumbnailStyleSchema, type TextLook, type ThumbnailStyle } from "@harness/contracts";
 import { thumbnailTextLines } from "@harness/core";
 import type { StudioBucket } from "../bucket.js";
 import type { StudioDb } from "../studio-db.js";
@@ -17,7 +17,7 @@ import { writeWorkspaceFile } from "./files.js";
 import { readFrontmatter } from "./frontmatter.js";
 import type { JobHandler } from "./job-runner.js";
 import { createJob, type JobRecord } from "./jobs-db.js";
-import { requireProject, requireVideo } from "./project-db.js";
+import { requireProject, requireVideo, videoOwnLook } from "./project-db.js";
 import { videoRenders, type RenderResult } from "./renders.js";
 
 export interface ThumbnailItem { text: string; at_seconds?: number | undefined }
@@ -36,11 +36,14 @@ function clockOf(s: number): string {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 }
 
-/** How the words look, from the branding (`thumbnail` and `text_look` in `channel/branding.md`), with what was asked on top. */
-export function thumbnailStyleOf(dir: string, over: Partial<ThumbnailStyle> = {}): ThumbnailStyle {
+/**
+ * How the words look, from the branding (`thumbnail` and `text_look` in `channel/branding.md`), the video's own
+ * colours (`own`, its Style tab) over the branding's, with what was asked on top.
+ */
+export function thumbnailStyleOf(dir: string, over: Partial<ThumbnailStyle> = {}, own: TextLook | null = null): ThumbnailStyle {
   const path = join(dir, "channel", "branding.md");
   const fm = existsSync(path) ? (readFrontmatter(readFileSync(path, "utf8")).data as Record<string, unknown>) : {};
-  const look = (fm.text_look ?? {}) as { text_color?: string; outline_color?: string; box_color?: string | null };
+  const look = (own ?? fm.text_look ?? {}) as { text_color?: string; outline_color?: string; box_color?: string | null };
   const thumb = (fm.thumbnail ?? {}) as { position?: string; text_case?: string };
   const base = {
     position: ["top", "center", "bottom", "left", "right"].includes(thumb.position ?? "") ? thumb.position : "bottom",
@@ -121,7 +124,7 @@ export function thumbnailHandler(d: { db: StudioDb; bucket: StudioBucket; render
       };
     }
     const size = THUMBNAIL_SIZES[project.aspect];
-    const style = thumbnailStyleOf(ctx.workspaceDir, req.style);
+    const style = thumbnailStyleOf(ctx.workspaceDir, req.style, (await videoOwnLook(d.db, video.id)).text_look);
     const outDir = join(ctx.workspaceDir, thumbnailsDir(video.id));
     mkdirSync(outDir, { recursive: true });
     const taken = new Set(readdirSync(outDir));

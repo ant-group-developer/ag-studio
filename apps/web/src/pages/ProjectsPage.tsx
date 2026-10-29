@@ -68,7 +68,7 @@ export function ProjectsPage() {
   const [find, setFind] = useState("");
   const [mine, setMine] = useState(false);
   const [sort, setSort] = useState<{ sortBy: SortField; sortOrder: SortDirection }>({ sortBy: "lastActivityAt", sortOrder: "desc" });
-  const [view, setView] = useViewMode("studio.projects.viewMode", "grid");
+  const [view, setView] = useViewMode("studio.projects.viewMode", "table");
   const { data, isLoading } = useQuery({ queryKey: ["projects", teamId], queryFn: () => client.listProjects(teamId), enabled: !!teamId });
   // producers and owners make projects; a Studio admin counts as owner
   const canCreate = atLeast("producer");

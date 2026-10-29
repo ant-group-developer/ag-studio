@@ -5,8 +5,8 @@
  */
 import { randomUUID } from "node:crypto";
 import {
-  HarnessError, ProjectSettingsSchema, TimelineV4Schema,
-  type CreateProject, type ProjectAspect, type ProjectSettings, type TimelineV4, type UpdateProject, type VideoStatus,
+  HarnessError, ProjectSettingsSchema, TextLookSchema, TimelineV4Schema, VIDEO_LOOKS,
+  type CreateProject, type ProjectAspect, type ProjectSettings, type TextLook, type TimelineV4, type UpdateProject, type VideoLook, type VideoStatus,
 } from "@harness/contracts";
 import { StudioRunError } from "../errors.js";
 import { RevisionConflictError, type StudioDb } from "../studio-db.js";
@@ -161,6 +161,26 @@ export async function updateVideo(db: StudioDb, id: string, patch: { title?: str
     await db.run("UPDATE videos SET title = ?, status = ?, updated_at = ? WHERE id = ?", [patch.title ?? v.title, patch.status ?? v.status, now, id]);
     return requireVideo(db, id);
   });
+}
+
+/** What a person picked for a video's words and picture (plan 2026-10-28 P3); null = not picked. */
+export interface VideoOwnLook { text_look: TextLook | null; look: VideoLook | null; color_match: boolean | null }
+
+export async function videoOwnLook(db: StudioDb, videoId: string): Promise<VideoOwnLook> {
+  const row = await db.get<{ text_look: unknown; look: string | null; color_match: boolean | null }>("SELECT text_look, look, color_match FROM videos WHERE id = ?", [videoId]);
+  const text = row?.text_look ? TextLookSchema.safeParse(typeof row.text_look === "string" ? JSON.parse(row.text_look) : row.text_look) : null;
+  return {
+    text_look: text?.success ? text.data : null,
+    look: row?.look && (VIDEO_LOOKS as readonly string[]).includes(row.look) ? (row.look as VideoLook) : null,
+    color_match: typeof row?.color_match === "boolean" ? row.color_match : null,
+  };
+}
+
+export async function setVideoOwnLook(db: StudioDb, videoId: string, own: VideoOwnLook, now = new Date().toISOString()): Promise<VideoOwnLook> {
+  await requireVideo(db, videoId);
+  await db.run("UPDATE videos SET text_look = ?, look = ?, color_match = ?, updated_at = ? WHERE id = ?",
+    [own.text_look ? JSON.stringify(TextLookSchema.parse(own.text_look)) : null, own.look, own.color_match, now, videoId]);
+  return videoOwnLook(db, videoId);
 }
 
 export async function archiveVideo(db: StudioDb, id: string, now = new Date().toISOString()): Promise<void> {

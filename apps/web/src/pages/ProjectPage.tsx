@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Result, Spin } from "antd";
+import { Drawer, Result, Spin, Tooltip } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { Clapperboard, Film, FolderOpen, Settings, TrendingUp } from "lucide-react";
+import { Clapperboard, Film, FolderOpen, Palette, Settings } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { StudioHttpError } from "../api/http";
 import { useWorkspaceClient, type Learning } from "../api/workspace-client";
@@ -10,9 +10,9 @@ import { ChatPanel } from "../modules/agent-chat/ChatPanel";
 import { LearningModal } from "../modules/agent-chat/NewWorkModals";
 import { useProjectEvents, useThread } from "../modules/agent-chat/use-thread";
 import { useAiTranslation } from "../modules/common/assistant-name";
-import { FilesPanel } from "../modules/files/FilesPanel";
+import { DocsPanel } from "../modules/files/DocsPanel";
 import { InputsPanel } from "../modules/inputs/InputsPanel";
-import { ResearchPanel } from "../modules/research/ResearchPanel";
+import { StylePanel } from "../modules/style/StylePanel";
 import { VideoPanel } from "../modules/video/VideoPanel";
 import { StepRail } from "../modules/playbook/StepRail";
 import { useStepText } from "../modules/playbook/step-text";
@@ -24,11 +24,12 @@ import { ProjectSettingsPanel } from "../modules/workspace/ProjectSettingsPanel"
 import { useTeamRole } from "../modules/workspace/use-team-role";
 import { WorkspaceShell } from "../modules/workspace/WorkspaceShell";
 
-type AsideTab = "preview" | "files" | "inputs" | "research" | "settings";
+/** The right column (plan 2026-10-28 P2–P3): the video's preview, the documents, the sources, the style; settings sit behind ⚙. */
+type AsideTab = "preview" | "files" | "inputs" | "style";
 const TABS: { key: AsideTab; icon: typeof FolderOpen; video?: boolean }[] = [
-  { key: "preview", icon: Clapperboard, video: true }, { key: "files", icon: FolderOpen }, { key: "inputs", icon: Film }, { key: "research", icon: TrendingUp },
-  { key: "settings", icon: Settings },
+  { key: "preview", icon: Clapperboard, video: true }, { key: "files", icon: FolderOpen }, { key: "inputs", icon: Film }, { key: "style", icon: Palette },
 ];
+const ASIDE_TABS = new Set<string>(TABS.map((x) => x.key));
 
 /**
  * `/p/:projectId` (the channel's chat), `/p/:projectId/c/:threadId` (another chat of the project) and
@@ -62,8 +63,10 @@ export function ProjectPage() {
   const [learningOpen, setLearningOpen] = useState(false);
   useEffect(() => { setLearningOpen(false); }, [threadId]);
 
-  const asked = search.get("tab") as AsideTab | null;
-  const tab: AsideTab = asked && (asked !== "preview" || videoId) ? asked : videoId ? "preview" : "files";
+  // `?tab=settings` (old links) opens the settings; `?tab=research` and other old tabs fall back to the documents
+  const asked = search.get("tab");
+  const [settingsOpen, setSettingsOpen] = useState(asked === "settings");
+  const tab: AsideTab = asked && ASIDE_TABS.has(asked) && (asked !== "preview" || videoId) ? asked as AsideTab : videoId ? "preview" : "files";
   const openFile = search.get("file");
   const setAside = (next: { tab?: AsideTab; file?: string | null }) => {
     const params = new URLSearchParams(search);
@@ -111,7 +114,14 @@ export function ProjectPage() {
   const learning: Learning = { useLessons: thread?.useLessons ?? true, threads: (thread?.refs ?? []).map((r) => ({ threadId: r.threadId, mode: r.mode })) };
 
   return (
-    <WorkspaceShell teamId={project.teamId} project={project} crumbs={crumbs} actions={<ActivityButton projectId={project.id} />}>
+    <WorkspaceShell teamId={project.teamId} project={project} crumbs={crumbs} actions={(
+      <>
+        <Tooltip title={t("ws.aside.settings")}>
+          <button type="button" className="ws-icon-button" aria-label={t("ws.aside.settings")} onClick={() => setSettingsOpen(true)}><Settings size={16} aria-hidden /></button>
+        </Tooltip>
+        <ActivityButton projectId={project.id} />
+      </>
+    )}>
       <div className="ws-body" ref={body} style={style}>
         <ProjectNav project={project} videos={project.videos} current={{ threadId: videoId ? undefined : threadId ?? undefined, videoId }} canCreate={atLeast("editor")}
           canRename={atLeast("editor")} canRenameProject={atLeast("producer")} />
@@ -151,20 +161,25 @@ export function ProjectPage() {
             {tab === "preview" && videoId ? (
               <VideoPanel projectId={project.id} videoId={videoId} atLeast={atLeast} onOpenFile={(file) => setAside({ tab: "files", file })} />
             ) : tab === "files" ? (
-              <FilesPanel projectId={project.id} canEdit={atLeast("editor")} openPath={openFile} onOpen={(file) => setAside({ file })}
-                onAttach={threadId && atLeast("editor") ? attach : undefined} />
-            ) : tab === "inputs" ? (
-              <InputsPanel projectId={project.id} {...(videoId ? { videoId } : {})} canEdit={atLeast("editor")} canProduce={atLeast("producer")} onOpenFile={(file) => setAside({ tab: "files", file })} />
-            ) : tab === "research" ? (
-              <ResearchPanel projectId={project.id} canRun={atLeast("editor")} onOpenFile={(file) => setAside({ tab: "files", file })} />
+              <DocsPanel projectId={project.id} videos={project.videos} currentVideoId={videoId} canEdit={atLeast("editor")} canRun={atLeast("editor")}
+                openPath={openFile} onOpen={(file) => setAside({ file })} onAttach={threadId && atLeast("editor") ? attach : undefined} />
+            ) : tab === "style" ? (
+              <StylePanel projectId={project.id} video={currentVideo ? { id: currentVideo.id, title: currentVideo.title } : undefined} canEdit={atLeast("editor")}
+                onOpenFile={(file) => setAside({ tab: "files", file })} onPrompt={setDraft}
+                onReferences={() => { try { localStorage.setItem("studio.inputs.section", "files"); } catch { /* this visit only */ } setAside({ tab: "inputs" }); }} />
             ) : (
-              <ProjectSettingsPanel project={project} canEdit={atLeast("producer")} canArchive={atLeast("owner")} onOpenFile={(file) => setAside({ tab: "files", file })} />
+              <InputsPanel projectId={project.id} {...(videoId ? { videoId } : {})} canEdit={atLeast("editor")} canProduce={atLeast("producer")} onOpenFile={(file) => setAside({ tab: "files", file })} />
             )}
           </div>
         </aside>
         <ColumnResizer column="nav" body={() => body.current} onResize={(w, persist) => set("nav", w, persist)} />
         <ColumnResizer column="aside" body={() => body.current} onResize={(w, persist) => set("aside", w, persist)} />
       </div>
+      <Drawer open={settingsOpen} title={t("ws.aside.settings")} width={480} destroyOnHidden
+        onClose={() => { setSettingsOpen(false); if (search.get("tab") === "settings") setAside({ tab: videoId ? "preview" : "files" }); }}>
+        <ProjectSettingsPanel project={project} canEdit={atLeast("producer")} canArchive={atLeast("owner")}
+          onOpenFile={(file) => { setSettingsOpen(false); setAside({ tab: "files", file }); }} />
+      </Drawer>
       {threadId ? <LearningModal projectId={project.id} threadId={threadId} current={learning} open={learningOpen} onClose={() => setLearningOpen(false)} /> : null}
       <ProductTour kind="project" ready={!!playbook && !!thread} />
     </WorkspaceShell>

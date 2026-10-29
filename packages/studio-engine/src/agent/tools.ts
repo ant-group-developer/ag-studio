@@ -24,6 +24,7 @@ import { projectAudioSummary, videoMusicSummary } from "../workspace/project-aud
 import { RESEARCH_TOOLS } from "./research-tools.js";
 import { ACTION_TOOLS } from "./action-tools.js";
 import { TIMELINE_TOOLS } from "./timeline-tools.js";
+import { HANDOFF_NEXT, handOffToVideo } from "./handoff.js";
 
 /** What a tool call runs with: the turn, its project (and video), the workspace folder. */
 export interface AgentToolContext {
@@ -74,7 +75,7 @@ const videoBrief = (title: string, brief: string, now: string) =>
 export const PROJECT_TOOLS: AgentTool[] = [
   tool({
     name: "project_info",
-    description: "Thông tin dự án (kênh) đang làm: tên, kênh YouTube, mô tả, ngôn ngữ, khung hình, cài đặt, giọng đọc và nhạc nền, danh sách video (id, số, tên, trạng thái), và video của luồng này nếu có (kèm nhạc của video: nhạc riêng do người dùng chọn ở tab Đầu vào của video, không có thì nhạc dự án).",
+    description: "Thông tin dự án (kênh) đang làm: tên, kênh YouTube, mô tả, ngôn ngữ, khung hình, cài đặt, giọng đọc và nhạc nền, danh sách video (id, số, tên, trạng thái), và video của luồng này nếu có (kèm nhạc của video: nhạc riêng do người dùng chọn ở tab Nguồn của video, không có thì nhạc dự án).",
     input: z.object({}).strict(),
     run: async (ctx) => ({
       text: json({
@@ -97,10 +98,11 @@ export const PROJECT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "video_create",
-    description: "Tạo một video mới trong dự án (mỗi video có thư mục videos/<id>/ và luồng chat riêng). Dùng khi người dùng muốn thêm video, ví dụ từ các ý tưởng vừa bàn. `brief` (markdown) được ghi vào videos/<id>/brief.md.",
+    description: "Tạo một video mới trong dự án (mỗi video có thư mục videos/<id>/ và luồng chat riêng). Dùng khi người dùng muốn thêm video, ví dụ từ các ý tưởng vừa bàn. `brief` (markdown) được ghi vào videos/<id>/brief.md. Người dùng muốn bắt tay làm video này ngay thì ghi `start`: việc cần làm đầu tiên và điều đã bàn; Studio chuyển việc sang luồng chat của video (agent ở đó làm, trang người dùng mở luồng đó) và bạn dừng lượt này. Tạo nhiều video một lúc (danh sách ý tưởng) thì không ghi `start`.",
     input: z.object({
       title: z.string().trim().min(1).max(200),
       brief: z.string().max(20_000).optional(),
+      start: z.string().trim().min(1).max(4000).optional(),
     }).strict(),
     role: "editor",
     run: async (ctx, a) => {
@@ -114,7 +116,30 @@ export const PROJECT_TOOLS: AgentTool[] = [
         writeFileSync(join(ctx.workspaceDir, "videos", video.id, "brief.md"), text);
         await recordFileVersion(ctx.db, { projectId: ctx.project.id, path, bytes: Buffer.from(text, "utf8"), author: { kind: "agent", id: ctx.claims.sub, messageId: ctx.message.id }, now });
       }
-      return { text: json({ id: video.id, idx: video.idx, title: video.title, folder: `videos/${video.id}/`, brief: a.brief ? `videos/${video.id}/brief.md` : null }) };
+      const handoff = a.start ? await handOffToVideo(ctx, video, a.start) : null;
+      return {
+        text: json({
+          ...(handoff ? { handoff } : {}),
+          id: video.id, idx: video.idx, title: video.title, folder: `videos/${video.id}/`, brief: a.brief ? `videos/${video.id}/brief.md` : null,
+          ...(handoff ? { next: HANDOFF_NEXT } : {}),
+        }),
+      };
+    },
+  }),
+  tool({
+    name: "video_focus",
+    description: "Chuyển việc của một video có sẵn sang luồng chat của video đó: khi người dùng bắt đầu làm video này (chọn cảnh, kế hoạch dựng, timeline, render, thêm footage cho video) mà bạn đang ở luồng Kênh hay một chat khác. `message`: việc cần làm và những gì đã bàn mà agent ở luồng video cần biết (nó không đọc luồng này). Studio đăng tin đó vào luồng video, agent ở đó làm tiếp, trang người dùng mở luồng đó; bạn viết một câu báo rồi dừng.",
+    input: z.object({
+      video_id: z.string().min(1),
+      message: z.string().trim().min(1).max(4000),
+    }).strict(),
+    role: "editor",
+    run: async (ctx, a) => {
+      const v = await requireVideo(ctx.db, a.video_id);
+      if (v.project_id !== ctx.project.id) throw new StudioRunError("invalid", "video thuộc dự án khác", { code: "other_project" });
+      if (ctx.video?.id === v.id) return { text: "Bạn đang ở luồng của video này rồi: làm tiếp ở đây.", isError: true };
+      const handoff = await handOffToVideo(ctx, v, a.message);
+      return { text: json({ handoff, next: HANDOFF_NEXT }) };
     },
   }),
   tool({

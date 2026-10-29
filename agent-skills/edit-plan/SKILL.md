@@ -89,7 +89,7 @@ survey).
   và chú thích) **tự xếp chồng**, không đè nhau: chữ bắt đầu trước nằm sát mép, chữ sau đẩy lên (vị trí dưới) hoặc đẩy
   xuống (vị trí trên, giữa). Muốn hai dòng của một chữ thì viết `\n` trong `text`.
 - `music_mood`: tâm trạng nhạc khi video và dự án chưa có nhạc riêng (xem `music_list`). Nhạc riêng: người dùng chọn ở
-  tab Đầu vào, hoặc bạn đặt bằng `music_set` (file trong `context/audio/`, ghép nhiều bài) — `music_list` cho biết nhạc
+  tab Nguồn, hoặc bạn đặt bằng `music_set` (file trong `context/audio/`, ghép nhiều bài) — `music_list` cho biết nhạc
   đang gán. `music` (tuỳ chọn): `{ "gain_db": -24, "ducking": false }` = nhạc đó phát ở mức này, có/không nhỏ lại khi có
   lời; `"music": null` = video không có nhạc.
 - Cắt theo nhịp nhạc (tuỳ chọn): `snap: "bar"` (đầu ô nhịp) hoặc `"beat"` (phách) trên shot — Studio dời điểm cắt **cuối**
@@ -105,6 +105,8 @@ survey).
   `look` vẫn áp như thường: khớp màu chạy sau `look`.
 - `text_look` (tuỳ chọn): kiểu chữ riêng của video thay cho `text_look` của branding (cùng các khoá: màu, `size`,
   `shadow`, `font`).
+- Người dùng đã chọn chữ, màu hình hay khớp màu ở tab Phong cách của video (`<studio_context>` báo) thì lựa chọn đó thắng
+  ba khoá trên: đừng ghi khoá đó vào kế hoạch.
 - `target_seconds` theo brief (10–3600).
 
 ## `edit-plan.md` — cho người đọc
@@ -117,7 +119,7 @@ Frontmatter `status: draft`. Thân: cấu trúc từng phần, lời dẫn đầ
    dựng" trừ khi có lý do và ghi lý do đó trong `note`.
 2. Khi người dùng đồng ý: `status: done` trong edit-plan.md, rồi `timeline_from_edit_plan` (thiếu hay sai một trong hai
    file thì tool báo ngay, không tạo việc). Lời dẫn tts cần giọng của
-   dự án (xem `project_info`); chưa có thì nhờ người dùng chọn file giọng mẫu ở tab Đầu vào.
+   dự án (xem `project_info`); chưa có thì nhờ người dùng chọn file giọng mẫu ở tab Nguồn.
 3. **Dựng lại từ kế hoạch thay toàn bộ timeline.** Mỗi lần sửa timeline bằng `timeline_apply_ops` mà muốn giữ khi dựng lại
    (chuyển cảnh, âm lượng clip, đường âm lượng nhạc, tắt tiếng, chữ, cỡ chữ, màu), ghi luôn thay đổi đó vào
    `edit-plan.json`. Riêng mức nhạc của `setMusic` Studio tự nhớ vào nhạc của video.

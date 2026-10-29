@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { App as AntApp, Input, Modal, Spin, Tooltip } from "antd";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Spin, Tooltip } from "antd";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FilePlus, FileText, Folder, Image as ImageIcon, Lock, RefreshCw, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient } from "../../api/workspace-client";
 import { ancestors, buildTree, type TreeNode } from "./file-tree";
 import { FileView } from "./FileView";
-import { useUploadProgress } from "../common/upload-progress";
+import { NewFileModal, useFileActions } from "./use-file-actions";
 
 const IMAGE = /\.(jpe?g|png|webp|gif)$/i;
 const DEFAULT_OPEN = new Set(["context", "research", "channel", "memory"]);
@@ -77,15 +76,12 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
   onAttach?: ((path: string) => void) | undefined;
 }) {
   const { t } = useTranslation();
-  const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
-  const qc = useQueryClient();
   const { data, isLoading, refetch, isFetching } = useQuery({ queryKey: ["files", projectId], queryFn: () => client.listFiles(projectId) });
   const tree = useMemo(() => buildTree(data?.entries ?? []), [data]);
   const [open, setOpen] = useState<Set<string>>(() => new Set(DEFAULT_OPEN));
   const [folder, setFolder] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [newPath, setNewPath] = useState("");
+  const [creating, setCreating] = useState<string | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const narrow = useNarrow(box, SPLIT_MIN);
@@ -110,29 +106,7 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
   };
   useEffect(() => { if (openPath) setOpen((o) => new Set([...o, ...ancestors(openPath)])); }, [openPath]);
 
-  const create = useMutation({
-    mutationFn: (path: string) => client.writeFile(projectId, { path, content: "", baseSha256: null }),
-    onSuccess: (saved) => {
-      setCreating(false);
-      void qc.invalidateQueries({ queryKey: ["files", projectId] });
-      onOpen(saved.path);
-    },
-    onError: (e) => void message.error(e instanceof StudioHttpError && e.code === "file_conflict" ? t("ws.files.exists") : e instanceof StudioHttpError ? e.message : t("ws.files.saveFailed")),
-  });
-  const uploading = useUploadProgress();
-  const upload = useMutation({
-    mutationFn: (files: File[]) => {
-      const progress = uploading.start(files);
-      return Promise.all(files.map((f, i) => client.uploadFile(projectId, f, folder && writableFolder(folder) ? folder : undefined, progress[i])));
-    },
-    onSettled: uploading.done,
-    onSuccess: (saved) => {
-      void qc.invalidateQueries({ queryKey: ["files", projectId] });
-      void message.success(t("ws.files.uploaded", { count: saved.length }));
-      if (saved.length === 1) onOpen(saved[0]!.path);
-    },
-    onError: (e) => void message.error(e instanceof StudioHttpError ? e.message : t("ws.files.uploadFailed")),
-  });
+  const { create, upload, uploading } = useFileActions(projectId, (path) => { setCreating(null); onOpen(path); });
   const openEntry = data?.entries.find((e) => e.path === openPath);
 
   const treeList = isLoading ? <div className="ws-center"><Spin /></div> : (
@@ -168,8 +142,7 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
             <Tooltip title={t("ws.files.newFile")}>
               <button type="button" className="ws-icon-button" aria-label={t("ws.files.newFile")} onClick={() => {
                 const base = folder && writableFolder(folder) ? folder : "context";
-                setNewPath(`${base}/ghi-chu.md`);
-                setCreating(true);
+                setCreating(`${base}/ghi-chu.md`);
               }}><FilePlus size={16} /></button>
             </Tooltip>
             <Tooltip title={t("ws.files.upload")}>
@@ -179,7 +152,7 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
             </Tooltip>
             <input
               ref={uploadInput} type="file" multiple hidden
-              onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; if (files.length) upload.mutate(files); }}
+              onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; if (files.length) upload.mutate({ files, folder: folder && writableFolder(folder) ? folder : undefined }); }}
             />
           </>
         ) : null}
@@ -188,13 +161,7 @@ export function FilesPanel({ projectId, canEdit, openPath, onOpen, onAttach }: {
         </Tooltip>
       </div>
       {treeList}
-      <Modal
-        open={creating} title={t("ws.files.newFile")} okText={t("common.create")} cancelText={t("common.cancel")}
-        onCancel={() => setCreating(false)} onOk={() => create.mutate(newPath.trim())} confirmLoading={create.isPending} destroyOnHidden
-      >
-        <p style={{ marginTop: 0 }}>{t("ws.files.newFileHint")}</p>
-        <Input value={newPath} onChange={(e) => setNewPath(e.target.value)} onPressEnter={() => create.mutate(newPath.trim())} autoFocus />
-      </Modal>
+      <NewFileModal open={creating !== null} initial={creating ?? ""} busy={create.isPending} onCreate={(path) => create.mutate({ path })} onClose={() => setCreating(null)} />
     </div>
   );
 }

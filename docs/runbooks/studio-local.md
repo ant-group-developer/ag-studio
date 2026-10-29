@@ -79,7 +79,7 @@ cd E:/CODE/ag-studio/apps/web; corepack pnpm exec vite --port 3100 --strictPort
 
 **Kiểm nhanh:** `http://localhost:3738/api/health`, `http://localhost:3010/health`, `http://localhost:3101/api/health`
 trả `ok`; web farm (3011) thấy `local-render`, `local-scan` Online; mở `http://localhost:3100`, đăng nhập Auth0,
-mở một dự án, tab Đầu vào → "Thêm project ag-go": danh sách project ag-go phải hiện.
+mở một dự án, tab Nguồn → "Thêm project ag-go": danh sách project ag-go phải hiện.
 
 ## 3. Build lại khi code đổi
 
@@ -193,7 +193,7 @@ Không chạy song song với chế độ trực tiếp: hai bên dùng chung c�
 
 Worker dùng yt-dlp cho hai việc (ADR-0001 mục 175–176, 186):
 
-- **Crawl:** tab Nghiên cứu và tool của agent tìm video xu hướng, video top của kênh. Không có `YOUTUBE_API_KEY` thì worker
+- **Crawl:** nút "Chạy nghiên cứu" ở tab Tài liệu và tool của agent tìm video xu hướng, video top của kênh. Không có `YOUTUBE_API_KEY` thì worker
   tìm bằng `yt-dlp ytsearchN:` và kênh `/videos` (không tốn hạn mức, ít số liệu hơn). Không có cả hai thì job `research`
   chờ một worker có.
 - **Học phong cách:** chỉ khi người bấm xác nhận thẻ `reference_download`: tải video mẫu ở ≤480p, đo nhịp cắt, giữ khung và
@@ -203,7 +203,7 @@ Worker dùng yt-dlp cho hai việc (ADR-0001 mục 175–176, 186):
   video mẫu do **máy farm** tải (YouTube thường chặn IP máy chủ, không chặn máy văn phòng): Studio kéo file từ bucket về
   thư mục nháp của job, đo, rồi xoá cả object trên bucket lẫn file nháp (ADR-0001 mục 193). Job hiện "Đang tải video mẫu
   i/n trên máy <tên>"; không có máy nào thì worker tự tải bằng yt-dlp như trên. Video mẫu người dùng
-  tải lên tab Đầu vào (mục Video mẫu, `context/references/`, ≤ 300 MB) thì agent học bằng `style_from_files`: không thẻ,
+  tải lên tab Nguồn (mục Video tham khảo, `context/references/`, ≤ 300 MB) thì agent học bằng `style_from_files`: không thẻ,
   không mạng, chỉ cần ffmpeg, không xoá file của họ.
 
 Cài trên máy dev Windows (một lần), rồi khai trong `apps/api/.env` (worker chạy trực tiếp đọc file này):
@@ -228,8 +228,8 @@ thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo l�
 | Cây folder trống, lỗi CORS khi web gọi ag-go | `CORS_EXTRA_ORIGINS` của ag-go thiếu `http://localhost:3100` | Sửa `ag-go-api/.env`, bật lại ag-go-api |
 | Account API không với tới | Container account dừng | Vẫn vào được, nhưng không ai là admin và tên hiện thiếu |
 | Job render "Đang chờ máy farm" mãi | Farm hub hoặc `local-render` không chạy, hoặc không máy nào khớp yêu cầu | `local-stack.mjs status`, web farm 3011; quá `STUDIO_FARM_QUEUE_TIMEOUT_MINUTES` thì job tự huỷ và báo vào luồng |
-| Dựng timeline báo thiếu giọng đọc | Dự án chưa chọn giọng (hay chưa chọn "không lời dẫn") | Tab Đầu vào → Giọng và nhạc: chọn một file audio đã tải lên làm giọng (vai producer, khai nguồn gốc), hoặc không lời dẫn |
-| Đưa audio báo 503 `audio_disabled` (tab Đầu vào báo "máy Studio chưa có ffmpeg") | API thiếu `STUDIO_FFMPEG_PATH` (ffprobe mặc định nằm cạnh; khác chỗ thì đặt `STUDIO_FFPROBE_PATH`) | Đặt trong `apps/api/.env` (máy dev: ffmpeg-static/ffprobe-static của ag-render-worker) rồi bật lại API |
+| Dựng timeline báo thiếu giọng đọc | Dự án chưa chọn giọng (hay chưa chọn "không lời dẫn") | Tab Nguồn → Giọng và nhạc: chọn một file audio đã tải lên làm giọng (vai producer, khai nguồn gốc), hoặc không lời dẫn |
+| Đưa audio báo 503 `audio_disabled` (tab Nguồn báo "máy Studio chưa có ffmpeg") | API thiếu `STUDIO_FFMPEG_PATH` (ffprobe mặc định nằm cạnh; khác chỗ thì đặt `STUDIO_FFPROBE_PATH`) | Đặt trong `apps/api/.env` (máy dev: ffmpeg-static/ffprobe-static của ag-render-worker) rồi bật lại API |
 | Tải file lên báo "Không tải được lên kho lưu trữ (R2)" | Bucket R2 chưa bật CORS cho origin của web (DevTools: request `OPTIONS`/`PUT` tới `*.r2.cloudflarestorage.com` bị chặn) | Thêm CORS policy ở mục 4 cho bucket đó |
 | Tải file lên báo `upload_missing` | Link PUT hết hạn (1 giờ) hoặc PUT chưa xong | Tải lại |
 | Lượt agent chờ lâu, "chờ hạn mức" | Hết hạn mức gói | Đợi; tự thử lại 5→60 phút, không tính là lỗi |
@@ -247,7 +247,7 @@ thể cần thêm một JS runtime (Deno) cho YouTube: làm theo thông báo l�
 | Dựng timeline treo ở "đọc lời dẫn" | `local-render` không khai `python` hoặc thiếu kind `studio.tts` | Mục 4a; web farm 3011 xem khả năng node |
 | Job `studio.transcribe` bị hub từ chối "not allowed for owner studio" | DB farm chưa chạy migration `studio-transcribe` | Chạy migration hub (mục 3) |
 | Job học phong cách (`style_watch`) chờ mãi | Không worker nào có ffmpeg (`media`) | Mục 4a/4b; bật lại worker |
-| Video YouTube trong job học phong cách báo `no_ytdlp` | Worker không có yt-dlp hay `STUDIO_REFERENCE_DOWNLOADS=0` | Mục 4b; hoặc tải video mẫu lên tab Đầu vào |
-| Học phong cách báo "YouTube đang chặn tải từ máy chủ Studio…" (mã `youtube_blocked`; Hàng đợi hiện cảnh báo cho admin) | YouTube đòi xác nhận không phải bot với IP máy chạy worker, và không máy farm nào nhận `studio.reference_fetch` | Bật/cập nhật một máy render có yt-dlp (trang Máy của farm thấy loại `studio.reference_fetch`): video mẫu sẽ đi qua máy đó; hoặc tải video mẫu lên tab Đầu vào, hoặc tả phong cách bằng lời; research đặt `YOUTUBE_API_KEY`. Studio nhớ 6 giờ, tải được trên máy chủ thì tự xoá. Không lách chặn (không cookie) |
-| Học phong cách báo "YouTube đang chặn tải từ máy farm <tên>…" (Hàng đợi: "YouTube cũng đang chặn tải từ các máy farm") | YouTube chặn cả IP văn phòng | Tải video mẫu lên tab Đầu vào hoặc tả bằng lời; Studio nhớ 6 giờ (`youtube.farm_blocked_until`), máy farm tải được thì tự xoá |
-| Crawl ở tab Nghiên cứu chờ mãi | Worker không có `YOUTUBE_API_KEY` lẫn yt-dlp | Đặt `YOUTUBE_API_KEY` hoặc cài yt-dlp (mục 4b), bật lại worker |
+| Video YouTube trong job học phong cách báo `no_ytdlp` | Worker không có yt-dlp hay `STUDIO_REFERENCE_DOWNLOADS=0` | Mục 4b; hoặc tải video mẫu lên tab Nguồn |
+| Học phong cách báo "YouTube đang chặn tải từ máy chủ Studio…" (mã `youtube_blocked`; Hàng đợi hiện cảnh báo cho admin) | YouTube đòi xác nhận không phải bot với IP máy chạy worker, và không máy farm nào nhận `studio.reference_fetch` | Bật/cập nhật một máy render có yt-dlp (trang Máy của farm thấy loại `studio.reference_fetch`): video mẫu sẽ đi qua máy đó; hoặc tải video mẫu lên tab Nguồn, hoặc tả phong cách bằng lời; research đặt `YOUTUBE_API_KEY`. Studio nhớ 6 giờ, tải được trên máy chủ thì tự xoá. Không lách chặn (không cookie) |
+| Học phong cách báo "YouTube đang chặn tải từ máy farm <tên>…" (Hàng đợi: "YouTube cũng đang chặn tải từ các máy farm") | YouTube chặn cả IP văn phòng | Tải video mẫu lên tab Nguồn hoặc tả bằng lời; Studio nhớ 6 giờ (`youtube.farm_blocked_until`), máy farm tải được thì tự xoá |
+| Crawl ("Chạy nghiên cứu", tab Tài liệu) chờ mãi | Worker không có `YOUTUBE_API_KEY` lẫn yt-dlp | Đặt `YOUTUBE_API_KEY` hoặc cài yt-dlp (mục 4b), bật lại worker |

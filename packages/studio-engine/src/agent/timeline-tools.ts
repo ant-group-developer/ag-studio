@@ -23,6 +23,7 @@ import { musicBeatsStatus, queueMusicBeats } from "../workspace/music-beats.js";
 import { queueRender } from "../workspace/renders.js";
 import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
+import { requireVideoThread } from "./handoff.js";
 import type { AgentTool, AgentToolContext, ToolAnswer } from "./tools.js";
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
@@ -31,11 +32,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const waitS = z.number().int().min(0).max(60).optional();
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-async function videoOf(ctx: AgentToolContext, id: string | undefined) {
+/** The video a tool acts on; its work (`work`, not only reading it) runs only in its own thread (plan 2026-10-28 P4). */
+async function videoOf(ctx: AgentToolContext, id: string | undefined, opts: { work?: boolean } = {}) {
   const videoId = id ?? ctx.video?.id;
   if (!videoId) throw new StudioRunError("invalid", "luồng này không gắn với video nào: cho biết video_id", { code: "no_video" });
   const v = await requireVideo(ctx.db, videoId);
   if (v.project_id !== ctx.project.id) throw new StudioRunError("invalid", "video thuộc dự án khác", { code: "other_project" });
+  if (opts.work ?? true) requireVideoThread(ctx, v);
   return v;
 }
 
@@ -170,7 +173,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
       to_s: z.number().positive().optional(),
     }).strict(),
     run: async (ctx, a) => {
-      const v = await videoOf(ctx, a.video_id);
+      const v = await videoOf(ctx, a.video_id, { work: false });
       const rev = a.revision ? await getVideoRevision(ctx.db, v.id, a.revision) : await latestVideoRevision(ctx.db, v.id);
       if (!rev) return { text: "Video chưa có timeline: dựng bằng timeline_from_edit_plan sau khi có edit-plan.json.", isError: true };
       if (a.from_s !== undefined && a.to_s !== undefined && a.to_s <= a.from_s) return { text: "to_s phải lớn hơn from_s.", isError: true };
@@ -278,7 +281,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     name: "music_list",
     description: [
       "Mọi nhạc dùng được cho video: nhạc đang gán cho video và cho dự án (`video_music`, `project_music`), file audio của dự án",
-      "(`project_files`: tải lên ở tab Đầu vào hoặc nằm trong context/audio/; gán bằng music_set) và nhạc trong thư viện của Studio",
+      "(`project_files`: tải lên ở tab Nguồn hoặc nằm trong context/audio/; gán bằng music_set) và nhạc trong thư viện của Studio",
       "(`library`, lọc theo tâm trạng `mood`; dùng `track` của bài cho music_set hoặc setMusic, hoặc ghi `music_mood` trong edit-plan.json).",
       "Nhịp của nhạc đang gán (`video_music_beats`, `project_music_beats`: BPM, số phách một ô nhịp, độ dài ô nhịp) để cắt cảnh theo nhịp",
       "(`shots[].snap` trong edit-plan.json).",
@@ -328,7 +331,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
     run: async (ctx, a) => {
       const scope = a.scope ?? "video";
       const videoId = a.video_id ?? ctx.video?.id;
-      const video = videoId ? await videoOf(ctx, videoId) : null;
+      const video = videoId ? await videoOf(ctx, videoId, { work: scope === "video" }) : null;
       if (scope === "video" && !video) return { text: "Luồng này không gắn với video nào: cho biết video_id, hoặc scope: project.", isError: true };
       const level = { ...(a.gain_db !== undefined ? { gainDb: a.gain_db } : {}), ...(a.ducking !== undefined ? { ducking: a.ducking } : {}) };
       try {
@@ -340,7 +343,7 @@ export const TIMELINE_TOOLS: AgentTool[] = [
           if (scope === "video") await setVideoLibraryMusic(ctx.db, video!.id, track, level);
           else await setProjectLibraryMusic(ctx.db, ctx.project.id, track, level);
         } else {
-          if (!ctx.audio) return { text: "Máy chủ chưa bật xử lý audio (ffmpeg) nên chưa ghép được file nhạc: dùng bài trong thư viện, hoặc nhờ người dùng chọn nhạc ở tab Đầu vào.", isError: true };
+          if (!ctx.audio) return { text: "Máy chủ chưa bật xử lý audio (ffmpeg) nên chưa ghép được file nhạc: dùng bài trong thư viện, hoặc nhờ người dùng chọn nhạc ở tab Nguồn.", isError: true };
           const known = new Map((await projectAudioFiles(ctx.db, ctx.workspaceDir, ctx.project.id)).map((f) => [f.path, f]));
           const files: { path: string; filename: string }[] = [];
           for (const path of a.files) {

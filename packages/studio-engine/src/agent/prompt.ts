@@ -9,7 +9,7 @@ import { normalizeRelPath } from "../workspace/files.js";
 import { previewLink } from "../workspace/renders.js";
 import { DEFAULT_SITE_NAME } from "../site-name.js";
 import type { YoutubeBlock } from "../settings.js";
-import type { ProjectRecord, VideoRecord } from "../workspace/project-db.js";
+import type { ProjectRecord, VideoOwnLook, VideoRecord } from "../workspace/project-db.js";
 import type { MessageRecord, ThreadRecord, ThreadRef } from "./threads-db.js";
 
 /** At most this much of CLAUDE.md (with what it imports) goes into the system prompt. */
@@ -47,7 +47,7 @@ gọi các tool \`mcp__studio__*\` của Studio.
 
 ## Đầu vào và việc nền
 - Footage đến từ kho video của công ty, tên là "${siteName}" (gọi đúng tên này khi nói với người dùng; họ chọn
-  project ${siteName} ở tab Đầu vào), hoặc người dùng tải video, ảnh từ máy vào mục Footage của một video (\`inputs_list\`
+  project ${siteName} ở tab Nguồn), hoặc người dùng tải video, ảnh từ máy vào mục Footage của một video (\`inputs_list\`
   ghi \`uploaded\`; ảnh thành clip 6 s đẩy vào chậm, dùng như shot ngắn); bạn không tự tải được footage từ máy, hãy nhờ
   họ. Tài liệu, ảnh, audio họ tải lên \`context/\`; video mẫu họ tải lên
   \`context/references/\` chỉ để học phong cách dựng (\`style_from_files\`), không phải footage. Xem bằng \`inputs_list\`,
@@ -76,9 +76,11 @@ Dựng xong vẫn chỉnh được bằng \`timeline_apply_ops\` (skill edit-pla
 dài tới 120 ký tự và tới 600 giây, cỡ riêng từng chữ, chữ cùng vị trí cùng lúc tự xếp chồng; âm lượng từng clip
 (\`setClipGain\`), tiếng gốc đều nhau (\`setSourceEven\`), đường âm lượng nhạc (\`setMusicEnvelope\`); màu hình (\`setLook\`),
 khớp màu các clip quay khác máy, khác giờ (\`setColorMatch\`).
-Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`, \`color_match\`). Đừng bảo người dùng tự sửa trong Premiere những
-việc này.
-Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Đầu vào hoặc nằm
+Font, bóng chữ, màu của kênh nằm ở branding (\`text_look\`, \`look\`, \`color_match\`). Một video có thể có chữ/màu riêng do người
+dùng chọn ở tab Phong cách của video (\`<studio_context>\` báo): cái đó thắng kế hoạch dựng và branding, nên đừng ghi
+\`text_look\`/\`look\`/\`color_match\` vào edit-plan.json cho thứ người dùng đã chọn; muốn đổi thì nói họ đổi ở tab Phong cách.
+Đừng bảo người dùng tự sửa trong Premiere những việc này.
+Nhạc nền: \`music_list\` cho biết nhạc đang gán cho video và dự án, các file audio của dự án (tải lên ở tab Nguồn hoặc nằm
 trong \`context/audio/\`) và thư viện của Studio; gán bằng \`music_set\` (một file, nhiều file ghép, hoặc một bài thư viện; cho
 video hoặc cả dự án). Đừng nói "chưa có nhạc" khi \`project_files\` còn file. Nhạc vừa gán được phân tích nhịp trong nền
 (\`music_list\` báo BPM, độ dài ô nhịp); muốn cảnh cắt theo nhạc (intro, montage) thì ghi \`snap: "bar"\` hoặc \`"beat"\` cho
@@ -86,6 +88,11 @@ shot trong edit-plan.json (skill edit-plan), đừng tự tính giây cho khớp
 Gợi ý bước tiếp theo theo luồng đang chat: luồng của một video chỉ gợi ý bước của video đó; luồng Kênh hay chat tự do chỉ
 gợi ý bước của kênh. Bước kênh còn dở (Branding…) trong luồng video chỉ nhắc khi bước đang làm cần nó (gói YouTube), và
 khuyên làm ở luồng Kênh; đừng tự chuyển sang làm bước kênh trong luồng video khi người dùng không hỏi.
+Việc của một video làm trong luồng chat của video đó. Ở luồng Kênh hay chat tự do mà người dùng bắt đầu làm một video (viết
+brief, chọn cảnh, thêm footage, kế hoạch dựng, timeline, render): video mới thì \`video_create\` có \`start\`, video có sẵn
+thì \`video_focus\`. Ghi vào \`start\`/\`message\` việc cần làm và điều đã bàn (agent ở luồng video không đọc luồng này).
+Studio chuyển trang người dùng sang luồng video; bạn viết một câu báo rồi dừng, không tự viết file của video ở luồng này.
+Tool việc của video gọi từ luồng khác bị từ chối với \`use_video_thread\`.
 
 ## Nói với người dùng về bản render
 - Bản xem trước và bản cuối xem ở trang video, cột bên phải, tab "Xem trước". Khi báo render xong, đưa link markdown
@@ -182,8 +189,18 @@ export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: Youtub
     o.farm && fetchers.length
       ? `YouTube đang chặn tải từ máy chủ Studio (${seen}) và cả các máy farm (thấy lúc ${viTime(o.farm.blockedAt)}, coi như còn chặn tới ${viTime(o.farm.until)}).`
       : `YouTube đang chặn tải từ máy chủ Studio (${seen}); không máy farm nào tải video mẫu thay được lúc này.`,
-    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Đầu vào (mục Video mẫu) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
+    "Đừng đề xuất reference_download (thẻ chắc chắn hỏng; Studio không dùng cookie hay đăng nhập để lách). Muốn học phong cách dựng thì đề nghị người dùng tải video mẫu lên tab Nguồn (mục Video tham khảo) rồi gọi style_from_files, hoặc tả phong cách bằng lời. Crawl YouTube khi worker không có YOUTUBE_API_KEY cũng bị chặn.",
   ];
+}
+
+/** What a person picked in the video's Style tab, for `<studio_context>` (nothing when they picked nothing). */
+export function videoLookLines(own: VideoOwnLook): string[] {
+  const parts = [
+    ...(own.text_look ? [`chữ ${own.text_look.font ?? "Arial"}, cỡ ${own.text_look.size}, màu ${own.text_look.text_color}, viền ${own.text_look.outline_color}${own.text_look.box_color ? `, hộp ${own.text_look.box_color}` : ""}${own.text_look.shadow ? ", bóng" : ""}`] : []),
+    ...(own.look ? [`màu hình ${own.look}`] : []),
+    ...(own.color_match !== null ? [own.color_match ? "khớp màu các clip" : "không khớp màu"] : []),
+  ];
+  return parts.length ? [`Người dùng đã chọn cho video này (tab Phong cách, thắng kế hoạch dựng và branding): ${parts.join("; ")}.`] : [];
 }
 
 /** The turn's message: `<studio_context>`, then what the people (and Studio) said since the last turn. */

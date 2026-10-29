@@ -42,7 +42,7 @@ async function crawl(ctx: AgentToolContext, input: CrawlRequestInput, waitSecond
   const r = parsed.data;
   if (isLargeCrawl(r)) {
     return {
-      text: `Crawl này lớn (≈ ${estimateCrawlUnits(r)} đơn vị hạn mức API, tối đa ${r.kind === "top_channels" ? r.max * 5 : r.max} video): cần người dùng xác nhận: gọi propose_action kind crawl_large với params {crawl: …} (hoặc nhờ họ chạy ở tab Nghiên cứu), hoặc giảm số lượng.`,
+      text: `Crawl này lớn (≈ ${estimateCrawlUnits(r)} đơn vị hạn mức API, tối đa ${r.kind === "top_channels" ? r.max * 5 : r.max} video): cần người dùng xác nhận: gọi propose_action kind crawl_large với params {crawl: …} (hoặc nhờ họ bấm "Chạy nghiên cứu" ở tab Tài liệu), hoặc giảm số lượng.`,
       isError: true,
     };
   }

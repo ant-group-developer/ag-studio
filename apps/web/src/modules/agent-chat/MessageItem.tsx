@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronRight, ListChecks, Paperclip, Sparkles, Square } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AgentPart, ChatMessage } from "../../api/workspace-client";
+import { HandoffCards } from "./handoff";
 import { useAiTranslation } from "../common/assistant-name";
 import { useNow } from "../common/sse";
 import { Markdown } from "../files/Markdown";
@@ -187,6 +188,7 @@ function AgentMessage({ message, projectId, onStop, onOpenFile }: {
       {folds && open ? <div className="ws-turn-work">{work.map(renderPart)}</div> : null}
       {(folds ? answer : visible).map(renderPart)}
       {!visible.length && message.text ? <Markdown text={message.text} /> : null}
+      {projectId ? <HandoffCards parts={message.parts} projectId={projectId} /> : null}
       {running ? null : <TurnStatus message={message} onStop={onStop} />}
       {projectId && !running && message.changedFiles?.length
         ? <ChangedFiles projectId={projectId} files={message.changedFiles} onOpenFile={onOpenFile} /> : null}

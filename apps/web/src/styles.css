@@ -43,3 +43,21 @@ body {
 
 /* Timeline editor opened from the chat: the way back. */
 .editor-back-to-chat { padding: 6px 16px; font-size: 13px; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
+
+/*
+ * lucide icons in antd's icon slots: antd lines up its own `.anticon` there, a bare svg sits on the text's baseline and
+ * drifts with its size (12–13 px low, 16 px high). Centre the slot and drop the svg out of the line.
+ */
+.ant-btn > .ant-btn-icon,
+.ant-segmented-item-icon,
+.ant-dropdown-menu-item-icon,
+.ant-menu-item-icon { display: inline-flex; align-items: center; }
+.ant-btn > .ant-btn-icon > svg.lucide,
+.ant-segmented-item-icon > svg.lucide,
+.ant-badge > svg.lucide { display: block; vertical-align: 0; }
+/* a Segmented option with an icon: centred in its box; icon-only (the name in `.ws-sr`) drops the gap to the name */
+.ant-segmented-item-label:has(> .ant-segmented-item-icon) { display: flex; align-items: center; justify-content: center; }
+.ant-segmented-item-icon + span:has(> .ws-sr:only-child) { margin-inline-start: 0; }
+
+/* Read by screen readers only (an icon-only button's name, a table/grid switch). */
+.ws-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

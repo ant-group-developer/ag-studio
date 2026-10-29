@@ -26,7 +26,7 @@ import { readFrontmatter } from "./frontmatter.js";
 import type { JobContext, JobHandler } from "./job-runner.js";
 import { createJob, type JobRecord } from "./jobs-db.js";
 import type { InputTranscript } from "./prepare.js";
-import { latestVideoRevision, requireProject, requireVideo, saveVideoRevision } from "./project-db.js";
+import { latestVideoRevision, requireProject, requireVideo, saveVideoRevision, videoOwnLook } from "./project-db.js";
 import { musicForVideo, projectNarrationVoice } from "./project-audio.js";
 import { analyseMusicBeats, beatsRequestFor, beatsWords, readMusicBeats } from "./music-beats.js";
 import { buildVideoIndex, type VideoIndex } from "./video-index.js";
@@ -254,7 +254,7 @@ export function fitHandler(d: FitDeps): JobHandler {
     let written = false;
     if (plan.narration === "tts" && plan.lines.length) {
       const nv = await projectNarrationVoice(d.db, project.id);
-      if (nv.kind === "missing") throw new Error("dự án chưa có giọng đọc: chọn một file audio làm giọng mẫu ở tab Đầu vào, hoặc đổi narration của kế hoạch");
+      if (nv.kind === "missing") throw new Error("dự án chưa có giọng đọc: chọn một file audio làm giọng mẫu ở tab Nguồn, hoặc đổi narration của kế hoạch");
       if (nv.kind === "none") written = true;
       else read = await readLines(d, ctx, job, plan, nv.voice);
     }
@@ -262,6 +262,8 @@ export function fitHandler(d: FitDeps): JobHandler {
 
     await ctx.report({ phase: "Đang khớp hình với lời", progress: 0.88 });
     const branding = brandingOf(ctx.workspaceDir);
+    // what a person picked for this video wins over the plan, which wins over the branding (plan 2026-10-28 P3)
+    const own = await videoOwnLook(d.db, videoId);
     // the video's own music, else the project's, else a library track by the plan's mood, then the branding's
     const chosen = await musicForVideo(d.db, project.id, videoId);
     let music: StudioMusic | null = chosen?.music ?? null;
@@ -301,8 +303,8 @@ export function fitHandler(d: FitDeps): JobHandler {
     const fitted = fitCutTimeline({
       productionId: project.id, plan, shots, survey, transcript: transcriptOfIndex(ctx.workspaceDir, index), voice: read, written,
       sources: index.sources.map((s) => ({ asset_id: s.asset_id, source_id: s.source_id })), assets: videoAssets(index, ctx.workspaceDir),
-      canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: plan.text_look ?? branding.textLook,
-      look: plan.look ?? branding.look, colorMatch: plan.color_match ?? branding.colorMatch ?? false, beats,
+      canvas: CANVAS[project.aspect], fps: 30, music, clipAudio: true, textStyle: own.text_look ?? plan.text_look ?? branding.textLook,
+      look: own.look ?? plan.look ?? branding.look, colorMatch: own.color_match ?? plan.color_match ?? branding.colorMatch ?? false, beats,
     });
     const report = fitted.report;
     // a shot that runs past the end of its prepared video plays to that end, never more than the file holds

@@ -29,7 +29,11 @@ function useDebounced<T>(value: T, ms = 400): T {
  * of a topic, the top channels of a topic, a channel's most viewed videos — with the quota it costs shown first. Each
  * crawl runs in the background and lands in research/<date>-<slug>.md, listed below with the project's other research.
  */
-export function ResearchPanel({ projectId, canRun, onOpenFile }: { projectId: string; canRun: boolean; onOpenFile: (path: string) => void }) {
+export function ResearchPanel({ projectId, canRun, onOpenFile, showFiles = true }: {
+  projectId: string; canRun: boolean; onOpenFile: (path: string) => void;
+  /** The reports already made (off where the Documents tab lists them beside this form). */
+  showFiles?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const { message } = AntApp.useApp();
   const client = useWorkspaceClient();
@@ -135,7 +139,7 @@ export function ResearchPanel({ projectId, canRun, onOpenFile }: { projectId: st
         </section>
       ) : null}
 
-      <section aria-label={t("ws.research.files")}>
+      {showFiles ? <section aria-label={t("ws.research.files")}>
         <h4 className="ws-inputs__h">{t("ws.research.files")}</h4>
         {files.data?.files.length ? (
           <ul className="ws-inputs__list">
@@ -154,7 +158,7 @@ export function ResearchPanel({ projectId, canRun, onOpenFile }: { projectId: st
             ))}
           </ul>
         ) : <p className="ws-hint">{t("ws.research.noFiles")}</p>}
-      </section>
+      </section> : null}
     </div>
   );
 }

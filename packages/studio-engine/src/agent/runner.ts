@@ -18,14 +18,14 @@ import { finalAnswer, thinAnswer } from "./answer.js";
 import { turnChangedFiles } from "../workspace/file-changes.js";
 import { projectDir, scanWorkspace } from "../workspace/files.js";
 import { playbookContextLines, playbookStatus, type StepFact } from "../workspace/playbook-status.js";
-import { getProject, getVideo, projectSettings } from "../workspace/project-db.js";
+import { getProject, getVideo, projectSettings, videoOwnLook } from "../workspace/project-db.js";
 import { seedWorkspace } from "../workspace/templates.js";
 import { hasErrors, validateWorkspaceFile } from "../workspace/validators.js";
 import { materializeSkillPlugin } from "./skills.js";
 import { saveThreadSummary, summaryPrompt, THREAD_SUMMARY_JSON_SCHEMA, ThreadSummarySchema, threadsToSummarize } from "./summaries.js";
 import { LESSONS_PATH } from "./prompt.js";
 import { threadMarkdown } from "./history.js";
-import { agentSystemPrompt, agentTurnPrompt, youtubeBlockLines } from "./prompt.js";
+import { agentSystemPrompt, agentTurnPrompt, videoLookLines, youtubeBlockLines } from "./prompt.js";
 import { youtubeBlock } from "../settings.js";
 import {
   automaticTurnsInARow, cancelRequested, finishTurn, getMessage, getThread, listThreadRefs, markAgentTurnRunning, markSessionStarted, nextPendingAgentTurns,
@@ -182,7 +182,7 @@ export function createAgentRunner(o: AgentRunnerOptions): AgentRunner {
     const prompt = agentTurnPrompt({
       project, thread, video, refs: await listThreadRefs(db, thread.id), messages: await turnInput(db, message),
       resumed: message.attempts > 1, recap: opts.recap,
-      extra: [...playbookContextLines(status), ...blockLines,...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
+      extra: [...playbookContextLines(status), ...(video ? videoLookLines(await videoOwnLook(db, video.id)) : []), ...blockLines, ...(o.contextLines?.(project.id, video?.id ?? null) ?? [])], now: now(),
     });
     const pluginDirs = o.skills ? [await materializeSkillPlugin(db, { project, workspaceDir: dir, builtinDir: o.skills.builtinDir, pluginsRoot: o.skills.pluginsRoot })] : [];
     let lastWrite = 0;

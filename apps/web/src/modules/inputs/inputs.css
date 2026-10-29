@@ -75,7 +75,6 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-action__buttons { display: flex; gap: 8px; }
 
 /* the pickers' filter column, table/grid and pages (after ag-go's Projects and Footage pages) */
-.ws-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .ws-nowrap { white-space: nowrap; }
 .ws-picker2 { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
 .ws-picker2--nofilters { grid-template-columns: minmax(0, 1fr); }
@@ -168,6 +167,12 @@ ol.ws-inputs__list { counter-reset: src; }
 .ws-inputs__grouptag { margin-inline-end: 0; }
 .ws-inputs__grouplist { margin: 0; padding: 0 6px 6px; }
 .ws-inputs .ws-inputs__group > .ws-inputs__more { margin: 0 0 6px 12px; }
+.ws-inputs__groupfoot { padding: 0 6px 6px; }
+/* what videos and photos from the computer are for */
+.ws-media__uses { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 12px; }
+.ws-media__use { display: block; font-weight: 500; }
+.ws-media__usehint { display: block; }
+.ws-media__target { display: flex; flex-direction: column; gap: 8px; }
 /* The music picker: the project's audio files (find, tick, listen) | the play order (drag, total, crossfade). Side by side,
    one above the other on a narrow screen. In a modal (a portal): the --ws-* tokens live on :root. */
 .ws-mpick { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; font-size: 13px; }

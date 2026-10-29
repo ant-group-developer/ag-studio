@@ -12,6 +12,7 @@ import { ASSET_ID } from "../workspace/prepare.js";
 import { assetState as stateOf, queuePrepare } from "../workspace/inputs.js";
 import { addSource, agGoProjectIds, isFootageKind, listSources, sourceView, type SourceRecord } from "../workspace/sources-db.js";
 import { writeVideoIndex, videoIndexPath } from "../workspace/video-index.js";
+import { requireVideoThread } from "./handoff.js";
 import type { AgentTool, AgentToolContext } from "./tools.js";
 
 /** One analysed ag-go video of the project's ag-go projects. */
@@ -50,11 +51,13 @@ async function footageOf(ctx: AgentToolContext & { footage?: ProjectFootage }): 
   return { footage: ctx.footage, projects: await agGoProjectIds(ctx.db, ctx.project.id) };
 }
 
+/** The video footage is added to: the thread's, and only in its own thread (plan 2026-10-28 P4). */
 async function targetVideo(ctx: AgentToolContext, videoId: string | undefined): Promise<string> {
   const id = videoId ?? ctx.video?.id;
   if (!id) throw new StudioRunError("invalid", "luồng này không gắn với video nào: cho biết video_id", { code: "no_video" });
   const v = await requireVideo(ctx.db, id);
   if (v.project_id !== ctx.project.id) throw new StudioRunError("invalid", "video thuộc dự án khác", { code: "other_project" });
+  requireVideoThread(ctx, v);
   return id;
 }
 
@@ -99,7 +102,7 @@ export const INPUT_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "footage_search",
-    description: "Tìm video đã phân tích trong các project {{site}} của dự án (người dùng chọn ở tab Đầu vào). `q` tìm theo nội dung (tiếng Việt được), bỏ trống để liệt kê. Trả id, tên, độ dài, có lời nói không, tóm tắt, trạng thái chuẩn bị.",
+    description: "Tìm video đã phân tích trong các project {{site}} của dự án (người dùng chọn ở tab Nguồn). `q` tìm theo nội dung (tiếng Việt được), bỏ trống để liệt kê. Trả id, tên, độ dài, có lời nói không, tóm tắt, trạng thái chuẩn bị.",
     input: z.object({
       q: z.string().trim().min(1).max(200).optional(),
       ag_go_project_id: z.string().min(1).optional(),
@@ -108,7 +111,7 @@ export const INPUT_TOOLS: AgentTool[] = [
     }).strict(),
     run: async (ctx, a) => {
       const { footage, projects } = await footageOf(ctx);
-      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào. Nhờ người dùng chọn ở tab Đầu vào.`, isError: true };
+      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào. Nhờ người dùng chọn ở tab Nguồn.`, isError: true };
       if (a.ag_go_project_id && !projects.includes(a.ag_go_project_id)) {
         return { text: `Project ${siteOf(ctx)} ${a.ag_go_project_id} không thuộc đầu vào của dự án (có: ${projects.join(", ")}).`, isError: true };
       }
@@ -135,7 +138,7 @@ export const INPUT_TOOLS: AgentTool[] = [
     run: async (ctx, a) => {
       const videoId = await targetVideo(ctx, a.video_id);
       const { footage, projects } = await footageOf(ctx);
-      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào: video phải thuộc một project người dùng đã chọn ở tab Đầu vào. Không thêm gì.`, isError: true };
+      if (!projects.length) return { text: `Dự án chưa có project ${siteOf(ctx)} nào: video phải thuộc một project người dùng đã chọn ở tab Nguồn. Không thêm gì.`, isError: true };
       const { missing } = await footage.check(projects, a.assets.map((x) => x.asset_id));
       if (missing.length) {
         return { text: `Các video không thuộc project ${siteOf(ctx)} nào của dự án: ${missing.join(", ")}. Không thêm gì. Tìm lại bằng footage_search.`, isError: true };

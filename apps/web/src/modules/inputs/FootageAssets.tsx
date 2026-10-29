@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Button, Input, Popconfirm, Select, Tag, Tooltip } from "antd";
-import { ChevronRight, Film, FolderKanban, Image as ImageIcon, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronRight, Film, FolderKanban, Image as ImageIcon, RotateCcw, Trash2, Upload } from "lucide-react";
 import { useAiTranslation } from "../common/assistant-name";
 import { isFootage, type AssetState, type SourceItem, type Video } from "../../api/workspace-client";
 import { withoutIds } from "../common/no-ids";
@@ -145,8 +145,10 @@ function ShowMore({ total, shown, onMore }: { total: number; shown: number; onMo
 }
 
 /** One Studio video's ag-go videos on the project page: count, how they stand together, folding. */
-function AssetGroup({ title, rows, open, onToggle, line }: {
+function AssetGroup({ title, rows, open, onToggle, line, onUpload }: {
   title: string; rows: SourceItem[]; open: boolean; onToggle: () => void; line: (s: SourceItem) => ReactNode;
+  /** Footage from the computer straight into this video (absent: not a video, or no right to). */
+  onUpload?: (() => void) | undefined;
 }) {
   const { t } = useAiTranslation();
   const [limit, setLimit] = useState(PAGE);
@@ -165,6 +167,11 @@ function AssetGroup({ title, rows, open, onToggle, line }: {
         <>
           <ul className="ws-inputs__list ws-inputs__grouplist">{rows.slice(0, limit).map(line)}</ul>
           <ShowMore total={rows.length} shown={Math.min(limit, rows.length)} onMore={() => setLimit(limit + PAGE)} />
+          {onUpload ? (
+            <div className="ws-inputs__groupfoot">
+              <Button size="small" type="text" icon={<Upload size={14} />} onClick={onUpload}>{t("ws.inputs.uploadToVideo")}</Button>
+            </div>
+          ) : null}
         </>
       ) : null}
     </li>
@@ -175,7 +182,7 @@ function AssetGroup({ title, rows, open, onToggle, line }: {
  * The ag-go videos of a video (or, on the project page, of every video, grouped by Studio video): a search box, a filter
  * by where they stand, 30 at a time, and in bulk "prepare those not prepared" and "retry those that failed".
  */
-export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEdit, onOpenFile, onPrepare, onRemove, onBulk, bulkBusy }: {
+export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEdit, onOpenFile, onPrepare, onRemove, onBulk, bulkBusy, onUploadTo }: {
   assets: SourceItem[];
   /** Studio videos (titles for the groups). */
   videos: Video[];
@@ -188,6 +195,8 @@ export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEd
   onRemove: (s: SourceItem) => void;
   onBulk: (assetIds: string[]) => void;
   bulkBusy: boolean;
+  /** Footage from the computer into one of the grouped videos. */
+  onUploadTo?: ((videoId: string) => void) | undefined;
 }) {
   const { t } = useAiTranslation();
   const [q, setQ] = useState("");
@@ -238,7 +247,7 @@ export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEd
       ) : null}
       {failed.length ? (
         <Popconfirm title={t("ws.inputs.retryAllConfirm", { count: failed.length })} onConfirm={() => onBulk(failed)} okText={t("ws.inputs.retry")} cancelText={t("common.cancel")}>
-          <Button size="small" icon={<RotateCcw size={12} />} loading={bulkBusy}>{t("ws.inputs.retryAll", { count: failed.length })}</Button>
+          <Button size="small" icon={<RotateCcw size={14} />} loading={bulkBusy}>{t("ws.inputs.retryAll", { count: failed.length })}</Button>
         </Popconfirm>
       ) : null}
     </div>
@@ -266,6 +275,7 @@ export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEd
         <ul className="ws-inputs__list ws-inputs__groups">
           {visible.slice(0, limit).map((g) => (
             <AssetGroup key={g.key || "shared"} title={titleOf(g)} rows={g.rows} line={line}
+              onUpload={canEdit && g.video && onUploadTo ? () => onUploadTo(g.video!.id) : undefined}
               open={open[g.key] ?? (filtering || visible.length === 1)} onToggle={() => setOpen({ ...open, [g.key]: !(open[g.key] ?? (filtering || visible.length === 1)) })} />
           ))}
         </ul>
