@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, App as AntApp, Button, Empty, Popconfirm, Radio, Spin, Tag } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clapperboard, Download, Film, Hammer, Play } from "lucide-react";
+import { Clapperboard, Download, Film, Hammer, Image as ImageIcon, Images, ListVideo, Play } from "lucide-react";
 import { useAiTranslation } from "../common/assistant-name";
+import { SectionCard } from "../common/SectionCard";
 import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type JobView, type RenderKind, type RenderLink, type RenderResolution, type RenderView, type TeamRoleName, type WorkspaceClient } from "../../api/workspace-client";
 import { JobCard } from "../inputs/JobCard";
@@ -83,14 +84,11 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
   const shownFound = shown ? [...(shown.problem ? [shown.problem] : []), ...(shown.issues ?? [])] : [];
 
   return (
-    <div className="ws-inputs ws-video">
-      <section aria-label={t("ws.video.timeline")}>
-        <div className="ws-inputs__head">
-          <h4 className="ws-inputs__h">{t("ws.video.timeline")}</h4>
-          {atLeast("editor") ? (
-            <Button size="small" icon={<Hammer size={14} />} loading={fit.isPending} onClick={() => fit.mutate()}>{t("ws.video.fit")}</Button>
-          ) : null}
-        </div>
+    <div className="ws-secs ws-inputs ws-video">
+      <SectionCard icon={<ListVideo size={15} />} title={t("ws.video.timeline")}
+        action={atLeast("editor") ? (
+          <Button size="small" icon={<Hammer size={14} />} loading={fit.isPending} onClick={() => fit.mutate()}>{t("ws.video.fit")}</Button>
+        ) : null}>
         {timeline.isLoading ? <Spin size="small" /> : latest ? (
           <>
             <p className="ws-video__line">
@@ -99,13 +97,10 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
             </p>
             {errors.length ? <ul className="ws-video__issues">{errors.map((i) => <li key={i} className="ws-error">{i.replace("[error] ", "")}</li>)}</ul> : null}
           </>
-        ) : <p className="ws-hint">{t("ws.video.noTimeline")}</p>}
-      </section>
+        ) : <p className="ws-hint ws-inputs__empty">{t("ws.video.noTimeline")}</p>}
+      </SectionCard>
 
-      <section aria-label={t("ws.video.renders")}>
-        <div className="ws-inputs__head">
-          <h4 className="ws-inputs__h">{t("ws.video.renders")}</h4>
-        </div>
+      <SectionCard icon={<Clapperboard size={15} />} title={t("ws.video.renders")} count={list.length}>
         <div className="ws-video__buttons">
           {atLeast("editor") ? (
             <Button size="small" icon={<Play size={14} />} disabled={!latest || errors.length > 0} loading={start.isPending && start.variables === "render_preview"}
@@ -173,15 +168,14 @@ export function VideoPanel({ projectId, videoId, atLeast, onOpenFile }: {
             ))}
           </ul>
         ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("ws.video.noRenders")} />}
-      </section>
+      </SectionCard>
 
       {renders.data?.thumbnails.length ? (
-        <section aria-label={t("ws.video.thumbnails")}>
-          <h4 className="ws-inputs__h">{t("ws.video.thumbnails")}</h4>
+        <SectionCard icon={<Images size={15} />} title={t("ws.video.thumbnails")} count={renders.data.thumbnails.length}>
           <div className="ws-video__thumbs">
             {renders.data.thumbnails.map((p) => <Thumb key={p} projectId={projectId} path={p} onOpen={onOpenFile} />)}
           </div>
-        </section>
+        </SectionCard>
       ) : null}
     </div>
   );
@@ -200,7 +194,7 @@ function Thumb({ projectId, path, onOpen }: { projectId: string; path: string; o
   const name = path.split("/").pop()!;
   return (
     <button type="button" className="ws-video__thumb" onClick={() => onOpen?.(path)} aria-label={name} title={name}>
-      {url ? <img src={url} alt={name} /> : <span className="ws-hint">{name}</span>}
+      {url ? <img src={url} alt={name} /> : <ImageIcon size={16} aria-hidden />}
     </button>
   );
 }

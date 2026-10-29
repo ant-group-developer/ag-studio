@@ -1,17 +1,25 @@
-/* A video's Preview tab (spec 2026-10-10 agent-workspace §P6). */
+/* A video's Preview tab (spec 2026-10-10 agent-workspace §P6): a column of section boxes (.ws-secs, plan 2026-10-29). */
+.ws-video .ws-sec__body { padding: 8px 12px 12px; gap: 8px; }
 .ws-video__line { margin: 0; font-size: 13px; color: var(--ws-muted); }
-.ws-video__issues { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
-.ws-video__buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.ws-video__issues { margin: 0; padding-left: 18px; font-size: 12px; }
+.ws-video__buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 .ws-video__resolution { display: flex; flex-direction: column; gap: 6px; max-width: 280px; }
 .ws-video__resolution-hint { font-size: 12px; color: var(--ws-muted); }
-.ws-video__player { width: 100%; max-height: 50vh; margin: 8px 0; border-radius: 8px; background: #000; }
+.ws-video__player { display: block; width: 100%; max-height: 50vh; border-radius: 8px; background: #000; }
 .ws-video__player--wait {
   aspect-ratio: 16 / 9; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 12px; color: #d9d9d9; font-size: 13px; text-align: center;
 }
+.ws-video .ws-inputs__list { margin: 0; }
+.ws-video .ws-inputs__empty { margin: 0; }
 .ws-video__row--current { background: var(--ws-accent-soft); }
-.ws-video__thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
-.ws-video__thumb { border: 1px solid var(--ws-line); border-radius: 6px; padding: 0; background: var(--ws-chip); cursor: pointer; aspect-ratio: 16 / 9; overflow: hidden; }
+/* small previews, many to a row; an icon holds the place until the image is read */
+.ws-video__thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
+.ws-video__thumb {
+  display: grid; place-items: center; border: 1px solid var(--ws-line); border-radius: 6px; padding: 0;
+  background: var(--ws-chip); color: var(--ws-faint); cursor: pointer; aspect-ratio: 16 / 9; overflow: hidden;
+}
+.ws-video__thumb:hover { border-color: var(--ws-accent); }
 .ws-video__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ws-video__status { margin: 8px 0; font-size: 13px; }
-.ws-video__found { margin: 0 0 10px; padding: 8px 10px; border-radius: 6px; background: var(--ws-chip); font-size: 12px; }
+.ws-video__status { font-size: 13px; }
+.ws-video__found { padding: 8px 10px; border-radius: 6px; background: var(--ws-chip); font-size: 12px; }
