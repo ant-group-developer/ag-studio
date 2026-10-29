@@ -36,9 +36,39 @@ const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((res) => {
   signal.addEventListener("abort", () => { clearTimeout(t); res(); }, { once: true });
 });
 
+interface Subscriber { onEvent: (e: SseEvent) => void; setLive: (live: boolean) => void; open: (signal: AbortSignal) => Promise<Response> }
+interface SharedStream { subs: Set<Subscriber>; live: boolean; ctrl: AbortController }
+
+/** The streams open now, one per key, shared by every hook on that key: a browser keeps 6 connections to a host over
+ * HTTP/1.1, and a stream holds one for as long as the page is open. */
+const streams = new Map<string, SharedStream>();
+
+function runStream(key: string, s: SharedStream): void {
+  const setLive = (live: boolean) => { s.live = live; for (const x of s.subs) x.setLive(live); };
+  void (async () => {
+    let pause = 1000;
+    while (!s.ctrl.signal.aborted) {
+      try {
+        const first = s.subs.values().next().value;
+        if (!first) return;
+        const res = await first.open(s.ctrl.signal);
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        setLive(true);
+        pause = 1000;
+        for await (const e of readSse(res.body)) for (const x of s.subs) x.onEvent(e);
+      } catch { /* closed, refused, or no such route: wait, then try again */ }
+      setLive(false);
+      if (s.ctrl.signal.aborted) return;
+      await sleep(pause, s.ctrl.signal);
+      pause = Math.min(pause * 2, 30_000);
+    }
+  })().finally(() => { if (streams.get(key) === s) streams.delete(key); });
+}
+
 /**
  * Keeps an event stream open while `key` stays the same, calling `onEvent` for each event; reconnects with a growing
- * pause (1 s → 30 s). `open` makes the request (fetch, so the bearer token is sent). Returns whether it is open now.
+ * pause (1 s → 30 s). `open` makes the request (fetch, so the bearer token is sent). Hooks on the same key share one
+ * stream, closed when the last of them goes. Returns whether it is open now.
  */
 export function useEventStream(key: string | null, open: (signal: AbortSignal) => Promise<Response>, onEvent: (e: SseEvent) => void): boolean {
   const [live, setLive] = useState(false);
@@ -48,24 +78,25 @@ export function useEventStream(key: string | null, open: (signal: AbortSignal) =
   opener.current = open;
   useEffect(() => {
     if (!key) return;
-    const ctrl = new AbortController();
-    void (async () => {
-      let pause = 1000;
-      while (!ctrl.signal.aborted) {
-        try {
-          const res = await opener.current(ctrl.signal);
-          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-          setLive(true);
-          pause = 1000;
-          for await (const e of readSse(res.body)) handler.current(e);
-        } catch { /* closed, refused, or no such route: wait, then try again */ }
-        setLive(false);
-        if (ctrl.signal.aborted) return;
-        await sleep(pause, ctrl.signal);
-        pause = Math.min(pause * 2, 30_000);
+    const sub: Subscriber = { onEvent: (e) => handler.current(e), setLive, open: (signal) => opener.current(signal) };
+    let s = streams.get(key);
+    if (s) {
+      s.subs.add(sub);
+      setLive(s.live);
+    } else {
+      s = { subs: new Set([sub]), live: false, ctrl: new AbortController() };
+      streams.set(key, s);
+      runStream(key, s);
+    }
+    const shared = s;
+    return () => {
+      shared.subs.delete(sub);
+      setLive(false);
+      if (!shared.subs.size) {
+        shared.ctrl.abort();
+        if (streams.get(key) === shared) streams.delete(key);
       }
-    })();
-    return () => { ctrl.abort(); setLive(false); };
+    };
   }, [key]);
   return live;
 }

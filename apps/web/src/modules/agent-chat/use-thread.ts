@@ -21,7 +21,7 @@ export function useThread(threadId: string | null) {
   const client = useWorkspaceClient();
   const qc = useQueryClient();
   const key = ["thread", threadId];
-  const live = useEventStream(threadId, (signal) => client.openThreadEvents(threadId!, signal), (e) => {
+  const live = useEventStream(threadId ? `thread:${threadId}` : null, (signal) => client.openThreadEvents(threadId!, signal), (e) => {
     if (e.event !== "messages") return;
     const { messages } = JSON.parse(e.data) as { messages: ChatMessage[] };
     qc.setQueryData<ThreadDetail>(key, (old) => (old ? { ...old, messages: mergeMessages(old.messages, messages) } : old));
@@ -45,7 +45,7 @@ export function useThread(threadId: string | null) {
 export function useProjectEvents(projectId: string | null): boolean {
   const client = useWorkspaceClient();
   const qc = useQueryClient();
-  return useEventStream(projectId, (signal) => client.openProjectEvents(projectId!, signal), (e) => {
+  return useEventStream(projectId ? `project:${projectId}` : null, (signal) => client.openProjectEvents(projectId!, signal), (e) => {
     if (e.event !== "changed") return;
     void qc.invalidateQueries({ queryKey: ["project", projectId] });
     void qc.invalidateQueries({ queryKey: ["threads", projectId] });
