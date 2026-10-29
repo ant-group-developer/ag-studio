@@ -164,7 +164,9 @@ Kế hoạch ban đầu:
   Job `music_beats` lỗi vì farm local không chạy.
 - Lỗi có từ trước (không thuộc P4): job `continue_agent` xong **trong lúc** lượt đã tạo nó còn chạy thì không có lượt
   tiếp (`queueTurn` bỏ khi đang chạy, `queueFollowUp` chỉ theo tin của người) → agent không viết `channel/style.md` sau
-  khi học xong.
+  khi học xong. **Đã sửa (2026-10-29):** ghi chú của Studio có `continueAgent` (job, thao tác, chuyển giao) đến khi một lượt
+  đang chạy thì xếp sẵn lượt chờ (`queueTurn(…, afterRunning)`), chạy ngay khi lượt kia xong; tin của người vẫn do
+  `queueFollowUp` lo như cũ. Web: nút Dừng ở ô chat nhắm lượt đang chạy trước lượt chờ.
 
 ### P5 — Chuyển dữ liệu cũ (xong 2026-10-29, chạy tay trên VPS)
 

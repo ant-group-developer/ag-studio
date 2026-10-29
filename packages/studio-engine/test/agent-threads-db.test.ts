@@ -98,6 +98,31 @@ describe("messages and turns", () => {
     expect(await queueFollowUp(db, thread.id, at(6))).toBeNull();
   });
 
+  it("a job that ends while the turn that started it runs: its turn waits and runs next (prod style_watch 2026-10-29)", async () => {
+    const { db, thread } = await setup();
+    const { turn } = await postUserMessage(db, { threadId: thread.id, text: "học phong cách từ video mẫu", actor: { id: "u", role: "editor" } }, at(1));
+    await markAgentTurnRunning(db, turn!.id, at(2));
+    const note = await postSystemMessage(db, { threadId: thread.id, text: "Đã xem 1/1 video mẫu", trigger: "job", continueAgent: true, actor: { id: "u", role: "editor" } }, at(3));
+    expect(note.turn).toMatchObject({ trigger: "job", status: "pending" });
+    expect(await nextPendingAgentTurns(db, at(3), 10)).toEqual([]);
+    await finishTurn(db, turn!.id, { status: "done", text: "Đang học", parts: [] }, at(4));
+    expect(await queueFollowUp(db, thread.id, at(4))).toBeNull();
+    expect((await nextPendingAgentTurns(db, at(4), 10)).map((m) => m.id)).toEqual([note.turn!.id]);
+    expect((await turnInput(db, note.turn!)).map((m) => m.text)).toEqual(["Đã xem 1/1 video mẫu"]);
+  });
+
+  it("a person's message after such a note: one turn answers both, once the running one ends", async () => {
+    const { db, thread } = await setup();
+    const { turn } = await postUserMessage(db, { threadId: thread.id, text: "một", actor: { id: "u", role: "editor" } }, at(1));
+    await markAgentTurnRunning(db, turn!.id, at(2));
+    await postSystemMessage(db, { threadId: thread.id, text: "Render xong", trigger: "job", continueAgent: true }, at(3));
+    expect((await postUserMessage(db, { threadId: thread.id, text: "hai", actor: { id: "u", role: "editor" } }, at(4))).turn).toBeNull();
+    await finishTurn(db, turn!.id, { status: "done", text: "Xong", parts: [] }, at(5));
+    const next = (await queueFollowUp(db, thread.id, at(5)))!;
+    expect((await nextPendingAgentTurns(db, at(5), 10)).map((m) => m.id)).toEqual([next.id]);
+    expect((await turnInput(db, next)).map((m) => m.text)).toEqual(["Render xong", "hai"]);
+  });
+
   it("two workers taking the same turn at once: one gets it", async () => {
     const { db, thread } = await setup();
     const { turn } = await postUserMessage(db, { threadId: thread.id, text: "một", actor: { id: "u", role: "editor" } }, at(1));

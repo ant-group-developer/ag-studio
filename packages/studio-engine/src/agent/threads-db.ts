@@ -188,10 +188,16 @@ async function insertMessage(db: StudioDb, p: {
 }
 
 /** A turn waiting to start is moved after `upTo` so it answers that message too. Answers the waiting turn, if any. */
-async function queueTurn(db: StudioDb, threadId: string, trigger: MessageTrigger, actor: TurnActor | null, now: string): Promise<MessageRecord | null> {
+/**
+ * The thread's next turn (one waiting turn at most: a newer message replaces the one not started). While a turn runs, a
+ * person's message is answered by the follow-up the runner queues when it finishes (`queueFollowUp`); a Studio note
+ * (`afterRunning`: a job or an action that ended meanwhile, often one the running turn started) leaves its turn waiting
+ * now, run once the running one ends: nothing after the turn would bring it back.
+ */
+async function queueTurn(db: StudioDb, threadId: string, trigger: MessageTrigger, actor: TurnActor | null, now: string, afterRunning = false): Promise<MessageRecord | null> {
   const running = await db.get("SELECT 1 FROM agent_messages WHERE thread_id = ? AND role = 'assistant' AND status = 'running'", [threadId]);
   await db.run("DELETE FROM agent_messages WHERE thread_id = ? AND role = 'assistant' AND status IN ('pending', 'rate_limited') AND started_at IS NULL", [threadId]);
-  if (running) return null; // the follow-up turn is queued when the running one finishes
+  if (running && !afterRunning) return null;
   return insertMessage(db, { threadId, role: "assistant", status: "pending", trigger, actor, now });
 }
 
@@ -214,7 +220,7 @@ export async function postUserMessage(db: StudioDb, p: { threadId: string; text:
 export async function postSystemMessage(db: StudioDb, p: { threadId: string; text: string; trigger: MessageTrigger; continueAgent?: boolean; actor?: TurnActor | null }, now = new Date().toISOString()): Promise<{ system: MessageRecord; turn: MessageRecord | null }> {
   return db.tx(async () => {
     const system = await insertMessage(db, { threadId: p.threadId, role: "system", status: "done", text: p.text, trigger: p.trigger, now });
-    const turn = p.continueAgent ? await queueTurn(db, p.threadId, p.trigger, p.actor ?? null, now) : null;
+    const turn = p.continueAgent ? await queueTurn(db, p.threadId, p.trigger, p.actor ?? null, now, true) : null;
     return { system, turn };
   });
 }
