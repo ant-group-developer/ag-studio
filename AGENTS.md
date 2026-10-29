@@ -10,6 +10,7 @@ ADR-0001 (mục 127 trở đi cho Studio, 179–190 cho workspace agent) và `do
 
 ## Cách tìm việc
 - **Chạy trên một máy:** `docs/runbooks/studio-local.md`. **Vận hành một dự án:** `docs/runbooks/studio-project.md`.
+  **Thêm một chi nhánh** (tài khoản Claude, máy farm riêng): `docs/runbooks/branch-team.md`.
 - **Việc phát triển:** `docs/superpowers/plans/*.md`, làm theo từng task, mỗi task một commit. Chương trình đang làm:
   `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md` và plan cùng ngày.
 - **Việc còn nợ, lỗi đã biết:** `docs/operations/deferred-items.md` (mục "AG Studio" ở đầu file).
@@ -125,9 +126,21 @@ nhưng không code nào đọc.
   + DB (`playbook-status.ts`, `step-facts.ts`); gợi ý theo phạm vi luồng (`scope`): luồng video chỉ gợi ý bước video, luồng
   kênh/chat tự do chỉ bước kênh; bước dựa vào bước chưa xong của phạm vi kia vẫn được gợi ý, kèm `outsideRequires`; kiểm file ở `workspace/validators.ts` (dùng lại validator của
   `packages/core/src/studio/*`). Bài học chung ở `memory/lessons.md` (thẻ "Lưu vào bài học dự án?").
+- **Tài khoản Claude theo nhóm** (plan 2026-10-30, migration `0007`, `claude-accounts.ts`): admin thêm tài khoản ở
+  `/claude-accounts` (token `claude setup-token`, mã hoá AES-GCM bằng `STUDIO_SECRET_KEY` ở `secret-box.ts`, API và worker
+  cùng khoá; web chỉ thấy 4 ký tự cuối) và gán cho nhóm theo thứ tự ở tab "Tài nguyên" của trang nhóm (`PUT
+  teams/:id/resources`, chỉ admin). Dòng `default` là `CLAUDE_CODE_OAUTH_TOKEN` của env, không lưu token; nhóm không có
+  tài khoản bật nào dùng nó. Runner chọn tài khoản mỗi lượt (`pickClaudeAccount`: tài khoản luồng dùng lần trước nếu còn
+  chỗ, không thì cái đầu còn chỗ), đè `CLAUDE_CODE_OAUTH_TOKEN` trong env của tiến trình con, ghi
+  `agent_messages.claude_account_id`/`llm_calls.claude_account_id`; tóm tắt luồng cũng chạy trên tài khoản của nhóm.
+  Hết hạn mức → `rate_limited_until` của **tài khoản** (5→60 phút theo số lần liên tiếp), lượt chạy lại ngay trên tài khoản
+  kế tiếp của nhóm; mọi tài khoản đều hết thì lượt `rate_limited` tới khi cái đầu tiên mở lại, **không mượn `default`**.
+  Token bị từ chối (`looksLikeAuthError`) ghi `last_error`. "Kiểm tra" trên web đặt `check_requested_at`, worker gọi một lượt
+  haiku rất nhỏ (`claimAccountCheck`). Test: CLI giả ghi `oauth` vào log mỗi lần gọi, `FAKE_STUDIO_MODE=rate-limited:<token>`.
 - Slot Claude (`claude-slots.ts`): mỗi lượt giữ dòng `lease` `agent:<id>` (chờ: `agent-wait:<id>`, cũng tính vào cap), nên mọi
   worker dùng chung một cap: `studio_settings.claude.max_concurrent` (admin sửa ở màn Hàng đợi) thắng
-  `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Hết hạn mức gói: `rate_limited`, chờ 5→60 phút rồi chạy lại.
+  `STUDIO_CLAUDE_MAX_CONCURRENT` (1–100, mặc định 20). Hết hạn mức gói: `rate_limited`, chờ 5→60 phút rồi chạy lại. Slot lấy trên một tài khoản còn ghi `claude:<accountId>` trong `resources`, nên cap riêng của tài khoản
+  (`claude_accounts.max_concurrent`, null = chỉ cap chung) cũng tính chung mọi worker (`claudeUsageByAccount`).
 - Lượt hết giờ: dừng khi CLI im lặng (không ra dòng stdout nào) quá `STUDIO_AGENT_IDLE_MINUTES` (mặc định 10; 0 = tắt), hoặc
   chạm trần cứng `STUDIO_AGENT_TURN_MINUTES` (mặc định 60; token MCP sống theo trần này) dù agent vẫn đang làm. File đã ghi
   vẫn giữ; dự án bật `auto_continue` và chưa quá `TIMEOUT_TURNS_IN_A_ROW` (3) lượt `trigger: timeout` từ tin của người (ngân
@@ -175,6 +188,11 @@ nhưng không code nào đọc.
   (`bucket.getFile`), đo, rồi trong `finally` xoá object trên bucket lẫn file nháp. Lỗi farm (`FarmJobFailed.code`) đổi
   về mã `YtFailureCode`; `youtube_blocked` từ máy farm dừng các video còn lại và ghi cờ `where: farm`. Không có máy nào
   (hoặc chỉ farm bị chặn mà worker có yt-dlp) thì yt-dlp của worker như cũ.
+- **Pool máy farm theo nhóm** (plan 2026-10-30): `teams.farm_pool` (admin đặt ở tab "Tài nguyên"); `runFarmStep` thêm
+  `requirements.pool` cho mọi job farm của dự án (render, Premiere, TTS, transcribe, beats, tải video mẫu). Hub ag-farm
+  (`farm_nodes.pool`, admin farm đặt ở trang máy) giao **hai chiều chặt**: máy có pool chỉ nhận job đúng pool, job có pool
+  chỉ chạy trên máy cùng pool, máy không pool chỉ nhận job không pool. `GET /v1/owner/nodes` trả `pool` chỉ khi có;
+  máy tải video mẫu (`referenceFetchers(pool)`) tính theo pool của nhóm. Lên hub trước Studio.
 - Job farm của dự án ghi `project_farm_jobs`; `/api/farm/sign` tra ở đó, hỏi ag-go bằng quyền **chủ dự án**; bản xem trước xin
   `prefer: {short_edge: 480, clean: true}` (ag-go cũ bỏ qua). Khoá bucket giữ quy ước farm:
   `productions/<projectId>/jobs/<stage>/<jobId>/{in,out}/` (dự án đóng vai "production" trong payload `@ag-farm/protocol`,
@@ -248,7 +266,7 @@ nhưng không code nào đọc.
   Cột phải: Xem trước (trang video), Tệp, Đầu vào, Nghiên cứu, Cài đặt. Việc đang chạy: nút "Đang chạy" ở đầu trang (agent,
   tool, job; Dừng). `/queue` (việc đang chạy của mọi dự án người xem thấy, slot Claude, máy farm; admin đặt cap và tên AI),
   `/audit` (nhật ký hoạt động), `/stats` (thống kê chat Claude theo nhóm/dự án/video/người; hai màn này cho admin và owner
-  nhóm), `/music` (kho nhạc), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê và nhật ký của nhóm; cùng `WorkspaceShell`,
+  nhóm), `/music` (kho nhạc), `/claude-accounts` (tài khoản Claude, admin), `/teams`, `/teams/:teamId` (thành viên, skill, thống kê, nhật ký và tài nguyên của nhóm; cùng `WorkspaceShell`,
   breadcrumb "Quản lý nhóm › tên nhóm"). Mọi `<Table>`/`<ProTable>` có `sticky` (`helpers/sticky-table-header.ts`: trang
   workspace cuộn trong `.ws-page` nên `PAGE_TABLE_STICKY`, bảng trong hộp cuộn khác dùng `stickyIn`); spec
   `sticky-table-header.spec.ts` quét mã nguồn và báo bảng thiếu. Danh sách dự án có người tạo (`creator` từ Account API, lọc
