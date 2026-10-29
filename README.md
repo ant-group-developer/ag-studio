@@ -37,6 +37,27 @@ corepack pnpm build
 corepack pnpm test
 ```
 
+### Chạy trên máy dev
+
+Cả stack (ag-go-api, ag-farm hub, render/scan worker, Studio API, worker, web) bật, xem, tắt bằng một script; chạy lại
+an toàn (dịch vụ đã lên thì bỏ qua):
+
+```bash
+node scripts/local-stack.mjs up
+node scripts/local-stack.mjs status
+node scripts/local-stack.mjs down
+```
+
+| Dịch vụ | Cổng |
+|---|---|
+| Studio web (Auth0 chỉ cho phép cổng này) | `http://localhost:3100` |
+| Studio API (`PORT=3101`, web gọi qua `VITE_STUDIO_API_URL`) | `http://localhost:3101/api` |
+| ag-go-api | `http://localhost:3738/api` |
+| ag-farm hub | `http://localhost:3010` |
+
+Code đổi thì build lại (`corepack pnpm build`, hoặc từng package) rồi bật lại Studio API và worker; web (vite) tự nạp
+lại. Cấu hình, log, bật tay từng dịch vụ và sự cố thường gặp: `docs/runbooks/studio-local.md`.
+
 ## Cấu trúc
 
 | Thư mục | Package | Vai trò |
