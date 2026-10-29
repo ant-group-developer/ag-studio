@@ -331,6 +331,26 @@ export interface SourceItem {
   addedBy: string;
   addedAt: string;
   asset: AssetState | null;
+  /** The item of someone's media library it uses (on the bucket, no file in the workspace); null for ag-go and workspace files. */
+  mediaId?: string | null;
+}
+
+export type MediaKind = "video" | "image" | "audio";
+/** What a project uses an item of the media library as. */
+export type MediaUseKind = "footage" | "audio" | "reference";
+/** An item of the person's own media library (plan 2026-10-29): where it is used, and a link to show or play it (1 hour). */
+export interface MediaItem {
+  id: string; kind: MediaKind; name: string; bytes: number; createdAt: string;
+  usedIn: { projectId: string; name: string }[];
+  previewUrl: string;
+}
+/** The project's own words and picture, the branding's, and which videos picked their own. */
+export interface ProjectLookView {
+  own: OwnLook; channel: OwnLook;
+  videos: { id: string; idx: number; title: string; ownLook: boolean }[];
+  choices: VideoLookView["choices"];
+  /** After a save: the videos whose own pick was cleared, and how many timelines took it. */
+  cleared?: string[]; timelines?: number;
 }
 
 /** How many distinct ag-go videos are ready, being prepared (queued or running), failed, not prepared yet. */
@@ -473,6 +493,8 @@ export interface TimelineSummary {
 /** An audio file of the project to use as the voice sample or the music (`sourceId` null: put in context/audio via the Files tab). */
 export interface ProjectAudioFile {
   path: string; name: string; bytes: number; sourceId: string | null; addedAt: string;
+  /** Its file on the bucket (an item of someone's media library); null for a file of the workspace. */
+  key?: string | null;
   /** A link to listen to it for 15 minutes, under the API (`/api/projects/:id/files/stream?…`): no login needed. */
   listenUrl: string;
 }
@@ -493,11 +515,11 @@ export interface TextLook {
   text_color: string; outline_color: string; box_color: string | null; size: "s" | "m" | "l"; shadow?: boolean; font?: string;
 }
 export type VideoLook = "none" | "natural" | "vivid" | "warm" | "cinematic";
-export type LookSource = "video" | "plan" | "channel" | "default";
+export type LookSource = "video" | "project" | "plan" | "channel" | "default";
 /** A video's words and picture: picked for it (null = not picked), the edit plan's, the channel's, and what the timeline draws. */
 export interface OwnLook { text_look: TextLook | null; look: VideoLook | null; color_match: boolean | null }
 export interface VideoLookView {
-  own: OwnLook; plan: OwnLook; channel: OwnLook;
+  own: OwnLook; project?: OwnLook; plan: OwnLook; channel: OwnLook;
   effective: { text_look: TextLook | null; look: VideoLook; color_match: boolean; from: { text_look: LookSource; look: LookSource; color_match: LookSource } };
   choices: { fonts: { name: string; scripts: ("vietnamese" | "japanese" | "korean")[] }[]; sizes: ("s" | "m" | "l")[]; looks: VideoLook[] };
   /** The timeline revision that took the pick (null: no timeline yet, or nothing changed). */
@@ -695,7 +717,7 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
      * by Studio, put straight on the bucket (R2), then taken by Studio. `reference`: a video to learn an edit style from
      * (not footage), into context/references/, up to 300 MB.
      */
-    async uploadSource(projectId: string, file: File, videoId?: string, opts: { reference?: boolean; onProgress?: OnProgress } = {}): Promise<{ source: SourceItem; file: SavedFile }> {
+    async uploadSource(projectId: string, file: File, videoId?: string, opts: { reference?: boolean; onProgress?: OnProgress } = {}): Promise<{ source: SourceItem; file?: SavedFile; mediaId?: string }> {
       const link = await call<UploadLink>("POST", `/api/projects/${enc(projectId)}/uploads`, {
         purpose: opts.reference ? "reference" : "source", name: file.name, size: file.size, ...uploadType(file),
       });
@@ -708,10 +730,38 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
      * A video (up to 4 GB) or photo (50 MB) from the computer as footage of a video, put straight on the bucket, then
      * prepared like an ag-go video (415 `file_type`, 413 `file_too_large`).
      */
-    async uploadFootage(projectId: string, file: File, videoId: string, onProgress?: OnProgress): Promise<{ source: SourceItem; prepare?: AssetState }> {
+    async uploadFootage(projectId: string, file: File, videoIds: string | string[], onProgress?: OnProgress): Promise<{ source: SourceItem; sources: SourceItem[]; prepare?: AssetState }> {
       const link = await call<UploadLink>("POST", `/api/projects/${enc(projectId)}/uploads`, { purpose: "footage", name: file.name, size: file.size, ...uploadType(file) });
       await putToBucket(link, file, onProgress);
-      return call("POST", `/api/projects/${enc(projectId)}/sources/footage`, { uploadKey: link.key, name: file.name, videoId });
+      return call("POST", `/api/projects/${enc(projectId)}/sources/footage`, { uploadKey: link.key, name: file.name, videoIds: Array.isArray(videoIds) ? videoIds : [videoIds] });
+    },
+    /**
+     * Items of the person's media library into the project: footage into each of `videoIds` (none: the project's own) and
+     * prepared once, audio, or reference videos (404 `media_not_found`, 422 `wrong_use`).
+     */
+    addFromMedia(projectId: string, input: { mediaIds: string[]; use: MediaUseKind; videoIds?: string[]; prepare?: boolean }): Promise<{ sources: SourceItem[]; prepare?: unknown }> {
+      return call("POST", `/api/projects/${enc(projectId)}/sources/from-media`, input);
+    },
+    /** The videos a footage of the project is in: exactly these afterwards. */
+    setFootageVideos(projectId: string, assetId: string, videoIds: string[]): Promise<{ videoIds: string[] }> {
+      return call("PUT", `/api/projects/${enc(projectId)}/footage/${enc(assetId)}/videos`, { videoIds });
+    },
+    /** The person's own media library, newest first. */
+    listMedia(q: { kind?: MediaKind; q?: string; limit?: number; offset?: number } = {}): Promise<{ items: MediaItem[]; total: number; bytes: number }> {
+      return call("GET", `/api/me/media${buildQuery({ kind: q.kind, q: q.q, limit: q.limit, offset: q.offset })}`);
+    },
+    /** A file into the person's media library only (not into a project). */
+    async uploadMedia(file: File, onProgress?: OnProgress): Promise<MediaItem> {
+      const link = await call<UploadLink>("POST", "/api/me/media/uploads", { name: file.name, size: file.size, ...uploadType(file) });
+      await putToBucket(link, file, onProgress);
+      return call("POST", "/api/me/media", { uploadKey: link.key, name: file.name });
+    },
+    renameMedia(mediaId: string, name: string): Promise<MediaItem> {
+      return call("PATCH", `/api/me/media/${enc(mediaId)}`, { name });
+    },
+    /** 409 `media_in_use` (`projects`: where) while a project uses it. */
+    deleteMedia(mediaId: string): Promise<void> {
+      return call("DELETE", `/api/me/media/${enc(mediaId)}`);
     },
     /** Videos of the project's ag-go projects (the same for everyone of the project), with where each stands here. */
     searchFootage(projectId: string, q: FootageQuery = {}): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }> {
@@ -759,6 +809,13 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     /** One file, or several joined in order, as the project's music. */
     musicFromFiles(projectId: string, input: MusicFilesInput): Promise<ProjectAudioView> {
       return call("POST", `/api/projects/${enc(projectId)}/audio/music/from-files`, input);
+    },
+    getProjectLook(projectId: string): Promise<ProjectLookView> {
+      return call("GET", `/api/projects/${enc(projectId)}/look`);
+    },
+    /** The project's look; `everyVideo`: the videos' own picks are cleared so every video draws it. */
+    setProjectLook(projectId: string, own: OwnLook, opts: { everyVideo?: boolean } = {}): Promise<ProjectLookView> {
+      return call("PUT", `/api/projects/${enc(projectId)}/look`, { ...own, ...(opts.everyVideo ? { everyVideo: true } : {}) });
     },
     getVideoLook(videoId: string): Promise<VideoLookView> {
       return call("GET", `/api/videos/${enc(videoId)}/look`);

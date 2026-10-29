@@ -126,7 +126,22 @@ Kế hoạch ban đầu:
 - Phong cách: `GET/PUT /projects/:id/look`, `POST /videos/:id/look/apply-to-project`.
 - Link nghe/xem: 302 tới GET ký sẵn.
 
-### P3 — Web
+### P3 — Web (xong 2026-10-29, chưa commit)
+
+Đã làm:
+- `common/SectionCard.tsx` (+ `AddMenu`): khung section chung cho ba tab.
+- Tab Nguồn: bốn section (Project ag-go → Footage → Âm thanh → Tài liệu và ảnh); "Thêm footage ▾" (ag-go / tải từ máy /
+  thư viện); chip video trên từng footage + "+ video" mở `FootageVideosModal`; giọng đọc, nhạc nền và file audio nằm
+  trong Âm thanh; video tham khảo chuyển sang tab Phong cách.
+- `inputs/media-library.tsx`: drawer "Thư viện của tôi" (lọc loại, tìm, tải lên, xoá, file đã có trong dự án bị khoá,
+  chọn video đích), `VideoChecklist`; modal tải lên chọn nhiều video + tạo video mới, ghi chú "lưu vào thư viện".
+- Tab Phong cách: thanh "theo dự án / riêng video này", form chung cho dự án và video, nút "Áp cho mọi video…" (hộp xác
+  nhận nêu video bị thay), section Phong cách dựng và Video tham khảo (tải lên / thư viện / bỏ).
+- Tab Tài liệu: mỗi nhóm thành khung riêng; nhóm "Audio và video của dự án" (file thư viện, chỉ xem).
+- Chuỗi vi/en; test web 214/214; chạy thử trên local với API thật (migration 0006 đã áp vào Postgres local).
+- `.claude/launch.json` có thêm cấu hình `studio-api` (cổng 3101) để xem trước.
+
+Kế hoạch ban đầu:
 - Khung section chung; dựng lại tab Nguồn, Phong cách, Tài liệu theo mockup P0.
 - Drawer "Thư viện của tôi" (lọc loại, tìm, bảng/lưới như picker ag-go), chọn nhiều + chọn video đích.
 - Modal tải lên chọn nhiều video; chip video trên từng footage.

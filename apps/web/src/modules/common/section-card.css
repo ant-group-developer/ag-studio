@@ -1,0 +1,24 @@
+/* One section of a side tab (plan 2026-10-29 P3): its own box, title and count left, one main action right. */
+.ws-sec { background: var(--ws-surface); border: 1px solid var(--ws-line); border-radius: 10px; box-shadow: var(--ws-shadow); min-width: 0; }
+.ws-sec__head { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 12px; border-bottom: 1px solid var(--ws-line); }
+.ws-sec__icon { width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; display: grid; place-items: center; background: var(--ws-chip); color: var(--ws-muted); }
+.ws-sec__title { margin: 0; font-size: 14px; font-weight: 600; color: var(--ws-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-sec__count { flex-shrink: 0; font-size: 12px; line-height: 18px; padding: 0 7px; border-radius: 10px; background: var(--ws-chip); color: var(--ws-faint); }
+.ws-sec__grow { flex: 1; }
+.ws-sec__head > .ant-btn, .ws-sec__head > .ant-dropdown-trigger { flex-shrink: 0; }
+.ws-sec__hint { margin: 0; padding: 8px 12px 0; font-size: 12px; color: var(--ws-faint); }
+.ws-sec__body { padding: 6px 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.ws-sec__foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 12px; border-top: 1px solid var(--ws-line); background: var(--ws-nav-bg); border-radius: 0 0 10px 10px; }
+.ws-sec__foot .ws-sec__grow { min-width: 0; font-size: 12px; color: var(--ws-faint); }
+.ws-sec__menuitem { display: flex; flex-direction: column; }
+.ws-sec__menuitem small { color: var(--ws-faint); font-size: 11px; }
+/* a column of sections: the side tab's body */
+.ws-secs { flex: 1; min-height: 0; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; background: var(--ws-bg); }
+.ws-sub { margin: 4px 4px 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ws-faint); }
+/* chips of the videos a file is in */
+.ws-vchips { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ws-vchip { font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 4px; background: var(--ws-chip); color: var(--ws-muted); border: 1px solid transparent; }
+.ws-vchip--current { background: var(--ws-accent-soft); color: var(--ws-accent); border-color: var(--ws-accent-line); font-weight: 500; }
+.ws-vchip--add { background: none; border: 1px dashed var(--ws-line-strong); cursor: pointer; font: inherit; font-size: 11px; color: var(--ws-muted); }
+.ws-vchip--add:hover { border-color: var(--ws-accent); color: var(--ws-accent); }
+.ws-badge-lib { font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 9px; background: #f3ecff; color: #5b2fb8; white-space: nowrap; }

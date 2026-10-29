@@ -1,5 +1,12 @@
 /* The Inputs tab and job cards (spec 2026-10-10 agent-workspace §4–§5). */
-.ws-inputs { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 24px; display: flex; flex-direction: column; gap: 18px; }
+/* the tab is a column of section boxes (.ws-secs, plan 2026-10-29) */
+.ws-inputs { padding-bottom: 24px; }
+.ws-inputs__overview { padding: 2px 4px; }
+.ws-inputs__empty { margin: 4px 6px; }
+.ws-inputs__moved { margin: 0; text-align: center; }
+.ws-inputs__text .ws-vchips { margin-top: 3px; }
+/* the voice and the music inside the Sound section: a light box each, not a card in a card */
+.ws-inputs__sound .ws-audio { background: var(--ws-nav-bg); box-shadow: none; }
 .ws-inputs__head { display: flex; align-items: center; gap: 8px; }
 .ws-inputs__head .ws-inputs__h { flex: 1; }
 .ws-inputs__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }

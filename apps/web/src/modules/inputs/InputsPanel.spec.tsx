@@ -32,6 +32,11 @@ const ws = {
   removeSource: vi.fn().mockResolvedValue(undefined),
   uploadSource: vi.fn(),
   uploadFootage: vi.fn(),
+  listMedia: vi.fn(),
+  addFromMedia: vi.fn(),
+  setFootageVideos: vi.fn(),
+  uploadMedia: vi.fn(),
+  deleteMedia: vi.fn(),
   searchFootage: vi.fn(),
   getFootageFacets: vi.fn(),
   prepareInputs: vi.fn().mockResolvedValue({ assets: {} }),
@@ -91,10 +96,14 @@ function mount(videoId?: string, onOpenFile = vi.fn(), canEdit = true) {
 async function detailDrawer(name: string): Promise<HTMLElement> {
   return (await screen.findByText(name, { selector: ".agp-detail__title" })).closest<HTMLElement>(".ant-drawer-content")!;
 }
-/** Switches the Inputs tab to its "Documents, images, audio" sub-section. */
-async function toFiles() {
-  fireEvent.click(await screen.findByText(/^Tài liệu, ảnh, audio ·/));
+/** Opens a section's "Add … ▾" menu and picks one way to add. */
+async function addVia(menu: string, item: string) {
+  fireEvent.click(await screen.findByRole("button", { name: menu }));
+  fireEvent.click(await screen.findByText(item, { selector: ".ws-sec__menuitem > span" }));
 }
+const videoRow = (over: Partial<{ id: string; idx: number; title: string }>) => ({
+  id: "v1", projectId: "p1", idx: 1, title: "Hoa Lư", status: "draft", createdBy: "u", createdAt: "", updatedAt: "", archivedAt: null, ...over,
+});
 
 describe("Inputs tab", { timeout: 40_000 }, () => {
   beforeAll(async () => { await i18n.changeLanguage("vi"); });
@@ -133,12 +142,16 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     await waitFor(() => expect(ws.cancelJob).toHaveBeenCalledWith("p1", "j1"));
   });
 
-  it("puts the project's voice and music first, above the jobs and the lists", async () => {
+  it("puts four sections in their own boxes, in order: ag-go projects, footage, sound (voice and music), documents", async () => {
     mount("v1");
-    const audio = await screen.findByRole("region", { name: "Giọng đọc và nhạc nền" });
-    await screen.findByRole("group", { name: "Giọng đọc" });
-    expect(screen.getAllByRole("region")[0]).toBe(audio);
+    const sound = await screen.findByRole("region", { name: "Âm thanh" });
+    expect(await within(sound).findByRole("region", { name: "Giọng đọc và nhạc nền" })).toBeInTheDocument();
+    await within(sound).findByRole("group", { name: "Giọng đọc" });
     expect(ws.getAudio).toHaveBeenCalledWith("p1");
+    const titles = [...document.querySelectorAll(".ws-sec__title")].map((h) => h.textContent);
+    expect(titles).toEqual(["Project AG Go", "Footage của video này", "Âm thanh", "Tài liệu và ảnh"]);
+    // reference videos live in the Style tab now
+    expect(screen.getByText("Video tham khảo nằm ở tab Phong cách.")).toBeInTheDocument();
   });
 
   it("never shows an asset id where a video's name should be", async () => {
@@ -162,9 +175,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     fireEvent.click(within(footage).getByRole("button", { name: "Thử lại" }));
     await waitFor(() => expect(ws.prepareInputs).toHaveBeenCalledWith("p1", [A2], false));
     expect(screen.getByRole("region", { name: "Project AG Go" })).toHaveTextContent("Ninh Bình42 video");
-    expect(screen.queryByRole("region", { name: "Tài liệu, ảnh, audio" })).toBeNull();
-    await toFiles();
-    fireEvent.click(within(screen.getByRole("region", { name: "Tài liệu, ảnh, audio" })).getByRole("button", { name: "Ghi chú.md" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "Tài liệu và ảnh" })).getByRole("button", { name: "Ghi chú.md" }));
     expect(open).toHaveBeenCalledWith("context/uploads/Ghi chú.md");
   });
 
@@ -298,7 +309,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
       { assetId: "a-4", name: "Tam Cốc.mp4", durationMs: 45_000, prepared: { state: "not_prepared" } },
     ] });
     mount("v1");
-    fireEvent.click(await screen.findByRole("button", { name: "Chọn video" }));
+    await addVia("Thêm footage", "Chọn video");
     const dialog = await screen.findByRole("dialog", { name: "Chọn video AG Go cho video này" });
     await waitFor(() => expect(ws.searchFootage).toHaveBeenLastCalledWith("p1", { usability: "usable", sortBy: "relevance", sortOrder: "desc", page: 1, limit: 40 }));
     expect(ws.getFootageFacets).toHaveBeenLastCalledWith("p1", { usability: "usable" });
@@ -321,7 +332,7 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     ] });
     ws.addSource.mockResolvedValue({ source: src({}) });
     mount("v1");
-    fireEvent.click(await screen.findByRole("button", { name: "Chọn video" }));
+    await addVia("Thêm footage", "Chọn video");
     const dialog = await screen.findByRole("dialog", { name: "Chọn video AG Go cho video này" });
     fireEvent.click(await within(dialog).findByLabelText("Tam Cốc.mp4"));
     fireEvent.click(within(dialog).getByLabelText("Bái Đính.mp4"));
@@ -346,47 +357,75 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     expect(footage).toHaveTextContent("Đang chuẩn bị 30%");
     const input = within(footage).getByLabelText("Tải từ máy", { selector: "input" });
     fireEvent.change(input, { target: { files: [new File(["v"], "Hang Múa.mov", { type: "video/quicktime" })] } });
-    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", expect.any(File), "v1", expect.any(Function)));
+    // which videos it goes into: this one ticked first; it goes into the person's library too
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("File được lưu vào Thư viện của tôi");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tải lên" }));
+    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", expect.any(File), ["v1"], expect.any(Function)));
     expect(await screen.findByText("Đã tải lên 1 footage, đang chuẩn bị")).toBeTruthy();
   });
 
-  it("uploads files into the project", async () => {
+  it("uploads documents into the project, and audio into the Sound section", async () => {
     ws.uploadSource.mockResolvedValue({ source: src({}), file: {} });
     mount();
-    await toFiles();
-    const input = await screen.findByLabelText("Tải lên", { selector: "input" });
+    const docs = await screen.findByRole("region", { name: "Tài liệu và ảnh" });
+    const input = within(docs).getByLabelText("Tải lên", { selector: "input" });
+    expect(input.getAttribute("accept")).not.toContain(".mp3");
     fireEvent.change(input, { target: { files: [new File(["# x"], "brief.md", { type: "text/markdown" })] } });
     await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined, { onProgress: expect.any(Function) }));
+    const sound = screen.getByRole("region", { name: "Âm thanh" });
+    fireEvent.change(within(sound).getByLabelText("Tải từ máy", { selector: "input" }), { target: { files: [new File(["a"], "nhac.mp3", { type: "audio/mpeg" })] } });
+    await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledTimes(2));
   });
 
-  it("uploads reference videos apart from the documents, to learn an edit style from", async () => {
+  it("adds footage from the person's library into the videos ticked, marking what the project already has", async () => {
     ws.listSources.mockResolvedValue({ sources: [
-      src({ kind: "upload", ref: "context/uploads/Ghi chú.md", mediaType: "document", label: "Ghi chú.md" }),
-      src({ kind: "upload", ref: "context/references/Kênh mẫu.mp4", mediaType: "video", label: "Kênh mẫu.mp4", meta: { reference: true } }),
+      src({ kind: "upload_asset", ref: "m-1", mediaId: "m-1", videoId: "v1", mediaType: "video", label: "IMG_4021.mov", asset: { state: "not_prepared" } }),
     ] });
-    ws.uploadSource.mockResolvedValue({ source: src({}), file: {} });
-    mount();
-    await toFiles();
-    const refs = await screen.findByRole("region", { name: "Video tham khảo (học phong cách dựng)" });
-    expect(await within(refs).findByText("Kênh mẫu.mp4")).toBeInTheDocument();
-    expect(within(refs).queryByText("Ghi chú.md")).toBeNull();
-    expect(screen.getByRole("region", { name: "Tài liệu, ảnh, audio" })).not.toHaveTextContent("Kênh mẫu.mp4");
-    const input = within(refs).getByLabelText("Tải video mẫu", { selector: "input" });
-    expect(input).toHaveAttribute("accept", expect.stringContaining(".mp4"));
-    fireEvent.change(input, { target: { files: [new File(["v"], "mau.mp4", { type: "video/mp4" })] } });
-    await waitFor(() => expect(ws.uploadSource).toHaveBeenCalledWith("p1", expect.any(File), undefined, { reference: true, onProgress: expect.any(Function) }));
+    ws.listVideos.mockResolvedValue({ videos: [videoRow({}), videoRow({ id: "v2", idx: 2, title: "Tràng An" })] });
+    ws.listMedia.mockImplementation(async (q: { kind: string }) => ({ total: 1, bytes: 1, items: q.kind === "video" ? [
+      { id: "m-1", kind: "video", name: "IMG_4021.mov", bytes: 5_000_000, createdAt: "2026-10-29T08:00:00Z", usedIn: [{ projectId: "p1", name: "Hoa Lư" }], previewUrl: "https://r2.test/1" },
+      { id: "m-2", kind: "video", name: "DJI_0112.mp4", bytes: 80_000_000, createdAt: "2026-10-28T08:00:00Z", usedIn: [{ projectId: "p9", name: "Đà Lạt" }, { projectId: "p8", name: "Sa Pa" }], previewUrl: "https://r2.test/2" },
+    ] : [] }));
+    ws.addFromMedia.mockResolvedValue({ sources: [] });
+    mount("v1");
+    await addVia("Thêm footage", "Từ thư viện của tôi");
+    const drawer = await screen.findByRole("dialog", { name: /Thư viện của tôi/ });
+    expect(await within(drawer).findByText("DJI_0112.mp4")).toBeInTheDocument();
+    expect(drawer).toHaveTextContent("Dùng ở: Đà Lạt, +1");
+    // what the project already has cannot be picked again
+    expect(within(drawer).getByRole("button", { name: "IMG_4021.mov" })).toBeDisabled();
+    expect(drawer).toHaveTextContent("Đã có trong dự án");
+    fireEvent.click(within(drawer).getByRole("button", { name: "DJI_0112.mp4" }));
+    // this video is ticked; tick another
+    expect(within(drawer).getByRole("checkbox", { name: /#1 Hoa Lư/ })).toBeChecked();
+    fireEvent.click(within(drawer).getByRole("checkbox", { name: /#2 Tràng An/ }));
+    fireEvent.click(within(drawer).getAllByRole("button", { name: "Thêm 1 file vào dự án" })[0]!);
+    await waitFor(() => expect(ws.addFromMedia).toHaveBeenCalledWith("p1", { mediaIds: ["m-2"], use: "footage", videoIds: ["v1", "v2"] }));
   });
 
-  it("remembers the sub-section shown, with a count on each", async () => {
-    const first = mount();
-    expect(await screen.findByText("Footage · 2")).toBeInTheDocument();
-    expect(screen.getByText("Tài liệu, ảnh, audio · 1")).toBeInTheDocument();
-    await toFiles();
-    expect(localStorage.getItem("studio.inputs.section")).toBe("files");
-    (first as unknown as { unmount: () => void }).unmount();
-    mount();
-    expect(await screen.findByRole("region", { name: "Tài liệu, ảnh, audio" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Project AG Go" })).toBeNull();
+  it("shows the videos each footage is in, and sets them in one place", async () => {
+    ws.listVideos.mockResolvedValue({ videos: [videoRow({}), videoRow({ id: "v2", idx: 2, title: "Tràng An" }), videoRow({ id: "v3", idx: 3, title: "Bích Động" })] });
+    const both = [
+      src({ kind: "upload_asset", ref: "m-1", mediaId: "m-1", videoId: "v1", mediaType: "video", label: "IMG_4021.mov", asset: { state: "not_prepared" } }),
+      src({ kind: "upload_asset", ref: "m-1", mediaId: "m-1", videoId: "v2", mediaType: "video", label: "IMG_4021.mov", asset: { state: "not_prepared" } }),
+    ];
+    ws.listSources.mockImplementation(async (_p: string, videoId?: string) => ({ sources: videoId ? both.filter((x) => x.videoId === videoId) : both }));
+    ws.setFootageVideos.mockResolvedValue({ videoIds: ["v1", "v3"] });
+    mount("v1");
+    const footage = await screen.findByRole("region", { name: "Footage của video này" });
+    await waitFor(() => expect(footage.querySelectorAll(".ws-vchip:not(.ws-vchip--add)")).toHaveLength(2));
+    expect(footage).toHaveTextContent("Thư viện");
+    expect(footage.querySelector(".ws-vchip--current")).toHaveTextContent("#1");
+    fireEvent.click(within(footage).getByRole("button", { name: "Dùng IMG_4021.mov cho video" }));
+    const dialog = await screen.findByRole("dialog", { name: "Dùng IMG_4021.mov cho video" });
+    const boxes = within(dialog).getAllByRole("checkbox");
+    // newest first: #3, #2, #1
+    expect(boxes.map((b) => (b as HTMLInputElement).checked)).toEqual([false, true, true]);
+    fireEvent.click(boxes[0]!);
+    fireEvent.click(boxes[1]!);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(ws.setFootageVideos).toHaveBeenCalledWith("p1", "m-1", ["v1", "v3"]));
   });
 
   it("with many projects: a search box, five shown and the rest on demand", async () => {
@@ -458,16 +497,16 @@ describe("Inputs tab", { timeout: 40_000 }, () => {
     fireEvent.change(within(region).getByLabelText("Tải từ máy", { selector: "input" }), { target: { files: [file] } });
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Bái Đính.mp4");
-    // the newest video is picked first
-    fireEvent.mouseDown(within(dialog).getByRole("combobox", { name: "Chọn video" }));
-    fireEvent.click(await screen.findByTitle("#1 Hoa Lư"));
+    // the newest video is ticked first; several may be ticked
+    expect(within(dialog).getByRole("checkbox", { name: "#2 Tràng An" })).toBeChecked();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "#1 Hoa Lư" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Tải lên" }));
-    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", file, "v1", expect.any(Function)));
+    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", file, ["v2", "v1"], expect.any(Function)));
     // an open video's group takes footage straight in (the only group shows open)
     fireEvent.click(within(region).getByRole("button", { name: "Tải từ máy vào video này" }));
     fireEvent.change(within(region).getByLabelText("Tải từ máy vào video này", { selector: "input" }), { target: { files: [file] } });
     await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledTimes(2));
-    expect(ws.uploadFootage).toHaveBeenLastCalledWith("p1", file, "v1", expect.any(Function));
+    expect(ws.uploadFootage).toHaveBeenLastCalledWith("p1", file, ["v1"], expect.any(Function));
   });
 
   it("shows 30 videos at a time and no bulk buttons to a viewer", async () => {

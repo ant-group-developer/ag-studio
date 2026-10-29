@@ -1,0 +1,32 @@
+/* "My library" drawer (plan 2026-10-29 P3) */
+.ws-mlib__title { display: inline-flex; align-items: center; gap: 8px; }
+.ws-mlib__tools { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.ws-mlib__tools .ant-input-search { flex: 1; min-width: 0; }
+.ws-mlib__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.ws-mlib__foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ws-mlib__targets { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--ws-line); display: flex; flex-direction: column; gap: 6px; }
+.ws-mlib__targets .ws-sub { margin: 0; display: inline-flex; align-items: center; gap: 4px; }
+.ws-mlib__targets .ws-hint { margin: 0; }
+
+.ws-mcard { position: relative; border: 1px solid var(--ws-line); border-radius: 10px; overflow: hidden; background: var(--ws-surface); display: flex; flex-direction: column; }
+.ws-mcard--on { border-color: var(--ws-accent); box-shadow: 0 0 0 1px var(--ws-accent); }
+.ws-mcard__pick { display: flex; flex-direction: column; text-align: left; padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; }
+.ws-mcard__pick:disabled { cursor: default; }
+.ws-mcard__cover { position: relative; height: 96px; display: grid; place-items: center; background: #e9edf2; color: #6b3fd1; overflow: hidden; }
+.ws-mcard__cover img, .ws-mcard__cover video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ws-mcard__tick { position: absolute; left: 8px; top: 8px; width: 18px; height: 18px; border-radius: 5px; background: rgba(255, 255, 255, 0.92); border: 1px solid var(--ws-line-strong); display: grid; place-items: center; color: #fff; }
+.ws-mcard--on .ws-mcard__tick { background: var(--ws-accent); border-color: var(--ws-accent); }
+.ws-mcard__in { position: absolute; left: 0; right: 0; bottom: 0; font-size: 11px; text-align: center; background: rgba(22, 101, 52, 0.88); color: #fff; }
+.ws-mcard__name { padding: 7px 10px 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-mcard__meta { padding: 1px 10px 8px; font-size: 11px; color: var(--ws-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-mcard__audio { width: calc(100% - 16px); height: 28px; margin: 0 8px 8px; }
+.ws-mcard__delete { position: absolute; right: 6px; top: 6px; background: rgba(255, 255, 255, 0.92); opacity: 0; transition: opacity 0.15s; }
+.ws-mcard:hover .ws-mcard__delete, .ws-mcard__delete:focus-visible { opacity: 1; }
+
+/* ticks for videos */
+.ws-vlist { border: 1px solid var(--ws-line); border-radius: 8px; max-height: 220px; overflow: auto; }
+.ws-vlist__row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; font-size: 13px; cursor: pointer; }
+.ws-vlist__row + .ws-vlist__row { border-top: 1px solid var(--ws-line); }
+.ws-vlist__row:hover { background: var(--ws-chip); }
+.ws-vlist__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-vlist__none { margin: 8px 10px; }

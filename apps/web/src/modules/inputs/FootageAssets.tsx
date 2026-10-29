@@ -59,8 +59,10 @@ export function SummaryBar({ counts, onFilter }: { counts: Counts; onFilter: (f:
   );
 }
 
-export function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
+export function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove, extra }: {
   s: SourceItem; canEdit: boolean; onOpenFile: (path: string) => void; onPrepare: (assetId: string, again: boolean) => void; onRemove: (s: SourceItem) => void;
+  /** Under the name: the videos it is in, and the way to add it to more. */
+  extra?: ReactNode;
 }) {
   const { t } = useAiTranslation();
   const a = s.asset;
@@ -80,6 +82,7 @@ export function AssetLine({ s, canEdit, onOpenFile, onPrepare, onRemove }: {
           {a?.state === "ready" ? <> · {t("ws.inputs.shots", { count: a.shots ?? 0 })}{a.transcript ? ` · ${t("ws.inputs.withTranscript")}` : ""}</> : null}
           {a?.state === "failed" ? <span className="ws-error"> · {a.error}</span> : null}
         </span>
+        {extra}
       </div>
       {a?.state === "ready" ? (
         <button type="button" className="ws-link" onClick={() => onOpenFile(a.readme)}>{t("ws.inputs.open")}</button>
@@ -182,7 +185,7 @@ function AssetGroup({ title, rows, open, onToggle, line, onUpload }: {
  * The ag-go videos of a video (or, on the project page, of every video, grouped by Studio video): a search box, a filter
  * by where they stand, 30 at a time, and in bulk "prepare those not prepared" and "retry those that failed".
  */
-export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEdit, onOpenFile, onPrepare, onRemove, onBulk, bulkBusy, onUploadTo }: {
+export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEdit, onOpenFile, onPrepare, onRemove, onBulk, bulkBusy, onUploadTo, lineExtra }: {
   assets: SourceItem[];
   /** Studio videos (titles for the groups). */
   videos: Video[];
@@ -197,6 +200,8 @@ export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEd
   bulkBusy: boolean;
   /** Footage from the computer into one of the grouped videos. */
   onUploadTo?: ((videoId: string) => void) | undefined;
+  /** Under each name (the videos it is in). */
+  lineExtra?: ((s: SourceItem) => ReactNode) | undefined;
 }) {
   const { t } = useAiTranslation();
   const [q, setQ] = useState("");
@@ -212,7 +217,7 @@ export function FootageAssets({ assets, videos, grouped, filter, onFilter, canEd
   }, [assets]);
   const notPrepared = distinct.filter((s) => stateKey(s.asset) === "not_prepared").map((s) => s.ref);
   const failed = distinct.filter((s) => stateKey(s.asset) === "failed").map((s) => s.ref);
-  const line = (s: SourceItem) => <AssetLine key={s.id} s={s} canEdit={canEdit} onOpenFile={onOpenFile} onPrepare={onPrepare} onRemove={onRemove} />;
+  const line = (s: SourceItem) => <AssetLine key={s.id} s={s} canEdit={canEdit} onOpenFile={onOpenFile} onPrepare={onPrepare} onRemove={onRemove} extra={lineExtra?.(s)} />;
 
   const groups = useMemo(() => {
     if (!grouped) return [];

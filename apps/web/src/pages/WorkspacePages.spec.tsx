@@ -470,9 +470,9 @@ describe("workspace pages", { timeout: 20_000 }, () => {
     await waitFor(() => expect(ws.uploadFile).toHaveBeenCalledWith("p1", note, "context", expect.any(Function)));
     const dialog = await screen.findByRole("dialog", { name: "Dùng 1 tệp này làm gì?" });
     expect(within(dialog).getByRole("radio", { name: /Footage cho video/ })).toBeChecked();
-    expect(within(dialog).getByRole("combobox", { name: "Chọn video" }).closest(".ant-select")).toHaveTextContent("#2 Huế mưa");
+    expect(within(dialog).getByRole("checkbox", { name: /#2 Huế mưa/ })).toBeChecked();
     fireEvent.click(within(dialog).getByRole("button", { name: "Tải lên" }));
-    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", clip, "v2", expect.any(Function)));
+    await waitFor(() => expect(ws.uploadFootage).toHaveBeenCalledWith("p1", clip, ["v2"], expect.any(Function)));
     expect(ws.uploadFile).toHaveBeenCalledTimes(1);
   });
 

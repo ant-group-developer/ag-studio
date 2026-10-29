@@ -162,11 +162,11 @@ export function ProjectPage() {
               <VideoPanel projectId={project.id} videoId={videoId} atLeast={atLeast} onOpenFile={(file) => setAside({ tab: "files", file })} />
             ) : tab === "files" ? (
               <DocsPanel projectId={project.id} videos={project.videos} currentVideoId={videoId} canEdit={atLeast("editor")} canRun={atLeast("editor")}
-                openPath={openFile} onOpen={(file) => setAside({ file })} onAttach={threadId && atLeast("editor") ? attach : undefined} />
+                openPath={openFile} onOpen={(file) => setAside({ file })} onAttach={threadId && atLeast("editor") ? attach : undefined}
+                onSources={() => setAside({ tab: "inputs" })} />
             ) : tab === "style" ? (
-              <StylePanel projectId={project.id} video={currentVideo ? { id: currentVideo.id, title: currentVideo.title } : undefined} canEdit={atLeast("editor")}
-                onOpenFile={(file) => setAside({ tab: "files", file })} onPrompt={setDraft}
-                onReferences={() => { try { localStorage.setItem("studio.inputs.section", "files"); } catch { /* this visit only */ } setAside({ tab: "inputs" }); }} />
+              <StylePanel projectId={project.id} video={currentVideo ? { id: currentVideo.id, idx: currentVideo.idx, title: currentVideo.title } : undefined} canEdit={atLeast("editor")}
+                onOpenFile={(file) => setAside({ tab: "files", file })} onPrompt={setDraft} />
             ) : (
               <InputsPanel projectId={project.id} {...(videoId ? { videoId } : {})} canEdit={atLeast("editor")} canProduce={atLeast("producer")} onOpenFile={(file) => setAside({ tab: "files", file })} />
             )}
