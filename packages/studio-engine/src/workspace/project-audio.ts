@@ -6,13 +6,14 @@
  */
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import {
   ProductionMusicSchema, ProductionVoiceSchema, studioMusicOf, type AudioSource, type MusicTrack, type ProductionMusic, type ProductionVoice,
   type StudioMusic, type VoiceOrigin,
 } from "@harness/contracts";
 import { AudioImportError, MUSIC_DEFAULTS, prepareMusic, prepareMusicMix, prepareVoice, sha256Of, type AudioImportDeps, type AudioKind } from "../audio-import.js";
 import { listLibraryMusic } from "../music-library.js";
+import type { StudioBucket } from "../bucket.js";
 import type { StudioDb } from "../studio-db.js";
 import { productionVoice, type NarrationVoice } from "../voice.js";
 import { requireProject, requireVideo } from "./project-db.js";
@@ -20,7 +21,7 @@ import { listSources } from "./sources-db.js";
 
 /** Audio files a person uploads (Inputs tab or Files tab), by extension. */
 export const AUDIO_FILE_EXTS = [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"] as const;
-/** Where uploaded audio goes. */
+/** Where uploaded audio goes: files kept in the workspace, and the path an item of someone's library is named by. */
 export const PROJECT_AUDIO_DIR = "context/audio";
 
 /** An audio file of the workspace a person may use as the voice sample or the music. */
@@ -30,23 +31,30 @@ export interface ProjectAudioFile {
   bytes: number;
   /** The Inputs tab's row for it; null for a file put in `context/audio/` through the Files tab. */
   sourceId: string | null;
+  /** Its file on the bucket (an item of someone's media library); null for a file of the workspace. */
+  key: string | null;
   addedAt: string;
 }
 
 const isAudioName = (name: string) => (AUDIO_FILE_EXTS as readonly string[]).some((ext) => name.toLowerCase().endsWith(ext));
 
 /**
- * Audio files usable as the voice sample or the music: uploaded audio listed in the Inputs tab whose file is still
- * there, and any audio file under `context/audio/` (also those put there through the Files tab, which have no row).
- * Newest first. Only names and sizes: nothing is probed.
+ * Audio files usable as the voice sample or the music: uploaded audio listed in the Inputs tab (an item of someone's
+ * media library, on the bucket, or a file of the workspace still there), and any audio file under `context/audio/`
+ * (also those put there through the Files tab, which have no row). Newest first. Only names and sizes: nothing is probed.
  */
 export async function projectAudioFiles(db: StudioDb, dir: string, projectId: string): Promise<ProjectAudioFile[]> {
   const out = new Map<string, ProjectAudioFile>();
   for (const s of await listSources(db, projectId)) {
     if (s.kind !== "upload" || s.media_type !== "audio" || out.has(s.ref)) continue;
+    const meta = s.meta as Record<string, unknown>;
+    if (typeof meta.key === "string") {
+      out.set(s.ref, { path: s.ref, name: s.label, bytes: Number(meta.bytes) || 0, sourceId: s.id, key: meta.key, addedAt: s.added_at });
+      continue;
+    }
     const abs = join(dir, ...s.ref.split("/"));
     if (!existsSync(abs)) continue;
-    out.set(s.ref, { path: s.ref, name: s.label, bytes: statSync(abs).size, sourceId: s.id, addedAt: s.added_at });
+    out.set(s.ref, { path: s.ref, name: s.label, bytes: statSync(abs).size, sourceId: s.id, key: null, addedAt: s.added_at });
   }
   const walk = (rel: string, depth: number) => {
     let names: string[];
@@ -58,7 +66,7 @@ export async function projectAudioFiles(db: StudioDb, dir: string, projectId: st
       try { st = statSync(join(dir, ...childRel.split("/"))); } catch { continue; }
       if (st.isDirectory()) { if (depth < 3) walk(childRel, depth + 1); continue; }
       if (!st.isFile() || !isAudioName(name) || out.has(childRel)) continue;
-      out.set(childRel, { path: childRel, name, bytes: st.size, sourceId: null, addedAt: st.mtime.toISOString() });
+      out.set(childRel, { path: childRel, name, bytes: st.size, sourceId: null, key: null, addedAt: st.mtime.toISOString() });
     }
   };
   walk(PROJECT_AUDIO_DIR, 0);
@@ -203,13 +211,13 @@ export async function projectMusic(db: StudioDb, projectId: string): Promise<Stu
 
 /** Normalises `file` and points the project at it (as its voice sample or its music). */
 export async function importProjectAudio(d: AudioImportDeps, o: {
-  projectId: string; kind: AudioKind; file: string; source: AudioSource; userId: string;
+  projectId: string; kind: AudioKind; file: AudioInput; source: AudioSource; userId: string;
   origin?: VoiceOrigin; referenceText?: string | null; gainDb?: number; ducking?: boolean;
 }): Promise<ProductionVoice | ProductionMusic> {
   await requireProject(d.db, o.projectId);
   if (o.kind === "music") {
     return importProjectMusic(d, {
-      projectId: o.projectId, files: [{ path: o.file, filename: o.source.kind === "upload" ? o.source.filename : "music" }], source: o.source,
+      projectId: o.projectId, files: [{ ...o.file, filename: o.source.kind === "upload" ? o.source.filename : "music" }], source: o.source,
       ...(o.gainDb !== undefined ? { gainDb: o.gainDb } : {}), ...(o.ducking !== undefined ? { ducking: o.ducking } : {}),
     });
   }
@@ -218,7 +226,8 @@ export async function importProjectAudio(d: AudioImportDeps, o: {
   try {
     const now = new Date().toISOString();
     const out = join(work, "voice.wav");
-    const { duration_s } = await prepareVoice(d, o.file, out);
+    const [local] = await localAudio(d.bucket, [{ ...o.file, filename: o.source.kind === "upload" ? o.source.filename : "voice" }], work);
+    const { duration_s } = await prepareVoice(d, local!.path, out);
     const sha = await sha256Of(out);
     const key = `library/studio/projects/${o.projectId}/voice/${sha}.wav`;
     await d.bucket.putFile(key, out, "audio/wav");
@@ -233,9 +242,26 @@ export async function importProjectAudio(d: AudioImportDeps, o: {
   }
 }
 
+/** An audio file to read: one of the workspace (`path`, absolute) or an item of someone's media library (`key` on the bucket). */
+export type AudioInput = { path: string; key?: undefined } | { key: string; path?: undefined };
+
+/** The files as local paths: those on the bucket brought down into `work` first (in order, each under its own name). */
+async function localAudio(bucket: StudioBucket, files: (AudioInput & { filename: string })[], work: string): Promise<{ path: string; filename: string }[]> {
+  const out: { path: string; filename: string }[] = [];
+  for (const [i, f] of files.entries()) {
+    if (f.path !== undefined) { out.push({ path: f.path, filename: f.filename }); continue; }
+    const local = join(work, `in-${i}${extname(f.key).toLowerCase()}`);
+    try { await bucket.getFile(f.key, local); } catch {
+      throw new AudioImportError("audio_invalid", `không còn file ${f.filename} trên kho lưu trữ: tải lại`);
+    }
+    out.push({ path: local, filename: f.filename });
+  }
+  return out;
+}
+
 /** Files to make one background track of, in order. */
 export interface MusicFiles {
-  files: { path: string; filename: string }[];
+  files: (AudioInput & { filename: string })[];
   /** Seconds each file fades into the next when there are several (default 0: one right after the other). */
   crossfadeS?: number;
   gainDb?: number;
@@ -256,9 +282,10 @@ export async function importMusic(d: AudioImportDeps, projectId: string, o: Musi
     const out = join(work, "music.m4a");
     const several = o.files.length > 1;
     const crossfade = o.crossfadeS ?? 0;
+    const files = await localAudio(d.bucket, o.files, work);
     const made: { duration_s: number; parts?: number[] } = several
-      ? await prepareMusicMix(d, o.files, out, { crossfadeS: crossfade })
-      : await prepareMusic(d, o.files[0]!.path, out);
+      ? await prepareMusicMix(d, files, out, { crossfadeS: crossfade })
+      : await prepareMusic(d, files[0]!.path, out);
     const sha = await sha256Of(out);
     const key = `library/studio/projects/${projectId}/music/${sha}.m4a`;
     await d.bucket.putFile(key, out, "audio/mp4");

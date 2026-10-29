@@ -26,7 +26,7 @@ import { readFrontmatter } from "./frontmatter.js";
 import type { JobContext, JobHandler } from "./job-runner.js";
 import { createJob, type JobRecord } from "./jobs-db.js";
 import type { InputTranscript } from "./prepare.js";
-import { latestVideoRevision, requireProject, requireVideo, saveVideoRevision, videoOwnLook } from "./project-db.js";
+import { latestVideoRevision, requireProject, requireVideo, saveVideoRevision, pickedLook } from "./project-db.js";
 import { musicForVideo, projectNarrationVoice } from "./project-audio.js";
 import { analyseMusicBeats, beatsRequestFor, beatsWords, readMusicBeats } from "./music-beats.js";
 import { buildVideoIndex, type VideoIndex } from "./video-index.js";
@@ -262,8 +262,8 @@ export function fitHandler(d: FitDeps): JobHandler {
 
     await ctx.report({ phase: "Đang khớp hình với lời", progress: 0.88 });
     const branding = brandingOf(ctx.workspaceDir);
-    // what a person picked for this video wins over the plan, which wins over the branding (plan 2026-10-28 P3)
-    const own = await videoOwnLook(d.db, videoId);
+    // what a person picked for this video, else for the project, wins over the plan, which wins over the branding
+    const own = await pickedLook(d.db, videoId);
     // the video's own music, else the project's, else a library track by the plan's mood, then the branding's
     const chosen = await musicForVideo(d.db, project.id, videoId);
     let music: StudioMusic | null = chosen?.music ?? null;

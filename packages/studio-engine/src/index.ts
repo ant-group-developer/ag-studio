@@ -61,6 +61,7 @@ export * from "./workspace/job-runner.js";
 export * from "./workspace/lanes.js";
 export * from "./workspace/prepare.js";
 export * from "./workspace/footage-upload.js";
+export * from "./workspace/media-library.js";
 export * from "./workspace/usage-outbox.js";
 export * from "./workspace/usage-send.js";
 export * from "./workspace/video-index.js";

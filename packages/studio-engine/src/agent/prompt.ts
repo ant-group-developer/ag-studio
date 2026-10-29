@@ -194,13 +194,22 @@ export function youtubeBlockLines(block: YoutubeBlock | null, o: { farm?: Youtub
 }
 
 /** What a person picked in the video's Style tab, for `<studio_context>` (nothing when they picked nothing). */
-export function videoLookLines(own: VideoOwnLook): string[] {
-  const parts = [
-    ...(own.text_look ? [`chữ ${own.text_look.font ?? "Arial"}, cỡ ${own.text_look.size}, màu ${own.text_look.text_color}, viền ${own.text_look.outline_color}${own.text_look.box_color ? `, hộp ${own.text_look.box_color}` : ""}${own.text_look.shadow ? ", bóng" : ""}`] : []),
-    ...(own.look ? [`màu hình ${own.look}`] : []),
-    ...(own.color_match !== null ? [own.color_match ? "khớp màu các clip" : "không khớp màu"] : []),
+function lookParts(l: VideoOwnLook): string[] {
+  return [
+    ...(l.text_look ? [`chữ ${l.text_look.font ?? "Arial"}, cỡ ${l.text_look.size}, màu ${l.text_look.text_color}, viền ${l.text_look.outline_color}${l.text_look.box_color ? `, hộp ${l.text_look.box_color}` : ""}${l.text_look.shadow ? ", bóng" : ""}`] : []),
+    ...(l.look ? [`màu hình ${l.look}`] : []),
+    ...(l.color_match !== null ? [l.color_match ? "khớp màu các clip" : "không khớp màu"] : []),
   ];
-  return parts.length ? [`Người dùng đã chọn cho video này (tab Phong cách, thắng kế hoạch dựng và branding): ${parts.join("; ")}.`] : [];
+}
+
+/** What a person picked in the Style tab for this video and for the whole project (the video's pick wins). */
+export function videoLookLines(own: VideoOwnLook | null, project: VideoOwnLook | null = null): string[] {
+  const mine = own ? lookParts(own) : [];
+  const shared = project ? lookParts(project) : [];
+  return [
+    ...(mine.length ? [`Người dùng đã chọn cho video này (tab Phong cách, thắng phong cách dự án, kế hoạch dựng và branding): ${mine.join("; ")}.`] : []),
+    ...(shared.length ? [`Phong cách chung của dự án (tab Phong cách, cho mọi video chưa chọn riêng; thắng kế hoạch dựng và branding): ${shared.join("; ")}.`] : []),
+  ];
 }
 
 /** The turn's message: `<studio_context>`, then what the people (and Studio) said since the last turn. */

@@ -17,7 +17,7 @@ import { writeWorkspaceFile } from "./files.js";
 import { readFrontmatter } from "./frontmatter.js";
 import type { JobHandler } from "./job-runner.js";
 import { createJob, type JobRecord } from "./jobs-db.js";
-import { requireProject, requireVideo, videoOwnLook } from "./project-db.js";
+import { pickedLook, requireProject, requireVideo } from "./project-db.js";
 import { videoRenders, type RenderResult } from "./renders.js";
 
 export interface ThumbnailItem { text: string; at_seconds?: number | undefined }
@@ -124,7 +124,7 @@ export function thumbnailHandler(d: { db: StudioDb; bucket: StudioBucket; render
       };
     }
     const size = THUMBNAIL_SIZES[project.aspect];
-    const style = thumbnailStyleOf(ctx.workspaceDir, req.style, (await videoOwnLook(d.db, video.id)).text_look);
+    const style = thumbnailStyleOf(ctx.workspaceDir, req.style, (await pickedLook(d.db, video.id)).text_look);
     const outDir = join(ctx.workspaceDir, thumbnailsDir(video.id));
     mkdirSync(outDir, { recursive: true });
     const taken = new Set(readdirSync(outDir));

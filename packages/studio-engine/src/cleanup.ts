@@ -5,6 +5,8 @@
  * - Project audio on the bucket (`library/studio/projects/<id>/voice|music/…`) nothing points at any more: not the
  *   project, not a video's own music, not any video revision (a track's beats go with it); and uploaded footage
  *   (`…/footage/…`) no source holds (removed, or an upload never finished). Only past `audioGraceDays`.
+ * - Media library files (`library/studio/users/<owner>/media/…`, plan 2026-10-29) of items deleted more than
+ *   `audioGraceDays` ago that no project uses, with their rows, and uploads that never became an item.
  * - Files a browser uploaded to the bucket (`uploads/…`) Studio never took, past `RAW_UPLOAD_HOURS`.
  * - Scratch folders a crashed worker left: `<dataRoot>/job-runs/<job>` of jobs no longer running and
  *   `<dataRoot>/agent-runs/<message>` of turns no longer running, past `SCRATCH_HOURS`.
@@ -30,7 +32,7 @@ export interface RetentionConfig {
 }
 export const DEFAULT_RETENTION: RetentionConfig = { workspaceDays: 14, voiceDays: 90, audioGraceDays: 7, auditDays: 90 };
 
-export interface CleanupReport { voiceLines: number; audioObjects: number; rawUploads: number; scratch: number; trash: number; auditRows: number }
+export interface CleanupReport { voiceLines: number; audioObjects: number; mediaObjects: number; rawUploads: number; scratch: number; trash: number; auditRows: number }
 
 /** A scratch folder older than this whose job or turn is not running was left by a crash. */
 export const SCRATCH_HOURS = 6;
@@ -79,6 +81,28 @@ export async function sweepProjectAudio(db: StudioDb, bucket: StudioBucket, cuto
   const stale = (await bucket.list("library/studio/projects/"))
     .filter((o) => !kept(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
   if (stale.length) await bucket.deleteMany(stale);
+  return stale.length;
+}
+
+/**
+ * Media library files nobody keeps: an item deleted before `cutoff` that no source uses goes (its file, its photo
+ * clip and its row); a file under the library no item names (the upload was not finished), written before `cutoff`.
+ */
+export async function sweepMediaLibrary(db: StudioDb, bucket: StudioBucket, cutoff: Date): Promise<number> {
+  const items = await db.all<{ id: string; key: string; clip_key: string | null; deleted_at: string | null; used: boolean }>(
+    `SELECT m.id, m.key, m.clip_key, m.deleted_at, EXISTS (SELECT 1 FROM project_sources s WHERE s.media_id = m.id) AS used FROM media_items m`,
+  );
+  const gone = items.filter((m) => m.deleted_at && !m.used && new Date(m.deleted_at).getTime() < cutoff.getTime());
+  const goneIds = new Set(gone.map((m) => m.id));
+  const keep = new Set<string>();
+  for (const m of items) if (!goneIds.has(m.id)) for (const k of [m.key, m.clip_key]) if (k) keep.add(k);
+  for (const r of await db.all<{ key: string | null; clip_key: string | null }>(
+    "SELECT meta->>'key' AS key, meta->>'clip_key' AS clip_key FROM project_sources WHERE media_id IS NOT NULL",
+  )) for (const k of [r.key, r.clip_key]) if (k) keep.add(k);
+  const stale = (await bucket.list("library/studio/users/"))
+    .filter((o) => !keep.has(o.key) && o.lastModified.getTime() < cutoff.getTime()).map((o) => o.key);
+  if (stale.length) await bucket.deleteMany(stale);
+  for (const m of gone) await db.run("DELETE FROM media_items WHERE id = ? AND NOT EXISTS (SELECT 1 FROM project_sources WHERE media_id = ?)", [m.id, m.id]);
   return stale.length;
 }
 
@@ -131,6 +155,7 @@ export async function sweepStudioData(
   return {
     voiceLines: d.voiceDir ? await sweepVoiceStore(d.db, d.voiceDir, new Date(at(r.voiceDays)).toISOString()) : 0,
     audioObjects: await sweepProjectAudio(d.db, d.bucket, new Date(at(r.audioGraceDays))),
+    mediaObjects: await sweepMediaLibrary(d.db, d.bucket, new Date(at(r.audioGraceDays))),
     rawUploads: await sweepRawUploads(d.bucket, new Date(o.now.getTime() - RAW_UPLOAD_HOURS * 3_600_000)),
     scratch: await sweepScratch(d.db, d.dataRoot, o.now.getTime() - SCRATCH_HOURS * 3_600_000),
     trash: d.workspacesRoot ? sweepTrash(d.workspacesRoot, at(r.workspaceDays)) : 0,

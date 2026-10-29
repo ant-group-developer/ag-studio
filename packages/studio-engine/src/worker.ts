@@ -159,7 +159,7 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
   if (media) {
     const downloads = o.referenceDownloads !== false;
     handlers.style_watch = styleWatchHandler({
-      db: o.db, ytdlp: downloads ? o.ytdlp ?? null : null, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe,
+      db: o.db, bucket: o.bucket, ytdlp: downloads ? o.ytdlp ?? null : null, ffmpeg: media.ffmpeg, ffprobe: media.ffprobe,
       farm: downloads ? { client: o.farm, bucket: o.bucket, fetchers: referenceFetchers(o.farm), pollMs: farmWait.pollMs, queueTimeoutMs: o.farmQueueTimeoutMs ?? 30 * 60_000 } : null,
     });
   }

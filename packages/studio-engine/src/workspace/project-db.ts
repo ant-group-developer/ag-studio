@@ -166,8 +166,9 @@ export async function updateVideo(db: StudioDb, id: string, patch: { title?: str
 /** What a person picked for a video's words and picture (plan 2026-10-28 P3); null = not picked. */
 export interface VideoOwnLook { text_look: TextLook | null; look: VideoLook | null; color_match: boolean | null }
 
-export async function videoOwnLook(db: StudioDb, videoId: string): Promise<VideoOwnLook> {
-  const row = await db.get<{ text_look: unknown; look: string | null; color_match: boolean | null }>("SELECT text_look, look, color_match FROM videos WHERE id = ?", [videoId]);
+type LookRow = { text_look: unknown; look: string | null; color_match: boolean | null };
+
+function lookOfRow(row: LookRow | undefined): VideoOwnLook {
   const text = row?.text_look ? TextLookSchema.safeParse(typeof row.text_look === "string" ? JSON.parse(row.text_look) : row.text_look) : null;
   return {
     text_look: text?.success ? text.data : null,
@@ -176,11 +177,35 @@ export async function videoOwnLook(db: StudioDb, videoId: string): Promise<Video
   };
 }
 
+const lookParams = (own: VideoOwnLook) => [own.text_look ? JSON.stringify(TextLookSchema.parse(own.text_look)) : null, own.look, own.color_match];
+
+export async function videoOwnLook(db: StudioDb, videoId: string): Promise<VideoOwnLook> {
+  return lookOfRow(await db.get<LookRow>("SELECT text_look, look, color_match FROM videos WHERE id = ?", [videoId]));
+}
+
 export async function setVideoOwnLook(db: StudioDb, videoId: string, own: VideoOwnLook, now = new Date().toISOString()): Promise<VideoOwnLook> {
   await requireVideo(db, videoId);
-  await db.run("UPDATE videos SET text_look = ?, look = ?, color_match = ?, updated_at = ? WHERE id = ?",
-    [own.text_look ? JSON.stringify(TextLookSchema.parse(own.text_look)) : null, own.look, own.color_match, now, videoId]);
+  await db.run("UPDATE videos SET text_look = ?, look = ?, color_match = ?, updated_at = ? WHERE id = ?", [...lookParams(own), now, videoId]);
   return videoOwnLook(db, videoId);
+}
+
+/** What a person picked for every video of the project (plan 2026-10-29): a video's own pick wins over it. */
+export async function projectOwnLook(db: StudioDb, projectId: string): Promise<VideoOwnLook> {
+  return lookOfRow(await db.get<LookRow>("SELECT text_look, look, color_match FROM projects WHERE id = ?", [projectId]));
+}
+
+export async function setProjectOwnLook(db: StudioDb, projectId: string, own: VideoOwnLook, now = new Date().toISOString()): Promise<VideoOwnLook> {
+  await requireProject(db, projectId);
+  await db.run("UPDATE projects SET text_look = ?, look = ?, color_match = ?, updated_at = ? WHERE id = ?", [...lookParams(own), now, projectId]);
+  return projectOwnLook(db, projectId);
+}
+
+/** What a person picked for a video, each part its own pick else the project's (both null: the plan and branding decide). */
+export async function pickedLook(db: StudioDb, videoId: string): Promise<VideoOwnLook> {
+  const video = await requireVideo(db, videoId);
+  const own = await videoOwnLook(db, videoId);
+  const project = await projectOwnLook(db, video.project_id);
+  return { text_look: own.text_look ?? project.text_look, look: own.look ?? project.look, color_match: own.color_match ?? project.color_match };
 }
 
 export async function archiveVideo(db: StudioDb, id: string, now = new Date().toISOString()): Promise<void> {

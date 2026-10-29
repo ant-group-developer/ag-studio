@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { CrawlRequestSchema, estimateCrawlUnits, isLargeCrawl, type CrawlRequestInput, type StudioCrawl } from "@harness/contracts";
 import { createJob, getJob } from "../workspace/jobs-db.js";
-import { referenceFile, STYLE_WATCH_MAX } from "../workspace/style-watch.js";
+import { referenceFile, referenceMedia, STYLE_WATCH_MAX } from "../workspace/style-watch.js";
 import { queueResearch } from "../workspace/research.js";
 import type { AgentTool, AgentToolContext, ToolAnswer } from "./tools.js";
 
@@ -111,7 +111,8 @@ export const RESEARCH_TOOLS: AgentTool[] = [
     }).strict(),
     role: "editor",
     run: async (ctx, a) => {
-      const files = [...new Set(a.paths.map((p) => referenceFile(ctx.workspaceDir, p).path))];
+      const onBucket = await referenceMedia(ctx.db, ctx.project.id);
+      const files = [...new Set(a.paths.map((p) => referenceFile(ctx.workspaceDir, p, onBucket).path))];
       const job = await createJob(ctx.db, {
         projectId: ctx.project.id, threadId: ctx.thread.id, kind: "style_watch", title: `Học phong cách từ ${files.length} video tải lên`,
         request: { files, purpose: a.purpose }, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,

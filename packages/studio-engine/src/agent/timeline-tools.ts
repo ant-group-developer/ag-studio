@@ -16,7 +16,7 @@ import { getVideoRevision, latestVideoRevision, requireVideo, saveVideoRevision 
 import { RevisionConflictError } from "../studio-db.js";
 import {
   importProjectMusic, importVideoMusic, keepVideoMusicLevels, musicForVideo, projectAudio, projectAudioFiles, projectAudioSummary, setProjectLibraryMusic,
-  setVideoLibraryMusic, videoMusicSummary,
+  setVideoLibraryMusic, videoMusicSummary, type MusicFiles,
 } from "../workspace/project-audio.js";
 import { videoMusicToTimeline } from "../workspace/video-music.js";
 import { musicBeatsStatus, queueMusicBeats } from "../workspace/music-beats.js";
@@ -345,12 +345,12 @@ export const TIMELINE_TOOLS: AgentTool[] = [
         } else {
           if (!ctx.audio) return { text: "Máy chủ chưa bật xử lý audio (ffmpeg) nên chưa ghép được file nhạc: dùng bài trong thư viện, hoặc nhờ người dùng chọn nhạc ở tab Nguồn.", isError: true };
           const known = new Map((await projectAudioFiles(ctx.db, ctx.workspaceDir, ctx.project.id)).map((f) => [f.path, f]));
-          const files: { path: string; filename: string }[] = [];
+          const files: MusicFiles["files"] = [];
           for (const path of a.files) {
             const f = known.get(path.replace(/\\/g, "/").replace(/^\.\//, ""));
             if (!f) return { text: `${path} không phải file audio của dự án (xem project_files của music_list).`, isError: true };
             if (f.bytes > AUDIO_MAX_BYTES.music) return { text: `${f.name} lớn hơn ${AUDIO_MAX_BYTES.music / 1024 / 1024} MB.`, isError: true };
-            files.push({ path: join(ctx.workspaceDir, ...f.path.split("/")), filename: f.name });
+            files.push(f.key ? { key: f.key, filename: f.name } : { path: join(ctx.workspaceDir, ...f.path.split("/")), filename: f.name });
           }
           const options = { files, ...(a.crossfade_s !== undefined ? { crossfadeS: a.crossfade_s } : {}), ...level };
           if (scope === "video") await importVideoMusic(ctx.audio, { videoId: video!.id, ...options });

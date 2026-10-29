@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup thư viện media và ba tab</title>
+<script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
+<style>
+  /* Màu, cỡ chữ lấy từ apps/web/src/modules/workspace/workspace.css */
+  :root {
+    --ws-bg: #f4f5f7; --ws-surface: #fff; --ws-nav-bg: #f9fafb; --ws-line: #e3e5e8; --ws-line-strong: #cdd1d6;
+    --ws-text: #16181d; --ws-muted: #4a505a; --ws-faint: #5b616b; --ws-accent: #1f4fd1; --ws-accent-soft: #eef2fd;
+    --ws-accent-line: #b9c8f2; --ws-chip: #eef1f5; --ws-ok-bg: #e3f5ea; --ws-ok-fg: #166534; --ws-run-bg: #e6edff;
+    --ws-run-fg: #1e3a9a; --ws-wait-bg: #fff4d6; --ws-wait-fg: #7a4100; --ws-bad-bg: #fde8e8; --ws-bad-fg: #9b1c1c;
+    --ws-shadow: 0 1px 2px rgba(16,24,40,.05); --ws-shadow-lg: 0 8px 28px rgba(16,24,40,.12);
+    --sec-bg: #fafbfc;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: #dfe3e8; color: var(--ws-text); font: 14px/1.45 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  button { font: inherit; color: inherit; }
+  svg.lucide { width: 15px; height: 15px; stroke-width: 2; flex-shrink: 0; }
+
+  /* ---- thanh điều khiển của mockup (không phải UI thật) ---- */
+  .mk-bar { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 10px 16px; background: #1b2230; color: #e8ecf3; font-size: 13px; }
+  .mk-bar b { font-weight: 600; }
+  .mk-seg { display: inline-flex; background: #2a3344; border-radius: 7px; padding: 2px; gap: 2px; }
+  .mk-seg button { border: 0; background: none; color: #c6cedb; padding: 4px 10px; border-radius: 5px; cursor: pointer; }
+  .mk-seg button[aria-pressed="true"] { background: #fff; color: #1b2230; font-weight: 500; }
+  .mk-bar .mk-open { border: 1px solid #45506a; background: none; color: #e8ecf3; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+  .mk-bar .mk-open:hover { background: #2a3344; }
+
+  /* ---- khung app ---- */
+  .app { max-width: 1440px; margin: 16px auto; height: 900px; display: flex; flex-direction: column; background: var(--ws-bg); border-radius: 10px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.18); position: relative; }
+  .hdr { height: 56px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px; background: var(--ws-surface); border-bottom: 1px solid var(--ws-line); font-weight: 600; }
+  .hdr .logo { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg,#3db4f2,#1f4fd1); }
+  .body { flex: 1; min-height: 0; display: flex; }
+  .nav { width: 260px; flex-shrink: 0; background: var(--ws-nav-bg); border-right: 1px solid var(--ws-line); padding: 12px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+  .nav h5 { margin: 6px 6px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ws-faint); }
+  .nav a { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--ws-text); text-decoration: none; cursor: pointer; }
+  .nav a.on { background: var(--ws-accent-soft); color: var(--ws-accent); font-weight: 500; }
+  .nav .num { color: var(--ws-faint); font-size: 12px; }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--ws-line); }
+  .main-head { padding: 12px 18px; border-bottom: 1px solid var(--ws-line); background: var(--ws-surface); font-weight: 600; display: flex; gap: 8px; align-items: center; }
+  .chat { flex: 1; padding: 24px; display: flex; flex-direction: column; gap: 14px; opacity: .55; }
+  .bubble { max-width: 70%; padding: 10px 14px; border-radius: 12px; background: var(--ws-surface); border: 1px solid var(--ws-line); font-size: 13px; }
+  .bubble.me { align-self: flex-end; background: var(--ws-accent-soft); border-color: var(--ws-accent-line); }
+  .composer { margin: 0 18px 18px; height: 84px; border: 1px solid var(--ws-line-strong); border-radius: 12px; background: var(--ws-surface); opacity: .55; }
+  .aside { width: 600px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--ws-surface); }
+  .tabs { display: flex; gap: 2px; padding: 8px 8px 0; border-bottom: 1px solid var(--ws-line); }
+  .tab { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: none; font-size: 13px; color: var(--ws-faint); cursor: pointer; }
+  .tab:hover { color: var(--ws-text); }
+  .tab[aria-selected="true"] { color: var(--ws-accent); border-bottom-color: var(--ws-accent); font-weight: 500; }
+  .panel { flex: 1; min-height: 0; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; background: var(--ws-bg); }
+  .panel[hidden] { display: none; }
+
+  /* ---- khung section dùng chung (điểm chính của đề xuất) ---- */
+  .sec { background: var(--ws-surface); border: 1px solid var(--ws-line); border-radius: 10px; box-shadow: var(--ws-shadow); }
+  .sec-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--ws-line); }
+  .sec-head .ic { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--ws-chip); color: var(--ws-muted); }
+  .sec-title { font-size: 14px; font-weight: 600; }
+  .count { font-size: 12px; color: var(--ws-faint); background: var(--ws-chip); border-radius: 10px; padding: 0 7px; line-height: 18px; }
+  .sec-head .grow { flex: 1; }
+  .sec-hint { margin: 0; padding: 8px 14px 0; font-size: 12px; color: var(--ws-faint); }
+  .sec-body { padding: 8px 8px 10px; }
+  .sub { padding: 6px 6px 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--ws-faint); display: flex; align-items: center; gap: 6px; }
+  .empty { margin: 4px 6px; padding: 14px; border: 1px dashed var(--ws-line-strong); border-radius: 8px; text-align: center; font-size: 12px; color: var(--ws-faint); }
+
+  /* nút */
+  .btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--ws-line-strong); background: var(--ws-surface); font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--ws-accent); color: var(--ws-accent); }
+  .btn.primary { background: var(--ws-accent); border-color: var(--ws-accent); color: #fff; }
+  .btn.primary:hover { background: #1a43b3; color: #fff; }
+  .btn.ghost { border-color: transparent; background: none; color: var(--ws-muted); }
+  .btn.ghost:hover { background: var(--ws-chip); color: var(--ws-text); }
+  .btn.sm { height: 24px; padding: 0 8px; font-size: 12px; }
+  .icon-btn { width: 26px; height: 26px; display: inline-grid; place-items: center; border: 0; background: none; border-radius: 6px; color: var(--ws-faint); cursor: pointer; }
+  .icon-btn:hover { background: var(--ws-chip); color: var(--ws-text); }
+  .dd { position: relative; display: inline-block; }
+  .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; background: var(--ws-surface); border: 1px solid var(--ws-line); border-radius: 8px; box-shadow: var(--ws-shadow-lg); padding: 4px; display: none; }
+  .dd.open > .menu { display: block; }
+  .menu button { display: flex; width: 100%; align-items: flex-start; gap: 8px; padding: 7px 8px; border: 0; background: none; border-radius: 6px; text-align: left; font-size: 13px; cursor: pointer; }
+  .menu button:hover { background: var(--ws-chip); }
+  .menu button small { display: block; color: var(--ws-faint); font-size: 11px; }
+  .menu hr { border: 0; border-top: 1px solid var(--ws-line); margin: 4px 0; }
+  .menu .danger { color: var(--ws-bad-fg); }
+
+  /* dòng */
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; font-size: 13px; }
+  .row:hover { background: var(--ws-chip); }
+  .row + .row { border-top: 1px solid #f0f1f3; }
+  .row:hover + .row, .row:hover { border-top-color: transparent; }
+  .thumb { width: 64px; height: 36px; border-radius: 5px; flex-shrink: 0; background: linear-gradient(180deg,#8fb3d9 0%,#c9d8e6 42%,#6f8f5e 43%,#4e6b3f 70%,#7a6248 100%); position: relative; }
+  .thumb.t2 { background: linear-gradient(160deg,#d9b38f,#7a5a48 55%,#3e4a5c); }
+  .thumb.t3 { background: linear-gradient(200deg,#9fc7c2,#4f7f78 50%,#2d3d3a); }
+  .thumb.img::after { content: "ảnh"; position: absolute; right: 3px; bottom: 2px; font-size: 9px; color: #fff; background: rgba(0,0,0,.45); padding: 0 3px; border-radius: 3px; }
+  .file-ic { width: 32px; height: 32px; border-radius: 7px; display: grid; place-items: center; background: var(--ws-chip); color: var(--ws-muted); flex-shrink: 0; }
+  .file-ic.audio { background: #f3ecff; color: #6b3fd1; }
+  .file-ic.doc { background: #eaf3ff; color: #1f4fd1; }
+  .file-ic.img { background: #e9f7ef; color: #166534; }
+  .file-ic.vid { background: #fff1e6; color: #a2470b; }
+  .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { font-size: 12px; color: var(--ws-faint); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .badge { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 9px; white-space: nowrap; }
+  .badge.ok { background: var(--ws-ok-bg); color: var(--ws-ok-fg); }
+  .badge.run { background: var(--ws-run-bg); color: var(--ws-run-fg); }
+  .badge.wait { background: var(--ws-wait-bg); color: var(--ws-wait-fg); }
+  .badge.lib { background: #f3ecff; color: #5b2fb8; }
+  .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .chip { font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 4px; background: var(--ws-chip); color: var(--ws-muted); border: 1px solid transparent; }
+  .chip.cur { background: var(--ws-accent-soft); color: var(--ws-accent); border-color: var(--ws-accent-line); font-weight: 500; }
+  .chip.add { background: none; border: 1px dashed var(--ws-line-strong); cursor: pointer; }
+  .chip.add:hover { border-color: var(--ws-accent); color: var(--ws-accent); }
+  .seg { display: inline-flex; background: var(--ws-chip); border-radius: 7px; padding: 2px; gap: 2px; }
+  .seg button { border: 0; background: none; padding: 3px 10px; border-radius: 5px; font-size: 12px; color: var(--ws-muted); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ws-surface); color: var(--ws-text); font-weight: 500; box-shadow: var(--ws-shadow); }
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 2px 6px 6px; }
+  .search { flex: 1; height: 28px; border: 1px solid var(--ws-line-strong); border-radius: 6px; padding: 0 8px 0 28px; font-size: 13px; background: var(--ws-surface) no-repeat 8px center / 14px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235b616b' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E"); }
+
+  /* thẻ âm thanh */
+  .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 4px 6px 8px; }
+  .slot { border: 1px solid var(--ws-line); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; background: var(--sec-bg); }
+  .slot-h { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ws-muted); }
+  .slot-v { font-size: 13px; }
+  .slot-a { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+  .play { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--ws-line-strong); background: var(--ws-surface); display: grid; place-items: center; cursor: pointer; color: var(--ws-muted); }
+  .play svg.lucide { width: 12px; height: 12px; }
+
+  /* phong cách */
+  .scope { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--ws-accent-line); background: var(--ws-accent-soft); font-size: 13px; }
+  .scope .grow { flex: 1; }
+  .scope.own { border-color: #f1d79b; background: #fff8e6; }
+  .look { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 10px 12px 4px; }
+  .frame { grid-column: 1 / -1; position: relative; aspect-ratio: 16/9; border-radius: 8px; overflow: hidden; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 9%; }
+  .frame .pic { position: absolute; inset: 0; background: linear-gradient(180deg,#8fb3d9 0%,#c9d8e6 42%,#6f8f5e 43%,#4e6b3f 70%,#7a6248 100%); }
+  .frame .words { position: relative; font-size: 26px; font-weight: 700; color: #fff; text-shadow: 1px 1px 0 #000,-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,0 3px 10px rgba(0,0,0,.6); }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ws-muted); }
+  .field select, .field .fake { height: 30px; border: 1px solid var(--ws-line-strong); border-radius: 6px; padding: 0 8px; font-size: 13px; background: var(--ws-surface); color: var(--ws-text); }
+  .swatches { display: flex; gap: 6px; }
+  .sw { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--ws-line-strong); cursor: pointer; }
+  .sw.on { outline: 2px solid var(--ws-accent); outline-offset: 1px; }
+  .looks { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .lk { border: 1px solid var(--ws-line); border-radius: 7px; padding: 4px; font-size: 11px; text-align: center; cursor: pointer; background: var(--ws-surface); }
+  .lk i { display: block; height: 30px; border-radius: 4px; margin-bottom: 3px; background: linear-gradient(180deg,#8fb3d9 0%,#c9d8e6 42%,#6f8f5e 43%,#4e6b3f 70%,#7a6248 100%); }
+  .lk.on { border-color: var(--ws-accent); color: var(--ws-accent); font-weight: 500; box-shadow: 0 0 0 1px var(--ws-accent); }
+  .switch-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .sw-toggle { width: 32px; height: 18px; border-radius: 9px; background: var(--ws-accent); position: relative; flex-shrink: 0; }
+  .sw-toggle::after { content: ""; position: absolute; right: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+  .sec-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--ws-line); background: var(--sec-bg); border-radius: 0 0 10px 10px; }
+  .sec-foot .grow { flex: 1; font-size: 12px; color: var(--ws-faint); }
+
+  /* tài liệu */
+  .docs-top { display: flex; gap: 8px; align-items: center; }
+  .doc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+  .doc-grid .row + .row { border-top: 0; }
+  .ro { font-size: 11px; color: var(--ws-faint); display: inline-flex; gap: 3px; align-items: center; }
+  .ro svg.lucide { width: 12px; height: 12px; }
+
+  /* lớp phủ */
+  .scrim { position: absolute; inset: 0; background: rgba(16,24,40,.35); z-index: 30; display: none; }
+  .scrim.show { display: block; }
+  .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 820px; background: var(--ws-surface); z-index: 31; box-shadow: var(--ws-shadow-lg); display: none; flex-direction: column; }
+  .drawer.show { display: flex; }
+  .dr-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--ws-line); }
+  .dr-head h3 { margin: 0; font-size: 16px; flex: 1; }
+  .dr-tools { display: flex; gap: 8px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--ws-line); }
+  .dr-body { flex: 1; overflow: auto; padding: 14px 18px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-content: start; }
+  .card { border: 1px solid var(--ws-line); border-radius: 10px; overflow: hidden; cursor: pointer; position: relative; background: var(--ws-surface); }
+  .card.sel { border-color: var(--ws-accent); box-shadow: 0 0 0 1px var(--ws-accent); }
+  .card .cv { height: 92px; background: linear-gradient(180deg,#8fb3d9 0%,#c9d8e6 42%,#6f8f5e 43%,#4e6b3f 70%,#7a6248 100%); position: relative; }
+  .card .cv.t2 { background: linear-gradient(160deg,#d9b38f,#7a5a48 55%,#3e4a5c); }
+  .card .cv.t3 { background: linear-gradient(200deg,#9fc7c2,#4f7f78 50%,#2d3d3a); }
+  .card .cv.au { background: linear-gradient(135deg,#efe7ff,#d8c8ff); display: grid; place-items: center; color: #6b3fd1; }
+  .card .cv.au svg.lucide { width: 28px; height: 28px; }
+  .card .dur { position: absolute; right: 6px; bottom: 6px; font-size: 11px; color: #fff; background: rgba(0,0,0,.55); padding: 0 5px; border-radius: 4px; }
+  .card .ck { position: absolute; left: 8px; top: 8px; width: 18px; height: 18px; border-radius: 5px; background: rgba(255,255,255,.9); border: 1px solid var(--ws-line-strong); display: grid; place-items: center; }
+  .card.sel .ck { background: var(--ws-accent); border-color: var(--ws-accent); color: #fff; }
+  .card .ck svg.lucide { width: 12px; height: 12px; }
+  .card .cb { padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .card .cb .name { font-size: 13px; }
+  .card .cb .meta { font-size: 11px; }
+  .card.in .cv::after { content: "Đã có trong dự án"; position: absolute; left: 0; right: 0; bottom: 0; font-size: 11px; text-align: center; background: rgba(22,101,52,.85); color: #fff; }
+  .card.in .dur { bottom: 24px; }
+  .dr-foot { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--ws-line); background: var(--sec-bg); flex-wrap: wrap; }
+  .dr-foot .grow { flex: 1; }
+  .modal { position: absolute; left: 50%; top: 90px; transform: translateX(-50%); width: 520px; background: var(--ws-surface); border-radius: 12px; z-index: 31; box-shadow: var(--ws-shadow-lg); display: none; flex-direction: column; }
+  .modal.show { display: flex; }
+  .md-head { padding: 16px 20px 6px; font-size: 16px; font-weight: 600; }
+  .md-body { padding: 6px 20px 14px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+  .md-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--ws-line); }
+  .label { font-size: 12px; font-weight: 600; color: var(--ws-muted); }
+  .opts { display: flex; flex-direction: column; gap: 6px; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--ws-line); border-radius: 8px; cursor: pointer; }
+  .opt.on { border-color: var(--ws-accent); background: var(--ws-accent-soft); }
+  .opt .dot { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--ws-line-strong); margin-top: 2px; flex-shrink: 0; background: #fff; }
+  .opt.on .dot { border: 5px solid var(--ws-accent); }
+  .opt small { display: block; color: var(--ws-faint); font-size: 12px; }
+  .vlist { border: 1px solid var(--ws-line); border-radius: 8px; max-height: 210px; overflow: auto; }
+  .vrow { display: flex; align-items: center; gap: 10px; padding: 7px 10px; font-size: 13px; cursor: pointer; }
+  .vrow + .vrow { border-top: 1px solid #f0f1f3; }
+  .cbx { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--ws-line-strong); display: grid; place-items: center; flex-shrink: 0; background: #fff; }
+  .vrow.on .cbx { background: var(--ws-accent); border-color: var(--ws-accent); color: #fff; }
+  .cbx svg.lucide { width: 11px; height: 11px; }
+  .vrow .meta { margin-left: auto; }
+  .note { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; background: #f3ecff; color: #4a2a8f; font-size: 12px; }
+  .warn { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; background: var(--ws-wait-bg); color: var(--ws-wait-fg); font-size: 12px; }
+  .files-up { display: flex; flex-direction: column; gap: 4px; }
+  .files-up .row { padding: 4px 6px; }
+
+  /* ghi chú thay đổi */
+  .notes { max-width: 1440px; margin: 0 auto 30px; background: #fff; border-radius: 10px; padding: 16px 20px; font-size: 13px; }
+  .notes h3 { margin: 0 0 8px; font-size: 15px; }
+  .notes ol { margin: 0; padding-left: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 30px; }
+</style>
+</head>
+<body>
+
+<div class="mk-bar" role="toolbar" aria-label="Điều khiển mockup">
+  <b>Mockup P0</b>
+  <span>Đang mở:</span>
+  <span class="mk-seg" id="mk-scope">
+    <button data-scope="project" aria-pressed="false">Chat của dự án</button>
+    <button data-scope="video" aria-pressed="true">Video #2</button>
+  </span>
+  <span>Mở thử:</span>
+  <button class="mk-open" data-open="library">Thư viện của tôi</button>
+  <button class="mk-open" data-open="upload">Tải lên (chọn nhiều video)</button>
+  <button class="mk-open" data-open="addto">Thêm vào video…</button>
+  <button class="mk-open" data-open="applyall">Áp cho mọi video</button>
+</div>
+
+<div class="app" id="app">
+  <div class="hdr"><span class="logo"></span>AG Studio</div>
+  <div class="body">
+    <nav class="nav">
+      <h5>Dự án</h5>
+      <a data-scope="project"><i data-lucide="message-square"></i>Hoa Lư – kiểu Arashiyama</a>
+      <h5>Video</h5>
+      <a data-scope="video1"><span class="num">#1</span>Tràng An buổi sớm</a>
+      <a data-scope="video" class="on"><span class="num">#2</span>Thuyền trên sông Ngô Đồng</a>
+      <a data-scope="video3"><span class="num">#3</span>Hang Múa lúc hoàng hôn</a>
+    </nav>
+    <main class="main">
+      <div class="main-head" id="main-head"><span class="num" style="color:var(--ws-faint)">#2</span>Thuyền trên sông Ngô Đồng</div>
+      <div class="chat">
+        <div class="bubble me">Dựng bản 60 giây, nhịp chậm, chữ tiêu đề lớn.</div>
+        <div class="bubble">Mình sẽ dùng 5 footage của video này và nhạc nền của dự án…</div>
+      </div>
+      <div class="composer"></div>
+    </main>
+
+    <aside class="aside">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-tab="preview" data-video-only aria-selected="false"><i data-lucide="clapperboard"></i>Xem trước</button>
+        <button class="tab" role="tab" data-tab="files" aria-selected="false"><i data-lucide="folder-open"></i>Tài liệu</button>
+        <button class="tab" role="tab" data-tab="inputs" aria-selected="true"><i data-lucide="film"></i>Nguồn</button>
+        <button class="tab" role="tab" data-tab="style" aria-selected="false"><i data-lucide="palette"></i>Phong cách</button>
+      </div>
+
+      <!-- =================== Tab NGUỒN =================== -->
+      <div class="panel" data-panel="inputs">
+
+        <section class="sec">
+          <div class="sec-head">
+            <span class="ic"><i data-lucide="folder-search"></i></span>
+            <span class="sec-title">Project ag-go</span><span class="count">1</span>
+            <span class="grow"></span>
+            <button class="btn"><i data-lucide="plus"></i>Thêm project</button>
+          </div>
+          <div class="sec-body">
+            <div class="row">
+              <span class="file-ic"><i data-lucide="folder"></i></span>
+              <span class="txt"><span class="name">Hoa Lư 2026-10 (Ninh Bình)</span><span class="meta">48 video · agent tìm footage trong đây</span></span>
+              <button class="icon-btn" aria-label="Thêm thao tác"><i data-lucide="more-horizontal"></i></button>
+            </div>
+          </div>
+        </section>
+
+        <section class="sec">
+          <div class="sec-head">
+            <span class="ic"><i data-lucide="film"></i></span>
+            <span class="sec-title">Footage</span><span class="count" id="ft-count">5</span>
+            <span class="grow"></span>
+            <div class="dd">
+              <button class="btn primary" data-dd><i data-lucide="plus"></i>Thêm footage<i data-lucide="chevron-down"></i></button>
+              <div class="menu">
+                <button><i data-lucide="folder-search"></i><span>Chọn video ag-go<small>Từ project ag-go ở trên</small></span></button>
+                <button data-open="upload"><i data-lucide="upload"></i><span>Tải từ máy<small>Video tới 4 GB, ảnh jpg/png/webp</small></span></button>
+                <button data-open="library"><i data-lucide="library"></i><span>Từ thư viện của tôi<small>File đã tải ở dự án khác, không tải lại</small></span></button>
+              </div>
+            </div>
+          </div>
+          <div class="sec-body">
+            <div class="toolbar" data-video-only>
+              <span class="seg" id="ft-seg">
+                <button aria-pressed="true" data-ft="video">Video #2 · 5</button>
+                <button aria-pressed="false" data-ft="all">Cả dự án · 9</button>
+              </span>
+              <input class="search" placeholder="Tìm theo tên hoặc nội dung">
+            </div>
+            <div class="row">
+              <span class="thumb"></span>
+              <span class="txt"><span class="name">IMG_4021.mov</span>
+                <span class="meta"><span class="badge ok">Sẵn sàng · 14 cảnh</span><span class="badge lib">Thư viện</span>
+                  <span class="chips"><span class="chip">#1</span><span class="chip cur">#2</span><span class="chip">#3</span></span></span></span>
+              <div class="dd"><button class="icon-btn" data-dd aria-label="Thêm thao tác"><i data-lucide="more-horizontal"></i></button>
+                <div class="menu">
+                  <button data-open="addto"><i data-lucide="list-plus"></i>Thêm vào video khác…</button>
+                  <button><i data-lucide="eye"></i>Xem cảnh đã cắt</button>
+                  <button><i data-lucide="refresh-cw"></i>Chuẩn bị lại</button>
+                  <hr>
+                  <button><i data-lucide="minus-circle"></i>Bỏ khỏi video #2</button>
+                  <button class="danger"><i data-lucide="trash-2"></i>Bỏ khỏi dự án<small>File vẫn trong thư viện của bạn</small></button>
+                </div></div>
+            </div>
+            <div class="row">
+              <span class="thumb t2"></span>
+              <span class="txt"><span class="name">Thuyền nan bến Tam Cốc</span>
+                <span class="meta"><span class="badge ok">Sẵn sàng · 9 cảnh · có lời</span><span>ag-go</span>
+                  <span class="chips"><span class="chip cur">#2</span><span class="chip add" data-open="addto">+ video</span></span></span></span>
+              <button class="icon-btn" aria-label="Thêm thao tác"><i data-lucide="more-horizontal"></i></button>
+            </div>
+            <div class="row">
+              <span class="thumb t3"></span>
+              <span class="txt"><span class="name">DJI_0087.mp4</span>
+                <span class="meta"><span class="badge run">Đang cắt cảnh trên farm · 40%</span><span class="badge lib">Thư viện</span>
+                  <span class="chips"><span class="chip cur">#2</span><span class="chip">#3</span></span></span></span>
+              <button class="icon-btn" aria-label="Thêm thao tác"><i data-lucide="more-horizontal"></i></button>
+            </div>
+            <div class="row">
+              <span class="thumb img"></span>
+              <span class="txt"><span class="name">cong-dong.jpg</span>
+                <span class="meta"><span class="badge ok">Clip 6 giây</span><span class="badge lib">Thư viện</span>
+                  <span class="chips"><span class="chip">#1</span><span class="chip cur">#2</span></span></span></span>
+              <button class="icon-btn" aria-label="Thêm thao tác"><i data-lucide="more-horizontal"></i></button>
+            </div>
+            <div class="row">
+              <span class="thumb t2"></span>
+              <span class="txt"><span class="name">Chèo đò ngược nắng</span>
+                <span class="meta"><span class="badge wait">Chưa chuẩn bị</span><span>ag-go</span>
+                  <span class="chips"><span class="chip cur">#2</span><span class="chip add" data-open="addto">+ video</span></span></span></span>
+              <button class="btn sm">Chuẩn bị</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="sec">
+          <div class="sec-head">
+            <span class="ic"><i data-lucide="audio-lines"></i></span>
+            <span class="sec-title">Âm thanh</span><span class="count">3</span>
+            <span class="grow"></span>
+            <div class="dd">
+              <button class="btn" data-dd><i data-lucide="plus"></i>Thêm audio<i data-lucide="chevron-down"></i></button>
+              <div class="menu">
+                <button data-open="upload"><i data-lucide="upload"></i><span>Tải từ máy<small>mp3, wav, m4a… tới 300 MB</small></span></button>
+                <button data-open="library"><i data-lucide="library"></i><span>Từ thư viện của tôi</span></button>
+              </div>
+            </div>
+          </div>
+          <div class="slots">
+            <div class="slot">
+              <span class="slot-h"><i data-lucide="mic"></i>Giọng đọc · cả dự án</span>
+              <span class="slot-v">Giọng mẫu 42 s (giọng của người dùng)</span>
+              <span class="slot-a"><button class="btn sm">Đổi</button><button class="btn sm ghost">Không lời dẫn</button></span>
+            </div>
+            <div class="slot">
+              <span class="slot-h"><i data-lucide="music"></i>Nhạc nền · <span class="scope-word">video #2</span></span>
+              <span class="slot-v">Theo dự án: <b>sao-bang-lofi.mp3</b> · −18 dB, nhỏ lại khi có lời</span>
+              <span class="slot-a"><button class="btn sm">Nhạc riêng cho video này</button><button class="btn sm ghost">Kho nhạc</button></span>
+            </div>
+          </div>
+          <div class="sec-body" style="padding-top:0">
+            <div class="sub">File audio của dự án</div>
+            <div class="row">
+              <button class="play" aria-label="Nghe"><i data-lucide="play"></i></button>
+              <span class="txt"><span class="name">sao-bang-lofi.mp3</span><span class="meta">3:42 · 8,1 MB <span class="badge lib">Thư viện</span><span class="badge ok">Nhạc nền dự án</span></span></span>
+              <div class="dd"><button class="btn sm" data-dd>Dùng làm<i data-lucide="chevron-down"></i></button>
+                <div class="menu"><button>Nhạc nền của dự án</button><button>Nhạc nền của video #2</button><button>Giọng mẫu (cần producer)</button></div></div>
+              <button class="icon-btn" aria-label="Thêm thao tác"><i data-lucide="more-horizontal"></i></button>
+            </div>
+            <div class="row">
+              <button class="play" aria-label="Nghe"><i data-lucide="play"></i></button>
+              <span class="txt"><span class="name">giong-doc-mau.wav</span><span class="meta">0:42 · 3,6 MB <span class="badge lib">Thư viện</span><span class="badge ok">Giọng mẫu</span></span></span>
+              <button class="btn sm" data-dd>Dùng làm<i data-lucide="chevron-down"></i></button>
+              <button class="icon-btn" aria-label="Thêm thao tác"><i data-lucide="more-horizontal"></i></button>
+            </div>
+            <div class="row">
+              <button class="play" aria-label="Nghe"><i data-lucide="play"></i></button>
+              <span class="txt"><span class="name">tieng-mai-cheo.m4a</span><span class="meta">1:15 · 2,0 MB <span class="badge lib">Thư viện</span></span></span>
+              <button class="btn sm" data-dd>Dùng làm<i data-lucide="chevron-down"></i></button>
+              <button class="icon-btn" aria-label="Thêm thao tác"><i data-lucide="more-horizontal"></i></button>
+            </div>
+          </div>
+        </section>
+
+        <section class="sec">
+          <div class="sec-head">
+            <span class="ic"><i data-lucide="file-text"></i></span>
+            <span class="sec-title">Tài liệu tải lên</span><span class="count">2</span>
+            <span class="grow"></span>
+            <button class="btn"><i data-lucide="upload"></i>Tải lên</button>
+          </div>
+          <p class="sec-hint">Kịch bản, ghi chú, phụ đề, ảnh logo… AI đọc được ở mọi cuộc chat. Mở và sửa ở tab Tài liệu.</p>
+          <div class="sec-body">
+            <div class="row"><span class="file-ic doc"><i data-lucide="file-text"></i></span><span class="txt"><span class="name">Kịch bản Hoa Lư.md</span><span class="meta">4 KB · hôm qua</span></span><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div>
+            <div class="row"><span class="file-ic img"><i data-lucide="image"></i></span><span class="txt"><span class="name">logo-kenh.png</span><span class="meta">120 KB · 3 ngày trước</span></span><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div>
+          </div>
+        </section>
+        <p style="margin:0;font-size:12px;color:var(--ws-faint);text-align:center">Video tham khảo đã chuyển sang tab <b>Phong cách</b>.</p>
+      </div>
+
+      <!-- =================== Tab PHONG CÁCH =================== -->
+      <div class="panel" data-panel="style" hidden>
+        <div class="scope" id="style-scope-video" data-video-only>
+          <i data-lucide="link"></i>
+          <span class="grow"><b>Video #2 đang theo phong cách dự án.</b> Đổi ở đây sẽ chỉ áp cho video này.</span>
+          <span class="seg" id="style-seg"><button aria-pressed="true" data-own="0">Theo dự án</button><button aria-pressed="false" data-own="1">Riêng video này</button></span>
+        </div>
+        <div class="scope" id="style-scope-project" data-project-only hidden>
+          <i data-lucide="layers"></i>
+          <span class="grow"><b>Phong cách chung của dự án</b>, áp cho 2/3 video. Video #3 đang dùng phong cách riêng.</span>
+          <button class="btn sm">Cho #3 theo dự án</button>
+        </div>
+
+        <section class="sec">
+          <div class="sec-head">
+            <span class="ic"><i data-lucide="type"></i></span>
+            <span class="sec-title">Chữ và tông màu</span>
+            <span class="grow"></span>
+            <span class="badge run" id="look-src">Từ: phong cách dự án</span>
+          </div>
+          <div class="look">
+            <div class="frame"><div class="pic" id="pic"></div><span class="words" id="words">Thuyền trên sông Ngô Đồng</span></div>
+            <label class="field">Font chữ<select><option>Be Vietnam Pro (có dấu tiếng Việt)</option><option>Arial</option></select></label>
+            <label class="field">Cỡ chữ<span class="seg" style="align-self:flex-start"><button aria-pressed="false">Nhỏ</button><button aria-pressed="false">Vừa</button><button aria-pressed="true">Lớn</button></span></label>
+            <div class="field">Màu chữ<span class="swatches" id="sw-text"><span class="sw on" style="background:#fff" data-c="#fff"></span><span class="sw" style="background:#ffe066" data-c="#ffe066"></span><span class="sw" style="background:#9ee6ff" data-c="#9ee6ff"></span><span class="sw" style="background:#16181d" data-c="#16181d"></span></span></div>
+            <div class="field">Nền sau tiêu đề<span class="swatches"><span class="sw on" style="background:repeating-conic-gradient(#ddd 0 25%,#fff 0 50%) 0/10px 10px"></span><span class="sw" style="background:#000a"></span><span class="sw" style="background:#1f4fd1"></span></span></div>
+            <div class="field" style="grid-column:1/-1">Tông màu</div>
+            <div class="looks" id="looks">
+              <span class="lk" data-f="none"><i></i>Giữ nguyên</span>
+              <span class="lk on" data-f="natural"><i style="filter:contrast(1.04) saturate(1.1)"></i>Tự nhiên</span>
+              <span class="lk" data-f="vivid"><i style="filter:contrast(1.1) saturate(1.35)"></i>Rực rỡ</span>
+              <span class="lk" data-f="warm"><i style="filter:sepia(.14) saturate(1.12) hue-rotate(-6deg)"></i>Ấm áp</span>
+              <span class="lk" data-f="cinematic"><i style="filter:contrast(1.1) saturate(.86) brightness(.97)"></i>Điện ảnh</span>
+            </div>
+            <div class="switch-row"><span class="sw-toggle"></span>Cân màu giữa các cảnh <span style="color:var(--ws-faint);font-size:12px">· footage từ nhiều máy</span></div>
+          </div>
+          <div class="sec-foot">
+            <span class="grow" id="foot-hint">Lưu vào timeline mới nhất của video #2. Bản đã render không đổi.</span>
+            <button class="btn" data-open="applyall" data-video-only><i data-lucide="copy-check"></i>Áp cho mọi video…</button>
+            <button class="btn primary" id="save-look">Lưu cho video #2</button>
+          </div>
+        </section>
+
+        <section class="sec">
+          <div class="sec-head">
+            <span class="ic"><i data-lucide="scissors"></i></span>
+            <span class="sec-title">Phong cách dựng của kênh</span>
+            <span class="grow"></span>
+            <button class="btn primary"><i data-lucide="sparkles"></i>Nhờ AI học từ video mẫu</button>
+          </div>
+          <p class="sec-hint">Nhịp cắt, độ dài cảnh, cách chuyển cảnh. AI dựa vào đây khi lập kế hoạch dựng cho mọi video.</p>
+          <div class="sec-body">
+            <div class="row"><span class="file-ic doc"><i data-lucide="file-text"></i></span><span class="txt"><span class="name">channel/style.md</span><span class="meta">Cập nhật 2 ngày trước · 14 lần cắt/phút, shot trung vị 3,8 s</span></span><button class="btn sm">Mở</button></div>
+          </div>
+        </section>
+
+        <section class="sec">
+          <div class="sec-head">
+            <span class="ic"><i data-lucide="clapperboard"></i></span>
+            <span class="sec-title">Video tham khảo</span><span class="count">2</span>
+            <span class="grow"></span>
+            <div class="dd">
+              <button class="btn" data-dd><i data-lucide="plus"></i>Thêm video mẫu<i data-lucide="chevron-down"></i></button>
+              <div class="menu">
+                <button data-open="upload"><i data-lucide="upload"></i><span>Tải từ máy<small>tới 300 MB, chỉ để học phong cách</small></span></button>
+                <button data-open="library"><i data-lucide="library"></i><span>Từ thư viện của tôi</span></button>
+              </div>
+            </div>
+          </div>
+          <p class="sec-hint">Chỉ để học phong cách dựng, không dùng làm footage.</p>
+          <div class="sec-body">
+            <div class="row"><span class="thumb t3"></span><span class="txt"><span class="name">arashiyama-reference.mp4</span><span class="meta">2:10 · 84 MB <span class="badge lib">Thư viện</span><span class="badge ok">Đã học</span></span></span><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div>
+            <div class="row"><span class="thumb t2"></span><span class="txt"><span class="name">kyoto-slow-travel.mov</span><span class="meta">4:05 · 210 MB <span class="badge lib">Thư viện</span></span></span><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- =================== Tab TÀI LIỆU =================== -->
+      <div class="panel" data-panel="files" hidden>
+        <div class="docs-top">
+          <input class="search" placeholder="Tìm tài liệu">
+          <button class="btn"><i data-lucide="upload"></i>Tải tệp lên</button>
+          <button class="btn primary"><i data-lucide="file-plus"></i>Tài liệu mới</button>
+        </div>
+
+        <section class="sec">
+          <div class="sec-head"><span class="ic"><i data-lucide="tv"></i></span><span class="sec-title">Kênh</span><span class="count">4</span><span class="grow"></span></div>
+          <div class="sec-body doc-grid">
+            <div class="row"><span class="file-ic doc"><i data-lucide="target"></i></span><span class="txt"><span class="name">Chiến lược kênh</span><span class="meta">tuần trước</span></span></div>
+            <div class="row"><span class="file-ic doc"><i data-lucide="badge"></i></span><span class="txt"><span class="name">Branding</span><span class="meta">3 ngày trước</span></span></div>
+            <div class="row"><span class="file-ic doc"><i data-lucide="scissors"></i></span><span class="txt"><span class="name">Phong cách dựng</span><span class="meta">2 ngày trước</span></span></div>
+            <div class="row"><span class="file-ic doc"><i data-lucide="sticky-note"></i></span><span class="txt"><span class="name">Ghi chú cho AI</span><span class="meta">hôm nay</span></span></div>
+          </div>
+        </section>
+
+        <section class="sec" data-video-only>
+          <div class="sec-head"><span class="ic"><i data-lucide="video"></i></span><span class="sec-title">Video #2 · Thuyền trên sông Ngô Đồng</span><span class="count">3</span><span class="grow"></span></div>
+          <div class="sec-body doc-grid">
+            <div class="row"><span class="file-ic doc"><i data-lucide="file-text"></i></span><span class="txt"><span class="name">Brief</span><span class="meta">hôm nay</span></span></div>
+            <div class="row"><span class="file-ic doc"><i data-lucide="list-video"></i></span><span class="txt"><span class="name">Kế hoạch dựng</span><span class="meta">hôm nay</span></span></div>
+            <div class="row"><span class="file-ic vid"><i data-lucide="play-circle"></i></span><span class="txt"><span class="name">Bản render xem trước</span><span class="meta">1:02 · 10 phút trước</span></span></div>
+          </div>
+        </section>
+
+        <section class="sec">
+          <div class="sec-head"><span class="ic"><i data-lucide="paperclip"></i></span><span class="sec-title">Tệp đã thêm</span><span class="count">2</span><span class="grow"></span></div>
+          <p class="sec-hint">Kéo thả tệp vào đây. AI đọc được ở mọi cuộc chat của kênh.</p>
+          <div class="sec-body doc-grid">
+            <div class="row"><span class="file-ic doc"><i data-lucide="file-text"></i></span><span class="txt"><span class="name">Kịch bản Hoa Lư.md</span><span class="meta">hôm qua</span></span></div>
+            <div class="row"><span class="file-ic img"><i data-lucide="image"></i></span><span class="txt"><span class="name">logo-kenh.png</span><span class="meta">3 ngày trước</span></span></div>
+          </div>
+        </section>
+
+        <section class="sec">
+          <div class="sec-head"><span class="ic"><i data-lucide="cloud"></i></span><span class="sec-title">Audio và video của dự án</span><span class="count">5</span><span class="grow"></span><button class="btn sm ghost" data-goto="inputs">Quản lý ở tab Nguồn<i data-lucide="arrow-right"></i></button></div>
+          <p class="sec-hint">Nằm trong thư viện trên kho lưu trữ (R2), không có trên máy chủ. Chỉ nghe/xem ở đây.</p>
+          <div class="sec-body doc-grid">
+            <div class="row"><span class="file-ic audio"><i data-lucide="music"></i></span><span class="txt"><span class="name">sao-bang-lofi.mp3</span><span class="ro"><i data-lucide="lock"></i>chỉ xem</span></span></div>
+            <div class="row"><span class="file-ic audio"><i data-lucide="mic"></i></span><span class="txt"><span class="name">giong-doc-mau.wav</span><span class="ro"><i data-lucide="lock"></i>chỉ xem</span></span></div>
+            <div class="row"><span class="file-ic audio"><i data-lucide="music"></i></span><span class="txt"><span class="name">tieng-mai-cheo.m4a</span><span class="ro"><i data-lucide="lock"></i>chỉ xem</span></span></div>
+            <div class="row"><span class="file-ic vid"><i data-lucide="clapperboard"></i></span><span class="txt"><span class="name">arashiyama-reference.mp4</span><span class="ro"><i data-lucide="lock"></i>video tham khảo</span></span></div>
+          </div>
+        </section>
+
+        <section class="sec">
+          <div class="sec-head"><span class="ic"><i data-lucide="trending-up"></i></span><span class="sec-title">Nghiên cứu</span><span class="count">1</span><span class="grow"></span><button class="btn sm"><i data-lucide="play"></i>Chạy nghiên cứu</button></div>
+          <div class="sec-body"><div class="row"><span class="file-ic doc"><i data-lucide="file-search"></i></span><span class="txt"><span class="name">style-2026-10-27-1 / README</span><span class="meta">2 ngày trước</span></span></div></div>
+        </section>
+      </div>
+
+      <div class="panel" data-panel="preview" hidden><div class="empty">Tab Xem trước không đổi trong đợt này.</div></div>
+    </aside>
+  </div>
+
+  <!-- =================== Lớp phủ =================== -->
+  <div class="scrim" id="scrim"></div>
+
+  <div class="drawer" id="ov-library" role="dialog" aria-label="Thư viện của tôi">
+    <div class="dr-head"><i data-lucide="library"></i><h3>Thư viện của tôi</h3><span style="font-size:12px;color:var(--ws-faint)">38 file · 6,2 GB</span><button class="icon-btn" data-close aria-label="Đóng"><i data-lucide="x"></i></button></div>
+    <div class="dr-tools">
+      <span class="seg"><button aria-pressed="true">Tất cả</button><button aria-pressed="false">Video</button><button aria-pressed="false">Ảnh</button><button aria-pressed="false">Audio</button></span>
+      <input class="search" placeholder="Tìm theo tên">
+      <select class="btn" style="padding-right:4px"><option>Mới nhất</option><option>Tên</option><option>Dung lượng</option></select>
+      <span class="seg"><button aria-pressed="true"><i data-lucide="layout-grid"></i></button><button aria-pressed="false"><i data-lucide="list"></i></button></span>
+      <button class="btn"><i data-lucide="upload"></i>Tải lên</button>
+    </div>
+    <div class="dr-body" id="lib-grid">
+      <div class="card sel"><div class="cv"><span class="ck"><i data-lucide="check"></i></span><span class="dur">0:48</span></div><div class="cb"><span class="name">DJI_0112.mp4</span><span class="meta">Dùng ở: Đà Lạt mùa mưa</span></div></div>
+      <div class="card sel"><div class="cv t2"><span class="ck"><i data-lucide="check"></i></span><span class="dur">1:20</span></div><div class="cb"><span class="name">cho-noi-cai-rang.mov</span><span class="meta">Dùng ở: Miền Tây 2026</span></div></div>
+      <div class="card in"><div class="cv"><span class="ck"></span><span class="dur">0:31</span></div><div class="cb"><span class="name">IMG_4021.mov</span><span class="meta">Dùng ở: dự án này, +2</span></div></div>
+      <div class="card"><div class="cv t3"><span class="ck"></span><span class="dur">2:04</span></div><div class="cb"><span class="name">ruong-bac-thang.mp4</span><span class="meta">Chưa dùng</span></div></div>
+      <div class="card sel"><div class="cv au"><span class="ck"><i data-lucide="check"></i></span><i data-lucide="music"></i><span class="dur">2:58</span></div><div class="cb"><span class="name">acoustic-sang-som.mp3</span><span class="meta">Dùng ở: Đà Lạt mùa mưa</span></div></div>
+      <div class="card"><div class="cv t2"><span class="ck"></span><span class="dur">ảnh</span></div><div class="cb"><span class="name">pho-co-hoi-an.jpg</span><span class="meta">Chưa dùng</span></div></div>
+      <div class="card in"><div class="cv au"><span class="ck"></span><i data-lucide="music"></i><span class="dur">3:42</span></div><div class="cb"><span class="name">sao-bang-lofi.mp3</span><span class="meta">Dùng ở: dự án này</span></div></div>
+      <div class="card"><div class="cv t3"><span class="ck"></span><span class="dur">0:55</span></div><div class="cb"><span class="name">sapa-may-mu.mp4</span><span class="meta">Chưa dùng</span></div></div>
+    </div>
+    <div class="dr-foot">
+      <span><b>Đã chọn 3</b> (2 video, 1 audio)</span>
+      <span class="grow"></span>
+      <span style="font-size:13px">Footage thêm vào:</span>
+      <span class="chips"><span class="chip cur">#2 (đang mở)</span><span class="chip add" data-open="addto">+ video khác</span></span>
+      <button class="btn" data-close>Huỷ</button>
+      <button class="btn primary" data-close>Thêm 3 file vào dự án</button>
+    </div>
+  </div>
+
+  <div class="modal" id="ov-upload" role="dialog" aria-label="Tải lên từ máy">
+    <div class="md-head">Tải 2 file từ máy</div>
+    <div class="md-body">
+      <div class="files-up">
+        <div class="row"><span class="file-ic vid"><i data-lucide="film"></i></span><span class="txt"><span class="name">DJI_0140.mp4</span><span class="meta">1,2 GB</span></span></div>
+        <div class="row"><span class="file-ic vid"><i data-lucide="film"></i></span><span class="txt"><span class="name">IMG_4102.mov</span><span class="meta">640 MB</span></span></div>
+      </div>
+      <span class="label">Dùng làm</span>
+      <div class="opts" id="use-opts">
+        <div class="opt on" data-use="footage"><span class="dot"></span><span>Footage<small>Cắt cảnh trên farm, dùng để dựng video</small></span></div>
+        <div class="opt" data-use="reference"><span class="dot"></span><span>Video tham khảo<small>Chỉ để học phong cách dựng</small></span></div>
+      </div>
+      <span class="label">Cho video (chọn nhiều)</span>
+      <div class="vlist" id="vlist-up">
+        <div class="vrow"><span class="cbx"></span>#1 Tràng An buổi sớm<span class="meta">4 footage</span></div>
+        <div class="vrow on"><span class="cbx"><i data-lucide="check"></i></span>#2 Thuyền trên sông Ngô Đồng<span class="meta">đang mở</span></div>
+        <div class="vrow on"><span class="cbx"><i data-lucide="check"></i></span>#3 Hang Múa lúc hoàng hôn<span class="meta">2 footage</span></div>
+        <div class="vrow"><span class="cbx" style="border-style:dashed"><i data-lucide="plus" style="color:var(--ws-faint)"></i></span>Video mới…</div>
+      </div>
+      <div class="note"><i data-lucide="library"></i><span>File được lưu vào <b>Thư viện của tôi</b> trên kho lưu trữ. Dự án khác chọn lại được, không phải tải lên lần nữa.</span></div>
+    </div>
+    <div class="md-foot"><button class="btn" data-close>Huỷ</button><button class="btn primary" data-close>Tải lên cho 2 video</button></div>
+  </div>
+
+  <div class="modal" id="ov-addto" role="dialog" aria-label="Thêm vào video">
+    <div class="md-head">Dùng IMG_4021.mov cho video</div>
+    <div class="md-body">
+      <p style="margin:0;color:var(--ws-faint)">Footage chỉ chuẩn bị một lần cho cả dự án, thêm vào nhiều video không tốn thêm thời gian.</p>
+      <div class="vlist">
+        <div class="vrow on"><span class="cbx"><i data-lucide="check"></i></span>#1 Tràng An buổi sớm</div>
+        <div class="vrow on"><span class="cbx"><i data-lucide="check"></i></span>#2 Thuyền trên sông Ngô Đồng<span class="meta">đang mở</span></div>
+        <div class="vrow on"><span class="cbx"><i data-lucide="check"></i></span>#3 Hang Múa lúc hoàng hôn</div>
+        <div class="vrow"><span class="cbx"></span>#4 Bích Động mùa lúa chín<span class="meta">chưa có footage</span></div>
+      </div>
+    </div>
+    <div class="md-foot"><button class="btn" data-close>Huỷ</button><button class="btn primary" data-close>Lưu</button></div>
+  </div>
+
+  <div class="modal" id="ov-applyall" role="dialog" aria-label="Áp cho mọi video">
+    <div class="md-head">Áp phong cách này cho mọi video?</div>
+    <div class="md-body">
+      <p style="margin:0">Chữ, màu chữ và tông màu này thành <b>phong cách chung của dự án</b>. Video thêm sau cũng theo phong cách này.</p>
+      <div class="vlist">
+        <div class="vrow"><span class="cbx" style="background:var(--ws-ok-bg);border-color:var(--ws-ok-bg);color:var(--ws-ok-fg)"><i data-lucide="check"></i></span>#1 Tràng An buổi sớm<span class="meta">đang theo dự án</span></div>
+        <div class="vrow"><span class="cbx" style="background:var(--ws-ok-bg);border-color:var(--ws-ok-bg);color:var(--ws-ok-fg)"><i data-lucide="check"></i></span>#2 Thuyền trên sông Ngô Đồng<span class="meta">đang mở</span></div>
+        <div class="vrow"><span class="cbx" style="background:var(--ws-wait-bg);border-color:var(--ws-wait-bg);color:var(--ws-wait-fg)"><i data-lucide="alert-triangle"></i></span>#3 Hang Múa lúc hoàng hôn<span class="meta" style="color:var(--ws-wait-fg)">phong cách riêng sẽ bị thay</span></div>
+      </div>
+      <div class="warn"><i data-lucide="info"></i><span>Timeline mới nhất của 3 video được cập nhật. Bản đã render không đổi, render lại để thấy phong cách mới.</span></div>
+    </div>
+    <div class="md-foot"><button class="btn" data-close>Huỷ</button><button class="btn primary" data-close>Áp cho 3 video</button></div>
+  </div>
+</div>
+
+<div class="notes">
+  <h3>Thay đổi so với hiện tại</h3>
+  <ol>
+    <li>Mọi section có <b>khung riêng</b> (nền trắng, viền, tiêu đề + số lượng bên trái, <b>một nút chính</b> bên phải). Nút phụ gom vào menu ⋯ của từng dòng.</li>
+    <li>Tab Nguồn bỏ nút chuyển hai nhóm, xếp cố định: <b>Project ag-go → Footage → Âm thanh → Tài liệu tải lên</b>.</li>
+    <li>"Thêm footage ▾" gom ba đường: ag-go, tải từ máy, <b>từ thư viện của tôi</b>.</li>
+    <li>Mỗi footage có <b>chip các video đang dùng</b> (#1 #2 #3) và "+ video". Menu ⋯ tách "Bỏ khỏi video này" với "Bỏ khỏi dự án".</li>
+    <li>Giọng đọc và nhạc nền thành hai ô gọn trong section Âm thanh, thay cho hai thẻ to trên đầu tab.</li>
+    <li>File audio có nút nghe và "Dùng làm ▾" (nhạc dự án / nhạc video / giọng mẫu).</li>
+    <li>Video tham khảo <b>chỉ còn ở tab Phong cách</b> (hiện đang có ở cả hai tab).</li>
+    <li>Tab Phong cách: thanh trên cùng cho biết video đang <b>theo dự án hay riêng</b>; nút "Áp cho mọi video…" có hỏi xác nhận và nêu video bị thay.</li>
+    <li>Tab Tài liệu: thanh tìm + hai nút trên cùng; nhóm Kênh / Video / Tệp đã thêm / Audio và video (chỉ xem, trên R2) / Nghiên cứu.</li>
+    <li>Drawer <b>Thư viện của tôi</b>: lọc loại, tìm, lưới/bảng, biết file đang dùng ở dự án nào, chọn nhiều và chọn video đích.</li>
+  </ol>
+</div>
+
+<script>
+  lucide.createIcons();
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  let scope = "video";
+
+  function showTab(k) {
+    $$(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === k)));
+    $$(".panel").forEach((p) => (p.hidden = p.dataset.panel !== k));
+  }
+  $$(".tab").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));
+  $$("[data-goto]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.goto)));
+
+  function setScope(s) {
+    scope = s;
+    $$("#mk-scope button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.scope === s)));
+    $$(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.scope === s));
+    const video = s === "video";
+    $$("[data-video-only]").forEach((e) => (e.hidden = !video));
+    $$("[data-project-only]").forEach((e) => (e.hidden = video));
+    $("#main-head").innerHTML = video ? '<span style="color:var(--ws-faint)">#2</span>Thuyền trên sông Ngô Đồng' : "Hoa Lư – kiểu Arashiyama";
+    $("#ft-count").textContent = video ? "5" : "9";
+    $$(".scope-word").forEach((e) => (e.textContent = video ? "video #2" : "cả dự án"));
+    $("#look-src").textContent = video ? "Từ: phong cách dự án" : "Phong cách dự án";
+    $("#save-look").textContent = video ? "Lưu cho video #2" : "Lưu cho cả dự án";
+    $("#foot-hint").textContent = video ? "Lưu vào timeline mới nhất của video #2. Bản đã render không đổi." : "Áp cho mọi video đang theo dự án và video thêm sau.";
+    if (!video && $(".tab[aria-selected=true]").dataset.tab === "preview") showTab("inputs");
+  }
+  $$("#mk-scope button").forEach((b) => b.addEventListener("click", () => setScope(b.dataset.scope)));
+  $$(".nav a").forEach((a) => a.addEventListener("click", () => { if (a.dataset.scope === "project" || a.dataset.scope === "video") setScope(a.dataset.scope); }));
+
+  // phong cách: theo dự án / riêng video
+  $$("#style-seg button").forEach((b) => b.addEventListener("click", () => {
+    const own = b.dataset.own === "1";
+    $$("#style-seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    const box = $("#style-scope-video");
+    box.classList.toggle("own", own);
+    box.querySelector(".grow").innerHTML = own ? "<b>Video #2 dùng phong cách riêng.</b> Phong cách dự án không áp cho video này." : "<b>Video #2 đang theo phong cách dự án.</b> Đổi ở đây sẽ chỉ áp cho video này.";
+    $("#look-src").textContent = own ? "Riêng video #2" : "Từ: phong cách dự án";
+    $("#look-src").className = own ? "badge wait" : "badge run";
+  }));
+  $$("#looks .lk").forEach((l) => l.addEventListener("click", () => {
+    $$("#looks .lk").forEach((x) => x.classList.toggle("on", x === l));
+    $("#pic").style.filter = l.querySelector("i").style.filter || "none";
+  }));
+  $$("#sw-text .sw").forEach((s) => s.addEventListener("click", () => {
+    $$("#sw-text .sw").forEach((x) => x.classList.toggle("on", x === s));
+    $("#words").style.color = s.dataset.c;
+  }));
+  $("#pic").style.filter = "contrast(1.04) saturate(1.1)";
+
+  // các seg nhỏ khác chỉ đổi trạng thái chọn
+  $$(".seg").forEach((g) => { if (g.id === "style-seg") return; $$("button", g).forEach((b) => b.addEventListener("click", () => $$("button", g).forEach((x) => x.setAttribute("aria-pressed", String(x === b))))); });
+
+  // menu thả xuống
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-dd]");
+    $$(".dd.open").forEach((d) => { if (!t || d !== t.parentElement) d.classList.remove("open"); });
+    if (t) t.parentElement.classList.toggle("open");
+  });
+
+  // lớp phủ
+  function open(id) {
+    $$(".drawer, .modal").forEach((x) => x.classList.remove("show"));
+    $("#scrim").classList.add("show");
+    $("#ov-" + id).classList.add("show");
+  }
+  function close() { $("#scrim").classList.remove("show"); $$(".drawer, .modal").forEach((x) => x.classList.remove("show")); }
+  document.addEventListener("click", (e) => {
+    const o = e.target.closest("[data-open]");
+    if (o) { e.stopPropagation(); open(o.dataset.open); return; }
+    if (e.target.closest("[data-close]") || e.target.id === "scrim") close();
+  });
+  $$(".card").forEach((c) => c.addEventListener("click", () => {
+    if (c.classList.contains("in")) return;
+    c.classList.toggle("sel");
+    c.querySelector(".ck").innerHTML = c.classList.contains("sel") ? '<i data-lucide="check"></i>' : "";
+    lucide.createIcons();
+  }));
+  $$(".vrow").forEach((r) => r.addEventListener("click", () => {
+    if (r.closest("#ov-applyall")) return;
+    r.classList.toggle("on");
+    const box = r.querySelector(".cbx");
+    if (!box.style.borderStyle) { box.innerHTML = r.classList.contains("on") ? '<i data-lucide="check"></i>' : ""; lucide.createIcons(); }
+  }));
+  $$("#use-opts .opt").forEach((o) => o.addEventListener("click", () => {
+    $$("#use-opts .opt").forEach((x) => x.classList.toggle("on", x === o));
+    $("#vlist-up").style.display = o.dataset.use === "footage" ? "" : "none";
+    $("#vlist-up").previousElementSibling.style.display = o.dataset.use === "footage" ? "" : "none";
+  }));
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+</script>
+</body>
+</html>

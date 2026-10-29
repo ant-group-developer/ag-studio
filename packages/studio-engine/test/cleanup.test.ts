@@ -106,7 +106,7 @@ describe("the cleanup sweep", () => {
     aged(dir, DAYS(1));
     await logAudit(s.db, { at: DAYS(91).toISOString(), actorKind: "user", kind: "http", action: "old", outcome: "ok" });
     await logAudit(s.db, { at: DAYS(89).toISOString(), actorKind: "user", kind: "http", action: "kept", outcome: "ok" });
-    expect(await sweepStudioData({ db: s.db, bucket: s.bucket, dataRoot }, { now: NOW })).toEqual({ voiceLines: 0, audioObjects: 0, rawUploads: 0, scratch: 1, trash: 0, auditRows: 1 });
+    expect(await sweepStudioData({ db: s.db, bucket: s.bucket, dataRoot }, { now: NOW })).toEqual({ voiceLines: 0, audioObjects: 0, mediaObjects: 0, rawUploads: 0, scratch: 1, trash: 0, auditRows: 1 });
     expect((await listAudit(s.db, {})).items.map((r) => r.action)).toEqual(["kept"]);
   });
 });

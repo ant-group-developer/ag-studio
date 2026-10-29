@@ -162,25 +162,40 @@ export async function prepareUpload(d: UploadPrepDeps, job: JobRecord, ctx: JobC
 
 async function preparePhoto(d: UploadPrepDeps, job: JobRecord, ctx: JobContext, src: SourceRecord, meta: UploadMeta, out: string): Promise<UploadPrep> {
   if (!d.ffmpeg || !d.ffprobe) throw new Error("worker này không có ffmpeg nên chưa làm được clip từ ảnh");
-  await ctx.report({ phase: "Đang tải ảnh", progress: 0.05 });
-  const photo = join(ctx.tempDir, `photo${extname(meta.key)}`);
-  await d.bucket.getFile(meta.key, photo);
-  const facts = await probeMedia(d.ffprobe, photo);
-  if (!facts?.width || !facts.height) throw new Error("không đọc được ảnh này");
-  await ctx.checkpoint();
-  await ctx.report({ phase: "Đang làm clip từ ảnh", progress: 0.3 });
   const clip = join(ctx.tempDir, "clip.mp4");
-  const r = await runTool(d.ffmpeg, photoClipArgs(photo, clip, { width: facts.width, height: facts.height }), { timeoutMs: IMAGE_CLIP_TIMEOUT_MS, signal: ctx.signal });
-  if (r.timedOut || r.code !== 0) throw new Error(`không làm được clip từ ảnh: ${r.stderr.slice(-300)}`);
+  if (meta.clip_key && await d.bucket.exists(meta.clip_key)) {
+    // another project of the library item made it already
+    await ctx.report({ phase: "Đang tải clip đã làm từ ảnh", progress: 0.3 });
+    await d.bucket.getFile(meta.clip_key, clip);
+  } else {
+    await ctx.report({ phase: "Đang tải ảnh", progress: 0.05 });
+    const photo = join(ctx.tempDir, `photo${extname(meta.key)}`);
+    await d.bucket.getFile(meta.key, photo);
+    const facts = await probeMedia(d.ffprobe, photo);
+    if (!facts?.width || !facts.height) throw new Error("không đọc được ảnh này");
+    await ctx.checkpoint();
+    await ctx.report({ phase: "Đang làm clip từ ảnh", progress: 0.3 });
+    const r = await runTool(d.ffmpeg, photoClipArgs(photo, clip, { width: facts.width, height: facts.height }), { timeoutMs: IMAGE_CLIP_TIMEOUT_MS, signal: ctx.signal });
+    if (r.timedOut || r.code !== 0) throw new Error(`không làm được clip từ ảnh: ${r.stderr.slice(-300)}`);
+    await ctx.checkpoint();
+    await ctx.report({ phase: "Đang lưu clip", progress: 0.7 });
+    // an item of someone's library keeps its clip beside it, for every project; older uploads beside theirs
+    const clipKey = src.media_id ? `${meta.key.slice(0, meta.key.length - extname(meta.key).length)}.clip.mp4` : `${footagePrefix(job.project_id)}${src.ref}.mp4`;
+    await d.bucket.putFile(clipKey, clip, "video/mp4");
+    const mediaId = src.media_id;
+    if (mediaId) {
+      await d.db.tx(async () => {
+        await d.db.run("UPDATE media_items SET clip_key = ? WHERE id = ?", [clipKey, mediaId]);
+        await d.db.run("UPDATE project_sources SET meta = meta || ?::jsonb WHERE media_id = ?", [JSON.stringify({ clip_key: clipKey }), mediaId]);
+      });
+    } else {
+      await d.db.run(
+        "UPDATE project_sources SET meta = ? WHERE project_id = ? AND kind = 'upload_asset' AND ref = ?",
+        [JSON.stringify({ ...meta, clip_key: clipKey }), job.project_id, src.ref],
+      );
+    }
+  }
   const made = await probeMedia(d.ffprobe, clip);
-  await ctx.checkpoint();
-  await ctx.report({ phase: "Đang lưu clip", progress: 0.7 });
-  const clipKey = `${footagePrefix(job.project_id)}${src.ref}.mp4`;
-  await d.bucket.putFile(clipKey, clip, "video/mp4");
-  await d.db.run(
-    "UPDATE project_sources SET meta = ? WHERE project_id = ? AND kind = 'upload_asset' AND ref = ?",
-    [JSON.stringify({ ...meta, clip_key: clipKey }), job.project_id, src.ref],
-  );
   const seconds = made?.duration_s ?? IMAGE_CLIP_SECONDS;
   // the shot's middle frame, from the clip (ffmpeg seeking into a still image writes nothing)
   const frame = "frames/001.jpg";
