@@ -19,6 +19,7 @@ import type { ProjectFootageService } from './project-footage.service';
 import { ProjectsController } from './projects.controller';
 import { VideosController } from './videos.controller';
 import { WorkspaceService } from './workspace.service';
+import { MediaLibraryService } from './media-library.service';
 
 const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as unknown as Request;
 const OWNER = 'auth0|owner';
@@ -78,7 +79,9 @@ describe('inputs (real database)', () => {
     } as unknown as ProjectFootageService;
     projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
-    inputs = new InputsController(engine, ws, footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService);
+    inputs = new InputsController(engine, ws, footage, ({ current: () => 'Kho Footage' }) as unknown as SiteNameService, new MediaLibraryService(engine));
+    // audio and video go to the bucket (the person's media library); a test that looks at the objects puts its own
+    Object.assign(s.engine, { bucket: new MemoryBucket() });
     await insertTeam(s.db, 'team-1', OWNER);
     await s.engine.db.run("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ('team-1', ?, 'editor', ?)", [EDITOR, new Date().toISOString()]);
   });
@@ -207,8 +210,10 @@ describe('inputs (real database)', () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const tmp = (name: string, body: string, size = body.length) => { const path = join(mkdtempSync(join(tmpdir(), 'up-')), name); writeFileSync(path, body); return { path, originalname: name, size }; };
     const ref = await inputs.upload(p.id, { reference: '1' }, tmp('Kênh mẫu.mp4', 'video'), req(EDITOR));
-    expect(ref.source).toMatchObject({ kind: 'upload', ref: 'context/references/Kênh mẫu.mp4', mediaType: 'video', meta: { reference: true } });
-    expect(existsSync(join(root, p.id, 'context', 'references', 'Kênh mẫu.mp4'))).toBe(true);
+    expect(ref.source).toMatchObject({ kind: 'upload', ref: 'context/references/Kênh mẫu.mp4', mediaType: 'video', meta: { reference: true, bytes: 5 } });
+    expect(ref.source.mediaId).toEqual(expect.any(String));
+    // the person's media library holds it, the server's disk does not
+    expect(existsSync(join(root, p.id, 'context', 'references', 'Kênh mẫu.mp4'))).toBe(false);
     // 80 MB: too big for a document, fine for a reference video
     expect((await inputs.upload(p.id, { reference: 'true' }, tmp('b.mov', 'x', 80 * 1024 * 1024), req(EDITOR))).source.ref).toBe('context/references/b.mov');
     expect(await inputs.upload(p.id, {}, tmp('big.pdf', 'x', 80 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
@@ -220,7 +225,8 @@ describe('inputs (real database)', () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const tmp = (name: string, size: number) => { const path = join(mkdtempSync(join(tmpdir(), 'up-')), name); writeFileSync(path, 'x'); return { path, originalname: name, size }; };
     const music = await inputs.upload(p.id, {}, tmp('Nhạc nền.MP3', 80 * 1024 * 1024), req(EDITOR));
-    expect(music.source).toMatchObject({ ref: 'context/audio/Nhạc nền.MP3', mediaType: 'audio' });
+    expect(music.source).toMatchObject({ ref: 'context/audio/Nhạc nền.MP3', mediaType: 'audio', mediaId: expect.any(String) });
+    expect(existsSync(join(root, p.id, 'context', 'audio', 'Nhạc nền.MP3'))).toBe(false);
     expect(await inputs.upload(p.id, {}, tmp('dai.wav', 301 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
     expect(await inputs.upload(p.id, {}, tmp('anh.png', 60 * 1024 * 1024), req(EDITOR)).catch(code)).toBe('file_too_large');
   });
@@ -229,22 +235,32 @@ describe('inputs (real database)', () => {
     const p = await projects.create('team-1', { name: 'A' }, req(OWNER));
     const bucket = new MemoryBucket();
     Object.assign(s.engine, { bucket });
-    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'a.docx', size: 10 }).catch(code)).toBe('docx_not_supported');
-    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'dai.wav', size: 301 * 1024 * 1024 }).catch(code)).toBe('file_too_large');
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'a.docx', size: 10 }, req(EDITOR)).catch(code)).toBe('docx_not_supported');
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'dai.wav', size: 301 * 1024 * 1024 }, req(EDITOR)).catch(code)).toBe('file_too_large');
     // prod 23/10: a 10-minute WAV track, refused at the old 100 MB
-    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'Pale Afternoon.wav', size: 113_909_824, contentType: 'audio/wav' })).toMatchObject({ key: expect.any(String) });
-    expect(await inputs.signUpload(p.id, { purpose: 'reference', name: 'notes.md', size: 10 }).catch(code)).toBe('not_video');
-    const link = await inputs.signUpload(p.id, { purpose: 'source', name: 'Nhạc nền.mp3', size: 3, contentType: 'audio/mpeg' });
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'Pale Afternoon.wav', size: 113_909_824, contentType: 'audio/wav' }, req(EDITOR))).toMatchObject({ key: expect.any(String) });
+    expect(await inputs.signUpload(p.id, { purpose: 'reference', name: 'notes.md', size: 10 }, req(EDITOR)).catch(code)).toBe('not_video');
+    const link = await inputs.signUpload(p.id, { purpose: 'source', name: 'Nhạc nền.mp3', size: 3, contentType: 'audio/mpeg' }, req(EDITOR));
     expect(link).toMatchObject({ contentType: 'audio/mpeg', url: `memory://${link.key}?put=audio%2Fmpeg` });
-    expect(link.key.startsWith(`uploads/${p.id}/`)).toBe(true);
+    // audio goes into the person's media library, and stays there
+    expect(link.key).toMatch(/^library\/studio\/users\/auth0_editor-[0-9a-f]{10}\/media\/[0-9a-f-]{36}\.mp3$/);
     await bucket.put(link.key, Buffer.from('mp3'));
     const up = await inputs.upload(p.id, { uploadKey: link.key, name: 'Nhạc nền.mp3', videoId: undefined }, undefined, req(EDITOR));
-    expect(up.source).toMatchObject({ ref: 'context/audio/Nhạc nền.mp3', mediaType: 'audio', meta: { bytes: 3 } });
-    expect(readFileSync(join(root, p.id, 'context', 'audio', 'Nhạc nền.mp3'), 'utf8')).toBe('mp3');
-    expect(bucket.objects.has(link.key)).toBe(false);
+    expect(up.source).toMatchObject({ ref: 'context/audio/Nhạc nền.mp3', mediaType: 'audio', meta: { bytes: 3, key: link.key } });
+    expect(existsSync(join(root, p.id, 'context', 'audio', 'Nhạc nền.mp3'))).toBe(false);
+    expect(bucket.objects.has(link.key)).toBe(true);
+    // someone else's library key is not taken
+    expect(await inputs.upload(p.id, { uploadKey: link.key, name: 'x.mp3' }, undefined, req(OWNER)).catch(code)).toBe('upload_key');
+    // a document still goes through the raw uploads, onto the disk
+    const doc = await inputs.signUpload(p.id, { purpose: 'source', name: 'Kịch bản.md', size: 3 }, req(EDITOR));
+    expect(doc.key.startsWith(`uploads/${p.id}/`)).toBe(true);
+    await bucket.put(doc.key, Buffer.from('# A'));
+    expect((await inputs.upload(p.id, { uploadKey: doc.key, name: 'Kịch bản.md' }, undefined, req(EDITOR))).source.ref).toBe('context/uploads/Kịch bản.md');
+    expect(readFileSync(join(root, p.id, 'context', 'uploads', 'Kịch bản.md'), 'utf8')).toBe('# A');
+    expect(bucket.objects.has(doc.key)).toBe(false);
 
     // a reference video, by JSON
-    const ref = await inputs.signUpload(p.id, { purpose: 'reference', name: 'Mẫu.mp4', size: 5 });
+    const ref = await inputs.signUpload(p.id, { purpose: 'reference', name: 'Mẫu.mp4', size: 5 }, req(EDITOR));
     await bucket.put(ref.key, Buffer.from('video'));
     expect((await inputs.upload(p.id, { uploadKey: ref.key, name: 'Mẫu.mp4', reference: true }, undefined, req(EDITOR))).source.ref).toBe('context/references/Mẫu.mp4');
 
@@ -254,12 +270,12 @@ describe('inputs (real database)', () => {
     expect(await inputs.upload(p.id, { uploadKey: other, name: 'a.md' }, undefined, req(EDITOR)).catch(code)).toBe('upload_key');
     expect(bucket.objects.has(other)).toBe(true);
     expect(await inputs.upload(p.id, { uploadKey: 'library/music/a.m4a', name: 'a.md' }, undefined, req(EDITOR)).catch(code)).toBe('upload_key');
-    const gone = await inputs.signUpload(p.id, { purpose: 'source', name: 'a.md', size: 1 });
+    const gone = await inputs.signUpload(p.id, { purpose: 'source', name: 'a.md', size: 1 }, req(EDITOR));
     expect(await inputs.upload(p.id, { uploadKey: gone.key, name: 'a.md' }, undefined, req(EDITOR)).catch(code)).toBe('upload_missing');
     expect(await inputs.upload(p.id, { uploadKey: gone.key }, undefined, req(EDITOR)).catch(code)).toBe('name_missing');
 
     // larger on the bucket than the browser said: refused by its real size, and dropped
-    const liar = await inputs.signUpload(p.id, { purpose: 'source', name: 'b.pdf', size: 1 });
+    const liar = await inputs.signUpload(p.id, { purpose: 'source', name: 'b.pdf', size: 1 }, req(EDITOR));
     await bucket.put(liar.key, Buffer.alloc(51 * 1024 * 1024));
     expect(await inputs.upload(p.id, { uploadKey: liar.key, name: 'b.pdf' }, undefined, req(EDITOR)).catch(code)).toBe('file_too_large');
     expect(bucket.objects.has(liar.key)).toBe(false);
@@ -270,25 +286,27 @@ describe('inputs (real database)', () => {
     const v = await videos.create(p.id, { title: 'Tràng An' }, req(OWNER));
     const bucket = new MemoryBucket();
     Object.assign(s.engine, { bucket });
-    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'ghi chú.pdf', size: 10 }).catch(code)).toBe('file_type');
-    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'dai.mov', size: 5 * 1024 ** 3 }).catch(code)).toBe('file_too_large');
-    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'anh.png', size: 60 * 1024 ** 2 }).catch(code)).toBe('file_too_large');
+    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'ghi chú.pdf', size: 10 }, req(EDITOR)).catch(code)).toBe('file_type');
+    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'dai.mov', size: 5 * 1024 ** 3 }, req(EDITOR)).catch(code)).toBe('file_too_large');
+    expect(await inputs.signUpload(p.id, { purpose: 'footage', name: 'anh.png', size: 60 * 1024 ** 2 }, req(EDITOR)).catch(code)).toBe('file_too_large');
     // no ag-go project needed: the file is Studio's
-    const link = await inputs.signUpload(p.id, { purpose: 'footage', name: 'Hang Múa.MOV', size: 5, contentType: 'video/quicktime' });
-    expect(link.key).toMatch(new RegExp(`^library/studio/projects/${p.id}/footage/[0-9a-f-]{36}\.mov$`));
+    const link = await inputs.signUpload(p.id, { purpose: 'footage', name: 'Hang Múa.MOV', size: 5, contentType: 'video/quicktime' }, req(EDITOR));
+    expect(link.key).toMatch(/^library\/studio\/users\/auth0_editor-[0-9a-f]{10}\/media\/[0-9a-f-]{36}\.mov$/);
     await bucket.put(link.key, Buffer.from('movie'));
     const r = await inputs.addFootage(p.id, { uploadKey: link.key, name: 'Hang Múa.MOV', videoId: v.id }, req(EDITOR));
     expect(r.source).toMatchObject({ kind: 'upload_asset', mediaType: 'video', label: 'Hang Múa.MOV', videoId: v.id, meta: { key: link.key, bytes: 5 } });
+    expect(r.source.mediaId).toBe(r.source.ref);
     expect(r.prepare).toMatchObject({ state: 'queued', job_id: expect.any(String) });
     // the file stays where it is: renders read it from there
     expect(bucket.objects.has(link.key)).toBe(true);
     const index = JSON.parse(readFileSync(join(root, p.id, 'videos', v.id, 'sources', 'index.json'), 'utf8'));
     expect(index.sources).toMatchObject([{ asset_id: r.source.ref, name: 'Hang Múa.MOV', status: 'missing' }]);
     // a key of another project, or one never put
-    expect(await inputs.addFootage(p.id, { uploadKey: link.key.replace(p.id, 'other'), name: 'x.mov', videoId: v.id }, req(EDITOR)).catch(code)).toBe('upload_key');
-    const never = await inputs.signUpload(p.id, { purpose: 'footage', name: 'x.jpg', size: 1 });
+    expect(await inputs.addFootage(p.id, { uploadKey: link.key, name: 'x.mov', videoId: v.id }, req(OWNER)).catch(code)).toBe('upload_key');
+    expect(await inputs.addFootage(p.id, { uploadKey: `library/studio/projects/other/footage/${r.source.ref}.mov`, name: 'x.mov', videoId: v.id }, req(EDITOR)).catch(code)).toBe('upload_key');
+    const never = await inputs.signUpload(p.id, { purpose: 'footage', name: 'x.jpg', size: 1 }, req(EDITOR));
     expect(await inputs.addFootage(p.id, { uploadKey: never.key, name: 'x.jpg', videoId: v.id }, req(EDITOR)).catch(code)).toBe('upload_missing');
     // a video still goes to the Footage section, not to context/
-    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'a.mp4', size: 10 }).catch(code)).toBe('video_from_ag_go');
+    expect(await inputs.signUpload(p.id, { purpose: 'source', name: 'a.mp4', size: 10 }, req(EDITOR)).catch(code)).toBe('video_from_ag_go');
   });
 });

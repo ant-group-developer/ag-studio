@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { CrawlRequestSchema, estimateCrawlUnits, isLargeCrawl, type CrawlRequestInput, type StudioCrawl } from "@harness/contracts";
 import { createJob, getJob } from "../workspace/jobs-db.js";
-import { referenceFile, STYLE_WATCH_MAX } from "../workspace/style-watch.js";
+import { referenceFile, referenceMedia, STYLE_WATCH_MAX } from "../workspace/style-watch.js";
 import { queueResearch } from "../workspace/research.js";
 import type { AgentTool, AgentToolContext, ToolAnswer } from "./tools.js";
 
@@ -99,11 +99,12 @@ export const RESEARCH_TOOLS: AgentTool[] = [
   tool({
     name: "style_from_files",
     description: [
-      "Học phong cách dựng từ video mẫu người dùng đã tải lên dự án (file video trong context/, thường context/references/; tối đa 5):",
+      "Học phong cách dựng từ video mẫu người dùng đã tải lên dự án (file video trong context/, thường context/references/, kể cả",
+      "file in_library nằm trên kho R2: Studio tự tải về máy làm việc; tối đa 5):",
       "Studio đo nhịp cắt (độ dài shot, số lần cắt/phút, mở đầu) và ghép khung hình thành tờ ghép trong research/style-<ngày>-<n>/",
       "(README.md, watch.json, *-sheet-*.jpg), không đổi hay xoá file của người dùng. Chạy nền, không cần thẻ xác nhận;",
       "Studio báo vào luồng khi xong, rồi bạn đọc README và tờ ghép để viết channel/style.md.",
-      "Dùng khi người dùng có video mẫu, nhất là khi YouTube đang chặn tải từ máy chủ Studio. Xem file đã tải lên bằng inputs_list.",
+      "Dùng khi người dùng có video mẫu, nhất là khi YouTube đang chặn tải từ máy chủ Studio. Lấy `path` từ inputs_list (reference_video).",
     ].join(" "),
     input: z.object({
       paths: z.array(z.string().min(1).max(300)).min(1).max(STYLE_WATCH_MAX),
@@ -111,7 +112,8 @@ export const RESEARCH_TOOLS: AgentTool[] = [
     }).strict(),
     role: "editor",
     run: async (ctx, a) => {
-      const files = [...new Set(a.paths.map((p) => referenceFile(ctx.workspaceDir, p).path))];
+      const onBucket = await referenceMedia(ctx.db, ctx.project.id);
+      const files = [...new Set(a.paths.map((p) => referenceFile(ctx.workspaceDir, p, onBucket).path))];
       const job = await createJob(ctx.db, {
         projectId: ctx.project.id, threadId: ctx.thread.id, kind: "style_watch", title: `Học phong cách từ ${files.length} video tải lên`,
         request: { files, purpose: a.purpose }, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,

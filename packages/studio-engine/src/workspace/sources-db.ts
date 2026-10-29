@@ -24,11 +24,13 @@ export const FOOTAGE_KIND_SQL = "kind IN ('ag_go_asset', 'upload_asset')";
 export interface SourceRecord {
   id: string; project_id: string; video_id: string | null; kind: SourceKind; ref: string; media_type: SourceMediaType; label: string;
   meta: Record<string, unknown>; added_by: string; added_at: string;
+  /** The item of someone's media library it uses (`media-library.ts`); null for ag-go and files kept in the workspace. */
+  media_id?: string | null;
 }
 
 export interface SourceView {
   id: string; projectId: string; videoId: string | null; kind: SourceKind; ref: string; mediaType: SourceMediaType; label: string;
-  meta: Record<string, unknown>; addedBy: string; addedAt: string;
+  meta: Record<string, unknown>; addedBy: string; addedAt: string; mediaId: string | null;
 }
 
 /** A source's meta as an object (anything else stored there reads as empty). */
@@ -38,7 +40,7 @@ export const sourceMeta = (s: Pick<SourceRecord, "meta">): Record<string, unknow
 export function sourceView(s: SourceRecord): SourceView {
   return {
     id: s.id, projectId: s.project_id, videoId: s.video_id, kind: s.kind, ref: s.ref, mediaType: s.media_type, label: s.label, meta: sourceMeta(s),
-    addedBy: s.added_by, addedAt: s.added_at,
+    addedBy: s.added_by, addedAt: s.added_at, mediaId: s.media_id ?? null,
   };
 }
 
@@ -48,14 +50,15 @@ export function sourceView(s: SourceRecord): SourceView {
  */
 export async function addSource(db: StudioDb, p: {
   projectId: string; videoId?: string | null; kind: SourceKind; ref: string; mediaType: SourceMediaType; label: string; meta?: Record<string, unknown>; addedBy: string;
+  mediaId?: string | null;
 }, now = new Date().toISOString()): Promise<SourceRecord> {
   const ref = p.ref.trim();
   if (!ref) throw new StudioRunError("invalid", "nguồn thiếu ref");
   return db.tx(async () => {
     const { changes } = await db.run(
-      `INSERT INTO project_sources (id, project_id, video_id, kind, ref, media_type, label, meta, added_by, added_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-      [randomUUID(), p.projectId, p.videoId ?? null, p.kind, ref, p.mediaType, p.label.trim() || ref, JSON.stringify(p.meta ?? {}), p.addedBy, now],
+      `INSERT INTO project_sources (id, project_id, video_id, kind, ref, media_type, label, meta, added_by, added_at, media_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      [randomUUID(), p.projectId, p.videoId ?? null, p.kind, ref, p.mediaType, p.label.trim() || ref, JSON.stringify(p.meta ?? {}), p.addedBy, now, p.mediaId ?? null],
     );
     const s = (await db.get<SourceRecord>(
       "SELECT * FROM project_sources WHERE project_id = ? AND COALESCE(video_id, '') = ? AND kind = ? AND ref = ?",

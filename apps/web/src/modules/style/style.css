@@ -1,5 +1,24 @@
 /* The Style tab: the video's words and picture, the channel's edit style */
-.ws-style { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; padding: 12px 14px 20px; }
+/* a column of section boxes (.ws-secs, plan 2026-10-29) */
+.ws-style { padding-bottom: 20px; }
+.ws-style__card .ws-sec__body { gap: 4px; padding: 10px 12px 12px; }
+.ws-style__card .ws-style__frame--big { margin-bottom: 6px; }
+.ws-style__card .ws-style__head { margin-top: 8px; }
+.ws-style__card .ws-sub { margin: 0; }
+.ws-style__note { margin: 0 0 4px; }
+/* which look a video follows (the project's or its own), or how far the project's reaches */
+.ws-style__scope { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--ws-accent-line); background: var(--ws-accent-soft); font-size: 13px; color: var(--ws-text); }
+.ws-style__scope > svg { flex-shrink: 0; color: var(--ws-accent); }
+.ws-style__scope--own { border-color: #f1d79b; background: #fff8e6; }
+.ws-style__scope--own > svg { color: var(--ws-wait-fg); }
+.ws-style__scopetext { flex: 1; min-width: 0; }
+.ws-style__applylist { list-style: none; margin: 0 0 10px; padding: 0; border: 1px solid var(--ws-line); border-radius: 8px; }
+.ws-style__applylist li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 13px; }
+.ws-style__applylist li + li { border-top: 1px solid var(--ws-line); }
+.ws-style__applylist li > svg { flex-shrink: 0; color: var(--ws-ok-fg); }
+.ws-style__applyown > svg { color: var(--ws-wait-fg) !important; }
+.ws-style__applyown .ws-hint { color: var(--ws-wait-fg); }
+.ws-style__applyname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-style__section { display: flex; flex-direction: column; gap: 8px; }
 .ws-style__head { display: flex; align-items: center; gap: 8px; }
 .ws-style__h { margin: 0; font-size: 13px; font-weight: 600; color: var(--ws-text); }
@@ -24,4 +43,4 @@
 .ws-style__pair { display: inline-flex; align-items: center; gap: 8px; }
 .ws-style__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .ws-style__from { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; background: var(--ws-chip); color: var(--ws-faint); font-weight: 400; }
-.ws-style__from--video { background: var(--ws-accent-soft); color: var(--ws-accent); }
+.ws-style__from--video, .ws-style__from--project { background: var(--ws-accent-soft); color: var(--ws-accent); }

@@ -23,6 +23,7 @@ import { measureShots, mergeCuts, pickFrameTimes } from "@harness/core";
 import { detectCuts, grabFrame, probeMedia, tileSheet } from "../cut-ffmpeg.js";
 import { StudioRunError } from "../errors.js";
 import { clearYoutubeBlocked, noteYoutubeBlocked, referenceRoute, type YoutubeBlockWhere } from "../settings.js";
+import type { StudioBucket } from "../bucket.js";
 import type { StudioDb } from "../studio-db.js";
 import { YT_FAILURE_REASON, ytFailureOf, type YtDlp, type YtFailure } from "../yt-dlp.js";
 import { normalizeRelPath, resolveInside, writeWorkspaceFile } from "./files.js";
@@ -57,7 +58,7 @@ const REASON_MAX = 200;
 const YOUTUBE_ID = /^[\w-]{11}$/;
 
 /** What to offer when YouTube will not give a reference video. */
-export const STYLE_INSTEAD = "Cách khác: tải video mẫu lên tab Nguồn (mục Video tham khảo) rồi nhờ agent học phong cách từ file đó, hoặc tả phong cách dựng bằng lời.";
+export const STYLE_INSTEAD = "Cách khác: tải video mẫu lên tab Phong cách (mục Video tham khảo) rồi nhờ agent học phong cách từ file đó, hoặc tả phong cách dựng bằng lời.";
 
 /** Said to the thread when YouTube blocks the server and nothing could be watched. */
 export const YOUTUBE_BLOCKED_MESSAGE = `${YT_FAILURE_REASON.youtube_blocked}, nên chưa tải được video mẫu nào. `
@@ -67,19 +68,33 @@ export const YOUTUBE_BLOCKED_MESSAGE = `${YT_FAILURE_REASON.youtube_blocked}, n�
 export const FARM_BLOCKED_MESSAGE = `YouTube đang chặn tải từ các máy farm (đòi đăng nhập để xác nhận không phải bot), nên chưa tải được video mẫu nào. `
   + `Studio không dùng cookie hay đăng nhập để lách. ${STYLE_INSTEAD}`;
 
+/** The project's reference videos kept on the bucket (items of someone's media library), by the path they are named by. */
+export async function referenceMedia(db: StudioDb, projectId: string): Promise<Map<string, { key: string; bytes: number }>> {
+  const rows = await db.all<{ ref: string; key: string; bytes: string | null }>(
+    "SELECT ref, meta->>'key' AS key, meta->>'bytes' AS bytes FROM project_sources WHERE project_id = ? AND kind = 'upload' AND media_type = 'video' AND meta->>'key' IS NOT NULL",
+    [projectId],
+  );
+  return new Map(rows.map((r) => [r.ref, { key: r.key, bytes: Number(r.bytes) || 0 }]));
+}
+
 /**
- * A reference video uploaded to the project: a file under `context/` with a video extension. Throws a
- * `StudioRunError` (`code` in details: `not_context`, `not_video`, `no_file`) saying what is wrong.
+ * A reference video uploaded to the project: a file under `context/` with a video extension, in the workspace (`abs`)
+ * or on the bucket (`key`, one of `onBucket`). Throws a `StudioRunError` (`code` in details: `not_context`,
+ * `not_video`, `no_file`) saying what is wrong.
  */
-export function referenceFile(workspaceDir: string, raw: string): { path: string; abs: string; bytes: number } {
+export function referenceFile(
+  workspaceDir: string, raw: string, onBucket: Map<string, { key: string; bytes: number }> = new Map(),
+): { path: string; abs: string | null; key: string | null; bytes: number } {
   const path = normalizeRelPath(raw);
   if (!path.startsWith("context/")) throw new StudioRunError("invalid", `${path}: video mẫu phải là file người dùng tải lên context/`, { code: "not_context" });
   if (!(REFERENCE_VIDEO_EXTS as readonly string[]).includes(extname(path).toLowerCase())) {
     throw new StudioRunError("invalid", `${path}: không phải video (${REFERENCE_VIDEO_EXTS.join(", ")})`, { code: "not_video" });
   }
+  const stored = onBucket.get(path);
+  if (stored) return { path, abs: null, key: stored.key, bytes: stored.bytes };
   const { abs } = resolveInside(workspaceDir, path);
   if (!existsSync(abs) || !statSync(abs).isFile()) throw new StudioRunError("invalid", `${path}: không có file này`, { code: "no_file" });
-  return { path, abs, bytes: statSync(abs).size };
+  return { path, abs, key: null, bytes: statSync(abs).size };
 }
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
@@ -143,6 +158,8 @@ export interface StyleWatchDeps {
   ytdlp?: YtDlp | null;
   /** The farm's machines that fetch YouTube videos (`studio.reference_fetch`); absent: only Studio's own yt-dlp. */
   farm?: ReferenceFarm | null;
+  /** Studio's bucket, where reference videos of someone's media library are; absent: only files of the workspace. */
+  bucket?: StudioBucket | null;
 }
 
 export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
@@ -165,15 +182,22 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
     };
     const step = (k: number) => ({ n: `${k + 1}/${total}`, progress: (part: number) => 0.05 + 0.9 * ((k + part) / total) });
 
-    // the project's own videos first: no network, never deleted
+    // the project's own videos first (a library item brought down into the scratch folder): never changed or deleted
+    const onBucket = files.length ? await referenceMedia(d.db, job.project_id) : new Map<string, { key: string; bytes: number }>();
     for (const [i, raw] of files.entries()) {
       await ctx.checkpoint();
       const r = row({ label: `F${i + 1}`, file: raw, title: raw.split("/").pop() ?? raw });
       try {
-        const f = referenceFile(ctx.workspaceDir, raw);
+        const f = referenceFile(ctx.workspaceDir, raw, onBucket);
         r.file = f.path;
         await ctx.report({ phase: `Đang đọc video mẫu ${i + 1}/${total} (tải lên)`, progress: step(i).progress(0) });
-        await measureVideo(d, job.project_id, ctx, { path: f.abs, folder, row: r, all, ...step(i) });
+        let path = f.abs;
+        if (!path) {
+          if (!d.bucket) throw new Error("worker này không nối kho lưu trữ nên chưa đọc được video mẫu trong thư viện");
+          path = join(ctx.tempDir, `F${i + 1}${extname(f.path).toLowerCase()}`);
+          await d.bucket.getFile(f.key!, path);
+        }
+        await measureVideo(d, job.project_id, ctx, { path, folder, row: r, all, ...step(i) });
       } catch (e) {
         if (await ctx.stopRequested()) throw e;
         r.code = e instanceof StudioRunError ? String(e.details.code ?? "other") : "other";

@@ -1,7 +1,8 @@
 /**
  * A video's words and picture (plan 2026-10-28 P3): the font and colours of the text on screen (`text_look`), the colour
- * of the picture (`look`) and colour matching. A person picks them in the video's Style tab; what they pick wins over
- * the edit plan's, which wins over the channel's branding. Picking one puts it on the latest timeline at once.
+ * of the picture (`look`) and colour matching. A person picks them in the Style tab, for one video or for the whole
+ * project (plan 2026-10-29); the video's pick wins over the project's, which wins over the edit plan's, which wins over
+ * the channel's branding. Picking one puts it on the latest timeline at once.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,9 +11,11 @@ import { TEXT_FONT_INFO, TEXT_FONTS, TEXT_LOOK_SIZES, TextLookSchema, VIDEO_LOOK
 import { StudioRunError } from "../errors.js";
 import type { StudioDb } from "../studio-db.js";
 import { brandingOf, editPlanPath, writeTimelineSnapshot } from "./fit.js";
-import { latestVideoRevision, saveVideoRevision, videoOwnLook, type VideoOwnLook } from "./project-db.js";
+import {
+  latestVideoRevision, listVideos, projectOwnLook, requireVideo, saveVideoRevision, setProjectOwnLook, setVideoOwnLook, videoOwnLook, type VideoOwnLook,
+} from "./project-db.js";
 
-export type LookSource = "video" | "plan" | "channel" | "default";
+export type LookSource = "video" | "project" | "plan" | "channel" | "default";
 
 /** What the Style tab offers: the fonts the render machines have (with the scripts each draws), sizes, picture looks. */
 export const LOOK_CHOICES = {
@@ -36,9 +39,10 @@ export function parseOwnLook(raw: unknown): VideoOwnLook {
 
 export interface VideoLookView {
   own: VideoOwnLook;
+  project: VideoOwnLook;
   plan: VideoOwnLook;
   channel: VideoOwnLook;
-  /** What the timeline draws: the video's pick, else the plan's, else the branding's, else Studio's default. */
+  /** What the timeline draws: the video's pick, else the project's, else the plan's, else the branding's, else Studio's default. */
   effective: { text_look: TextLook | null; look: VideoLook; color_match: boolean; from: { text_look: LookSource; look: LookSource; color_match: LookSource } };
 }
 
@@ -57,23 +61,26 @@ export function planLookOf(dir: string, videoId: string): VideoOwnLook {
   };
 }
 
-function pick<T>(own: T | null, plan: T | null, channel: T | null): { value: T | null; from: LookSource } {
+function pick<T>(own: T | null, project: T | null, plan: T | null, channel: T | null): { value: T | null; from: LookSource } {
   if (own !== null) return { value: own, from: "video" };
+  if (project !== null) return { value: project, from: "project" };
   if (plan !== null) return { value: plan, from: "plan" };
   if (channel !== null) return { value: channel, from: "channel" };
   return { value: null, from: "default" };
 }
 
 export async function videoLookView(db: StudioDb, dir: string, videoId: string): Promise<VideoLookView> {
+  const video = await requireVideo(db, videoId);
   const own = await videoOwnLook(db, videoId);
+  const project = await projectOwnLook(db, video.project_id);
   const plan = planLookOf(dir, videoId);
   const b = brandingOf(dir);
   const channel: VideoOwnLook = { text_look: b.textLook, look: b.look, color_match: b.colorMatch };
-  const text = pick(own.text_look, plan.text_look, channel.text_look);
-  const look = pick(own.look, plan.look, channel.look);
-  const match = pick(own.color_match, plan.color_match, channel.color_match);
+  const text = pick(own.text_look, project.text_look, plan.text_look, channel.text_look);
+  const look = pick(own.look, project.look, plan.look, channel.look);
+  const match = pick(own.color_match, project.color_match, plan.color_match, channel.color_match);
   return {
-    own, plan, channel,
+    own, project, plan, channel,
     effective: {
       text_look: text.value, look: look.value ?? "none", color_match: match.value ?? false,
       from: { text_look: text.from, look: look.from, color_match: match.from },
@@ -101,4 +108,45 @@ export async function videoLookToTimeline(db: StudioDb, o: { workspaceDir: strin
   const { revision } = await saveVideoRevision(db, o.videoId, { baseRevision: latest.revision, data: next, authorId: o.authorId, label: "look" });
   await writeTimelineSnapshot(db, o.workspaceDir, o.projectId, o.videoId, o.now);
   return revision;
+}
+
+const NO_LOOK: VideoOwnLook = { text_look: null, look: null, color_match: null };
+
+/** The project's own look (the branding and plans decide what it leaves null) and what it would draw, for its Style tab. */
+export async function projectLookView(db: StudioDb, dir: string, projectId: string): Promise<{
+  own: VideoOwnLook; channel: VideoOwnLook; videos: { id: string; idx: number; title: string; ownLook: boolean }[];
+}> {
+  const b = brandingOf(dir);
+  const videos = await listVideos(db, projectId);
+  const rows = await Promise.all(videos.map(async (v) => ({ id: v.id, idx: v.idx, title: v.title, ownLook: hasLook(await videoOwnLook(db, v.id)) })));
+  return { own: await projectOwnLook(db, projectId), channel: { text_look: b.textLook, look: b.look, color_match: b.colorMatch }, videos: rows };
+}
+
+const hasLook = (l: VideoOwnLook) => l.text_look !== null || l.look !== null || l.color_match !== null;
+
+/**
+ * The project's look set, then put on every video's latest timeline (as `videoLookToTimeline`). With `everyVideo`
+ * ("apply to all videos"), the videos' own picks are cleared first so every video draws it; otherwise a video with
+ * its own pick keeps it. Answers the videos whose own pick was cleared and the revisions written.
+ */
+export async function setProjectLook(db: StudioDb, o: {
+  workspaceDir: string; projectId: string; look: VideoOwnLook; everyVideo?: boolean; authorId: string; now?: string;
+}): Promise<{ cleared: string[]; revisions: { videoId: string; revision: number }[] }> {
+  const now = o.now ?? new Date().toISOString();
+  await setProjectOwnLook(db, o.projectId, o.look, now);
+  const videos = await listVideos(db, o.projectId);
+  const cleared: string[] = [];
+  if (o.everyVideo) {
+    for (const v of videos) {
+      if (!hasLook(await videoOwnLook(db, v.id))) continue;
+      await setVideoOwnLook(db, v.id, NO_LOOK, now);
+      cleared.push(v.id);
+    }
+  }
+  const revisions: { videoId: string; revision: number }[] = [];
+  for (const v of videos) {
+    const revision = await videoLookToTimeline(db, { workspaceDir: o.workspaceDir, projectId: o.projectId, videoId: v.id, authorId: o.authorId, now });
+    if (revision !== null) revisions.push({ videoId: v.id, revision });
+  }
+  return { cleared, revisions };
 }

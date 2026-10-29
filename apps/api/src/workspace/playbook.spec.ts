@@ -18,6 +18,7 @@ import { ProjectsController } from './projects.controller';
 import { ThreadsController } from './threads.controller';
 import { VideosController } from './videos.controller';
 import { WorkspaceService } from './workspace.service';
+import { MediaLibraryService } from './media-library.service';
 
 const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as unknown as Request;
 const OWNER = 'auth0|owner';
@@ -38,7 +39,7 @@ describe('playbook and lessons (real database)', () => {
     const ws = new WorkspaceService({ get: (k: string, d?: unknown) => (k === 'STUDIO_WORKSPACES_ROOT' ? root : d) } as unknown as ConfigService, engine);
     projects = new ProjectsController(engine, ws, NO_DIRECTORY);
     videos = new VideosController(engine, ws);
-    files = new FilesController(engine, ws, new FileLinkService({ get: () => 's'.repeat(32) } as unknown as ConfigService));
+    files = new FilesController(engine, ws, new FileLinkService({ get: () => 's'.repeat(32) } as unknown as ConfigService), new MediaLibraryService(engine));
     playbook = new PlaybookController(engine, ws);
     threads = new ThreadsController(engine);
     await insertTeam(s.db, 'team-1', OWNER);

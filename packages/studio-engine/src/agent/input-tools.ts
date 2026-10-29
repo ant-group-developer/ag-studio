@@ -68,7 +68,7 @@ const slimSource = async (ctx: AgentToolContext, s: SourceRecord) => {
   const v = sourceView(s);
   return {
     id: v.id, kind: v.kind, ref: v.ref, media_type: v.mediaType, label: v.label, video_id: v.videoId,
-    ...(v.kind === "upload" ? { path: v.ref, ...(v.meta.reference ? { reference_video: true } : {}) } : {}),
+    ...(v.kind === "upload" ? { path: v.ref, ...(v.meta.reference ? { reference_video: true } : {}), ...(v.mediaId ? { in_library: true } : {}) } : {}),
     ...(v.kind === "upload_asset" ? { uploaded: v.mediaType === "image" ? "ảnh tải từ máy (thành clip có chuyển động nhẹ)" : "video tải từ máy" } : {}),
     ...(isFootageKind(v.kind) ? await assetState(ctx, v.ref) : {}),
   };
@@ -85,7 +85,7 @@ const jobLine = (j: JobRecord) => {
 export const INPUT_TOOLS: AgentTool[] = [
   tool({
     name: "inputs_list",
-    description: "Đầu vào người dùng đã chọn cho dự án (project {{site}}, video {{site}}, file tải lên trong context/) và cho video của luồng này (hoặc `video_id`): mỗi video {{site}} kèm trạng thái chuẩn bị (ready: đọc inputs/<asset>/README.md; not_prepared: gọi inputs_prepare). File có reference_video là video mẫu để học phong cách dựng (style_from_files), không phải footage.",
+    description: "Đầu vào người dùng đã chọn cho dự án (project {{site}}, video {{site}}, file tải lên trong context/) và cho video của luồng này (hoặc `video_id`): mỗi video {{site}} kèm trạng thái chuẩn bị (ready: đọc inputs/<asset>/README.md; not_prepared: gọi inputs_prepare). File có reference_video là video mẫu để học phong cách dựng (style_from_files), không phải footage. File có in_library nằm trong thư viện của người tải trên kho R2, không có trên đĩa: `path` chỉ là tên, đừng mở bằng Read/Glob; audio thì gán bằng music_set, video mẫu thì đưa `path` cho style_from_files. Footage tải từ máy hay chọn từ thư viện dùng được cho nhiều video.",
     input: z.object({ video_id: z.string().min(1).optional() }).strict(),
     run: async (ctx, a) => {
       const videoId = a.video_id ?? ctx.video?.id;

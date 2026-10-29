@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TimelineV4 } from "@harness/contracts";
 import { studioSourceId } from "@harness/core";
 import {
-  addSource, agentTools, callAgentTool, createProject, createThread, createVideo, latestVideoRevision, listJobs, markAgentTurnRunning,
-  postUserMessage, savePrepared, saveVideoRevision, seedWorkspace, videoOwnMusic, type AgentToolContext, type StudioDb,
+  addMediaItem, addMediaToProject, addSource, agentTools, callAgentTool, createProject, createThread, createVideo, latestVideoRevision, listJobs,
+  markAgentTurnRunning, newMediaKey, postUserMessage, projectOwnLook, savePrepared, saveVideoRevision, seedWorkspace, videoOwnLook, videoOwnMusic,
+  type AgentToolContext, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 import { hasFfmpeg, makeWav } from "../../../tests/media.js";
@@ -192,6 +193,40 @@ describe("timeline tools", () => {
       note: expect.stringContaining("ffmpeg"),
     });
     expect((await call(s, "music_list", { mood: "sad" })).json.library).toEqual([]);
+  });
+
+  it("media on R2 (plan 2026-10-29 P4): an audio file of the person's library is listed as such, not as a file on disk", async () => {
+    const s = await setup();
+    const { key } = newMediaKey("u", "Biển sáng.mp3");
+    await s.bucket.put(key, Buffer.from("x".repeat(2048)));
+    const item = await addMediaItem(s.db, s.bucket, { ownerId: "u", key, name: "Biển sáng.mp3" }, NOW);
+    await addMediaToProject(s.db, { projectId: s.project.id, ownerId: "u", mediaIds: [item.id], use: "audio" });
+    expect((await call(s, "music_list", {})).json.project_files).toEqual([{ path: "context/audio/Biển sáng.mp3", name: "Biển sáng.mp3", mb: 0, in_library: true }]);
+    const inputs = (await call(s, "inputs_list", { video_id: undefined })).json;
+    expect(inputs.project).toMatchObject([{ kind: "upload", path: "context/audio/Biển sáng.mp3", in_library: true }]);
+  });
+
+  it("media on R2 (plan 2026-10-29 P4): look_set changes what was sent, for the video or the whole project", async () => {
+    const s = await setup();
+    const other = await createVideo(s.db, s.project.id, { title: "Hang Múa", createdBy: "u" }, NOW);
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    expect(await call(s, "look_set", {})).toMatchObject({ isError: true, text: expect.stringContaining("Không có gì để đổi") });
+    expect(await call(s, "look_set", { scope: "video", every_video: true })).toMatchObject({ isError: true });
+    // in the video's thread: the video's own pick, the rest left as it was
+    const mine = await call(s, "look_set", { look: "warm" });
+    expect(mine.json).toMatchObject({ scope: "video", own: { text_look: null, look: "warm", color_match: null }, effective: { look: "warm", from: { look: "video" } }, timeline_revision: 2 });
+    expect((await latestVideoRevision(s.db, s.video.id))!.data.look).toBe("warm");
+    await call(s, "look_set", { color_match: true });
+    expect(await videoOwnLook(s.db, s.video.id)).toEqual({ text_look: null, look: "warm", color_match: true });
+    // the project's: a video with its own pick keeps it, unless every video is to follow
+    const shared = await call(s, "look_set", { scope: "project", look: "cinematic" });
+    expect(shared.json).toMatchObject({ scope: "project", project_look: { look: "cinematic" }, cleared: [], own_look_kept: ["#1"] });
+    const all = await call(s, "look_set", { scope: "project", every_video: true });
+    expect(all.json).toMatchObject({ cleared: ["#1"], own_look_kept: [], timelines: [{ video: "#1", revision: 4 }] });
+    expect(await videoOwnLook(s.db, s.video.id)).toEqual({ text_look: null, look: null, color_match: null });
+    expect(await projectOwnLook(s.db, s.project.id)).toMatchObject({ look: "cinematic" });
+    expect((await latestVideoRevision(s.db, s.video.id))!.data.look).toBe("cinematic");
+    expect(other.idx).toBe(2);
   });
 
   it("feedback-vps §4.5: music_set gives the video a library track and its timeline plays it; files need this server's ffmpeg", async () => {

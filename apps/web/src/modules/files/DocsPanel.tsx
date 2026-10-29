@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Button, Input, Modal, Radio, Segmented, Spin, Tooltip } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { Braces, ChevronDown, ChevronRight, FilePlus, FileText, Film, Image as ImageIcon, Music, RefreshCw, TrendingUp, Upload } from "lucide-react";
+import { ArrowRight, Braces, ChevronDown, ChevronRight, Cloud, FilePlus, FileText, Film, Image as ImageIcon, Lock, Music, RefreshCw, TrendingUp, Upload } from "lucide-react";
 import { useStudioClient } from "../../api/studio-client";
 import { useWorkspaceClient } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
@@ -61,7 +61,7 @@ function NewDocModal({ open, video, taken, busy, onCreate, onClose }: {
  * the files people added, by name and without Studio's and the agent's own files; add a file, write a new one, run a
  * research crawl. A Studio admin may switch to the whole folder (`FilesPanel`). The open file shows in place.
  */
-export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, openPath, onOpen, onAttach }: {
+export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, openPath, onOpen, onAttach, onSources }: {
   projectId: string;
   videos: { id: string; idx: number; title: string }[];
   currentVideoId?: string | undefined;
@@ -71,6 +71,8 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
   openPath: string | null;
   onOpen: (path: string | null) => void;
   onAttach?: ((path: string) => void) | undefined;
+  /** Shows the Sources tab, where the project's audio and videos are managed. */
+  onSources?: (() => void) | undefined;
 }) {
   const { t, i18n } = useAiTranslation();
   const client = useWorkspaceClient();
@@ -81,6 +83,9 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
   const setView = (v: View) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* this visit only */ } };
   const files = useQuery({ queryKey: ["files", projectId], queryFn: () => client.listFiles(projectId) });
   const research = useQuery({ queryKey: ["research", projectId], queryFn: () => client.listResearch(projectId) });
+  // audio and reference videos of the media library (plan 2026-10-29): sources only, no file in the folder
+  const sources = useQuery({ queryKey: ["sources", projectId, null], queryFn: () => client.listSources(projectId) });
+  const stored = (sources.data?.sources ?? []).filter((s) => s.kind === "upload" && s.mediaId);
   const groups = useMemo(() => docGroups(files.data?.entries ?? [], videos, {
     currentVideoId, researchTitles: new Map((research.data?.files ?? []).map((f) => [f.path, f.title])),
   }), [files.data, research.data, videos, currentVideoId]);
@@ -149,7 +154,8 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
     const title = item ? (group?.video ? `#${group.video.idx} · ${nameOf(item)}` : nameOf(item)) : undefined;
     return (
       <div className="ws-files">
-        <FileView projectId={projectId} path={openPath} title={title} access={entry?.access ?? "write"} canEdit={canEdit}
+        <FileView projectId={projectId} path={openPath} title={title ?? stored.find((x) => x.ref === openPath)?.label}
+          access={stored.some((x) => x.ref === openPath) ? "read" : entry?.access ?? "write"} canEdit={canEdit}
           onBack={() => onOpen(null)} onDeleted={() => onOpen(null)} onAttach={onAttach} />
         {mediaModal}
       </div>
@@ -217,6 +223,33 @@ export function DocsPanel({ projectId, videos, currentVideoId, canEdit, canRun, 
               </section>
             );
           })}
+          {stored.length ? (
+            <section className="ws-docs__group ws-docs__group--media" aria-label={t("ws.docs.mediaGroup")}>
+              <div className="ws-docs__head">
+                <span className="ws-docs__toggle ws-docs__toggle--static">
+                  <Cloud size={14} aria-hidden />
+                  <span className="ws-docs__title">{t("ws.docs.mediaGroup")}</span>
+                  <span className="ws-hint">{stored.length}</span>
+                </span>
+                {onSources ? <Button size="small" type="text" onClick={onSources}>{t("ws.docs.manageInSources")}<ArrowRight size={13} aria-hidden /></Button> : null}
+              </div>
+              <p className="ws-hint ws-docs__mediahint">{t("ws.docs.mediaHint")}</p>
+              <ul className="ws-docs__list">
+                {stored.map((x) => {
+                  const Icon = x.mediaType === "audio" ? Music : Film;
+                  return (
+                    <li key={x.id}>
+                      <button type="button" className="ws-docs__item" title={isAdmin ? x.ref : undefined} onClick={() => onOpen(x.ref)}>
+                        <Icon size={15} aria-hidden />
+                        <span className="ws-docs__name">{x.label}</span>
+                        <span className="ws-hint ws-docs__ro"><Lock size={11} aria-hidden /> {t("ws.docs.readOnly")}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
         </div>
       )}
       {mediaModal}

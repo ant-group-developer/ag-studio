@@ -115,7 +115,7 @@ describe.skipIf(!hasFfmpeg())("project audio import (needs ffmpeg + ffprobe)", (
     const wav = join(dir, "giong.wav");
     makeWav(wav, 6, { frequency: 220 });
     const voice = await importProjectAudio({ db: s.db, bucket: s.bucket, ffmpeg: FFMPEG, ffprobe: FFPROBE }, {
-      projectId: s.project.id, kind: "voice", file: wav, source: { kind: "upload", filename: "giong.wav" }, userId: "u", origin: "own", referenceText: "Xin chào",
+      projectId: s.project.id, kind: "voice", file: { path: wav }, source: { kind: "upload", filename: "giong.wav" }, userId: "u", origin: "own", referenceText: "Xin chào",
     });
     expect(voice).toMatchObject({ mode: "clone", origin: "own", reference_text: "Xin chào", reference: expect.stringMatching(new RegExp(`^library:studio/projects/${s.project.id}/voice/[0-9a-f]{64}\\.wav$`)) });
     expect([...s.bucket.objects.keys()].some((k) => k.startsWith(`library/studio/projects/${s.project.id}/voice/`))).toBe(true);
@@ -123,7 +123,7 @@ describe.skipIf(!hasFfmpeg())("project audio import (needs ffmpeg + ffprobe)", (
     const music = join(dir, "nhac.wav");
     makeWav(music, 8, { frequency: 440 });
     await importProjectAudio({ db: s.db, bucket: s.bucket, ffmpeg: FFMPEG, ffprobe: FFPROBE }, {
-      projectId: s.project.id, kind: "music", file: music, source: { kind: "upload", filename: "nhac.wav" }, userId: "u",
+      projectId: s.project.id, kind: "music", file: { path: music }, source: { kind: "upload", filename: "nhac.wav" }, userId: "u",
     });
     expect(await projectMusic(s.db, s.project.id)).toMatchObject({ track: expect.stringMatching(/^library:studio\/projects\/.+\/music\/[0-9a-f]{64}\.m4a$/), gain_db: -18, ducking: true });
     expect((await projectAudioSummary(s.db, s.project.id)).voice).toBe("giọng mẫu 6 s (giọng của người dùng)");

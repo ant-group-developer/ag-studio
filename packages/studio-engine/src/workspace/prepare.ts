@@ -27,7 +27,8 @@ import { JobStopped } from "./farm.js";
 import type { JobContext, JobOutcome } from "./job-runner.js";
 import type { JobRecord } from "./jobs-db.js";
 import { prepareUpload, type UploadPrepDeps } from "./footage-upload.js";
-import { agGoProjectIds, savePrepared, uploadedAsset, type SourceRecord } from "./sources-db.js";
+import { preparedElsewhere } from "./media-library.js";
+import { agGoProjectIds, getPrepared, savePrepared, uploadedAsset, type SourceRecord } from "./sources-db.js";
 import { writeVideoIndexesFor } from "./video-index.js";
 
 /** Where the prep of one footage stands at ag-go (`POST /footage/assets/prep`, contract H2 of plan 2026-10-13). */
@@ -218,6 +219,8 @@ export async function prepareAsset(d: PrepareDeps, job: JobRecord, ctx: JobConte
 
 /** The footage someone uploaded (`footage-upload.ts`), prepared into the same files as an ag-go video. */
 async function prepareUploaded(d: PrepareDeps, job: JobRecord, ctx: JobContext, src: SourceRecord): Promise<JobOutcome> {
+  const copied = src.media_id ? await copyPrepared(d.db, job, ctx, src) : null;
+  if (copied) return copied;
   if (!d.uploads) throw new Error("worker này chưa chuẩn bị được footage tải lên (thiếu kho hoặc farm)");
   const site = d.siteName?.() ?? DEFAULT_SITE_NAME;
   const out = join(ctx.tempDir, "out");
@@ -242,6 +245,32 @@ async function prepareUploaded(d: PrepareDeps, job: JobRecord, ctx: JobContext, 
     shots: prep.shots, sheets: prep.sheets,
   };
   return writePrepared(d.db, job, ctx, out, shotsFile, transcript, note, site);
+}
+
+/**
+ * An item of someone's library another project already prepared (plan 2026-10-29): its `inputs/<id>/` copied from that
+ * project's workspace (the workspaces sit side by side), no farm job. Null when there is none to copy.
+ */
+async function copyPrepared(db: StudioDb, job: JobRecord, ctx: JobContext, src: SourceRecord): Promise<JobOutcome | null> {
+  const other = await preparedElsewhere(db, src.ref, job.project_id);
+  if (!other) return null;
+  const from = join(dirname(ctx.workspaceDir), other, inputDir(src.ref));
+  const row = await getPrepared(db, other, src.ref);
+  if (!row || !existsSync(join(from, "shots.json"))) return null;
+  await ctx.report({ phase: "Đang chép bản đã chuẩn bị ở dự án khác", progress: 0.5 });
+  const dest = join(ctx.workspaceDir, inputDir(src.ref));
+  if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
+  mkdirSync(join(ctx.workspaceDir, "inputs"), { recursive: true });
+  cpSync(from, dest, { recursive: true });
+  const { prepared_at: _at, project_id: _p, ...same } = row;
+  await savePrepared(db, { ...same, project_id: job.project_id }, ctx.now());
+  await writeVideoIndexesFor(db, ctx.workspaceDir, job.project_id, src.ref);
+  await ctx.report({ progress: 1 });
+  const name = row.name ?? src.label;
+  return {
+    result: { asset_id: src.ref, name, shots: row.shots ?? 0, duration_s: row.duration_s, copied_from: other, folder: `${inputDir(src.ref)}/` },
+    message: `Đã có **${name}** từ dự án khác (${row.shots ?? 0} cảnh), không phải chuẩn bị lại. Xem \`${inputDir(src.ref)}/README.md\`.`,
+  };
 }
 
 function transcriptNote(t: InputTranscript): string {

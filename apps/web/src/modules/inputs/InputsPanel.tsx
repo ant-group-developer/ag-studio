@@ -1,37 +1,36 @@
-import { useRef, useState } from "react";
-import { App as AntApp, Button, Popconfirm, Segmented, Spin } from "antd";
+import { useMemo, useRef, useState } from "react";
+import { App as AntApp, Button, Popconfirm, Spin } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Film, FolderKanban, Image as ImageIcon, Music, Plus, Trash2, Upload } from "lucide-react";
+import { AudioLines, FileText, Film, FolderKanban, FolderSearch, Image as ImageIcon, Library, Music, Plus, Trash2, Upload } from "lucide-react";
 import { useAiTranslation } from "../common/assistant-name";
 import { StudioHttpError } from "../../api/http";
 import { isFootage, useWorkspaceClient, type JobView, type SourceItem } from "../../api/workspace-client";
+import { AddMenu, SectionCard } from "../common/SectionCard";
 import { FootagePicker } from "./AgGoPickers";
 import { AgGoProjectDrawer } from "./ag-go-projects/AgGoProjectDrawer";
 import { JobList, JobsLine } from "./JobList";
 import { AudioCard, UseAudioButtons, VideoMusicCard } from "./AudioControls";
 import { useUploadProgress } from "../common/upload-progress";
 import { AgGoProjectList, countAssets, FootageAssets, SummaryBar, type StateFilter } from "./FootageAssets";
-import { FOOTAGE_ACCEPT, MediaUploadModal, REFERENCE_ACCEPT, useMediaUpload } from "./media-upload";
+import { FootageVideosModal, MediaLibraryDrawer } from "./media-library";
+import { FOOTAGE_ACCEPT, MediaUploadModal, useMediaUpload } from "./media-upload";
 import "./inputs.css";
 
-const UPLOAD_ACCEPT = ".md,.txt,.pdf,.csv,.json,.srt,.vtt,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.m4a,.aac,.ogg,.flac";
+/** Documents and images kept in the project's folder (audio and videos go to the media library). */
+const DOC_ACCEPT = ".md,.txt,.pdf,.csv,.json,.srt,.vtt,.jpg,.jpeg,.png,.webp,.gif";
+const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.aac,.ogg,.flac";
 const KIND_ICON = { document: FileText, image: ImageIcon, audio: Music, video: Film, mixed: FolderKanban } as const;
-/** The sub-section last shown (footage or files), remembered in this browser. */
-const SECTION_KEY = "studio.inputs.section";
 /** How many prepare requests one call takes (the API's limit). */
 const PREPARE_BATCH = 40;
 
-type Section = "footage" | "files";
-function savedSection(): Section {
-  try { return localStorage.getItem(SECTION_KEY) === "files" ? "files" : "footage"; } catch { return "footage"; }
-}
+type LibraryUse = "footage" | "audio";
 
 /**
- * The Inputs tab (spec 2026-10-10 agent-workspace §4): first the project's voice and music, then how its ag-go videos
- * stand ("78 videos · 70 ready · …") and the background jobs in one line, then two sub-sections — Footage (the ag-go
- * projects the agent searches; the ag-go videos of this video, or on the project page of every video grouped by video,
- * with search, a state filter, paging and bulk prepare/retry) and Documents, images, audio (uploads into `context/`, and
- * reference videos to learn an edit style from, `context/references/`, never footage).
+ * The Sources tab (spec 2026-10-10 agent-workspace §4, layout plan 2026-10-29): how the footage stands and the
+ * background jobs on top, then four sections, each in its own box with one way to add: the ag-go projects the agent
+ * searches; Footage (of this video, or on the project page of every video grouped by video), each file showing the
+ * videos it is in, added from ag-go, the computer or the person's media library; Sound (the voice, the music, the audio
+ * files); and the documents and images uploaded. Reference videos live in the Style tab.
  */
 export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, onOpenFile }: {
   projectId: string; videoId?: string; canEdit: boolean; canProduce?: boolean; onOpenFile: (path: string) => void;
@@ -40,24 +39,26 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   const { message, modal } = AntApp.useApp();
   const client = useWorkspaceClient();
   const qc = useQueryClient();
-  const fileInput = useRef<HTMLInputElement>(null);
-  const referenceInput = useRef<HTMLInputElement>(null);
+  const docInput = useRef<HTMLInputElement>(null);
+  const audioInput = useRef<HTMLInputElement>(null);
   const footageInput = useRef<HTMLInputElement>(null);
   const [projectPicker, setProjectPicker] = useState(false);
   const [footagePicker, setFootagePicker] = useState(false);
+  const [library, setLibrary] = useState<LibraryUse | null>(null);
+  const [videosOf, setVideosOf] = useState<SourceItem | null>(null);
   const [jobsOpen, setJobsOpen] = useState(false);
-  const [section, setSectionState] = useState<Section>(savedSection);
   const [filter, setFilter] = useState<StateFilter>("all");
-  const setSection = (s: Section) => { setSectionState(s); try { localStorage.setItem(SECTION_KEY, s); } catch { /* this visit only */ } };
   const sources = useQuery({
     queryKey: ["sources", projectId, videoId ?? null], queryFn: () => client.listSources(projectId, videoId),
     refetchInterval: (q) => (q.state.data?.sources.some((s) => s.asset?.state === "queued" || s.asset?.state === "preparing") ? 3000 : false),
   });
+  // every video's footage: which videos each file is in (on the project page, the list above already is it)
+  const everyVideo = useQuery({ queryKey: ["sources", projectId, null], queryFn: () => client.listSources(projectId), enabled: !!videoId });
   const jobs = useQuery({
     queryKey: ["jobs", projectId, videoId ?? null], queryFn: () => client.listJobs(projectId, videoId ? { videoId } : {}),
     refetchInterval: (q) => (q.state.data?.jobs.some((j) => j.status === "queued" || j.status === "running") ? 2000 : false),
   });
-  const videos = useQuery({ queryKey: ["videos", projectId], queryFn: () => client.listVideos(projectId), enabled: !videoId });
+  const videos = useQuery({ queryKey: ["videos", projectId], queryFn: () => client.listVideos(projectId) });
   const refresh = () => {
     for (const k of ["sources", "jobs", "activity", "playbook"]) void qc.invalidateQueries({ queryKey: [k, projectId] });
   };
@@ -73,7 +74,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   });
   const remove = useMutation({
     mutationFn: (p: { source: SourceItem; force?: boolean }) => client.removeSource(projectId, p.source.id, p.force ? { force: true } : {}),
-    onSuccess: refresh,
+    onSuccess: () => { refresh(); void qc.invalidateQueries({ queryKey: ["audio", projectId] }); },
     onError: (e, p) => {
       // an ag-go project whose videos are still used: removed only once the person says so
       if (e instanceof StudioHttpError && e.code === "project_in_use") {
@@ -99,7 +100,7 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
   const upload = useMutation({
     mutationFn: (files: File[]) => {
       const progress = uploading.start(files);
-      return Promise.all(files.map((f, i) => client.uploadSource(projectId, f, videoId, { onProgress: progress[i] })));
+      return Promise.all(files.map((f, i) => client.uploadSource(projectId, f, undefined, { onProgress: progress[i] })));
     },
     onSettled: uploading.done,
     onSuccess: (r) => {
@@ -109,59 +110,63 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
     },
     onError: fail(t("ws.inputs.uploadFailed")),
   });
-  const uploadingFootage = useUploadProgress();
-  // footage from the computer on the project page: into the video picked (or a new one), or straight into a group's video
+  // footage from the computer: asked which videos it goes into (this one ticked first), then uploaded into the library
   const media = useMediaUpload(projectId);
-  const channelFootageInput = useRef<HTMLInputElement>(null);
-  const groupFootageInput = useRef<HTMLInputElement>(null);
-  const uploadInto = useRef<string | null>(null);
   const [picked, setPicked] = useState<File[] | null>(null);
-  const uploadFootage = useMutation({
-    mutationFn: (files: File[]) => {
-      const progress = uploadingFootage.start(files);
-      return Promise.all(files.map((f, i) => client.uploadFootage(projectId, f, videoId!, progress[i])));
-    },
-    onSettled: uploadingFootage.done,
-    onSuccess: (r) => { refresh(); void message.success(t("ws.inputs.footageUploaded", { count: r.length })); },
-    onError: (e) => { refresh(); fail(t("ws.inputs.uploadFailed"))(e); },
-  });
-  const uploadingReference = useUploadProgress();
-  const uploadReference = useMutation({
-    mutationFn: (files: File[]) => {
-      const progress = uploadingReference.start(files);
-      return Promise.all(files.map((f, i) => client.uploadSource(projectId, f, undefined, { reference: true, onProgress: progress[i] })));
-    },
-    onSettled: uploadingReference.done,
-    onSuccess: (r) => { refresh(); void qc.invalidateQueries({ queryKey: ["files", projectId] }); void message.success(t("ws.inputs.uploaded", { count: r.length })); },
-    onError: fail(t("ws.inputs.uploadFailed")),
-  });
+  // on the project page, a video's group takes footage from the computer straight in
+  const groupInput = useRef<HTMLInputElement>(null);
+  const uploadInto = useRef<string | null>(null);
 
   const all = sources.data?.sources ?? [];
   const agGoProjects = all.filter((s) => s.kind === "ag_go_project");
   const videoAssets = all.filter((s) => isFootage(s) && (videoId ? s.videoId === videoId : true));
   const uploads = all.filter((s) => s.kind === "upload" && !s.meta.reference);
-  const references = all.filter((s) => s.kind === "upload" && s.meta.reference === true);
+  const audioFiles = uploads.filter((s) => s.mediaType === "audio");
+  const docs = uploads.filter((s) => s.mediaType !== "audio");
   const counts = videoId ? countAssets(videoAssets) : sources.data?.counts ?? countAssets(videoAssets);
   const jobList = jobs.data?.jobs ?? [];
   const active = jobList.filter((j) => j.status === "queued" || j.status === "running");
   const recent = jobList.filter((j) => j.status !== "queued" && j.status !== "running").slice(0, 3);
   const shownJobs = [...active, ...recent];
+  const videoList = videos.data?.videos ?? [];
+  const byId = useMemo(() => new Map(videoList.map((v) => [v.id, v])), [videoList]);
+  // which videos each footage is in, across the project
+  const inVideos = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const s of (videoId ? everyVideo.data?.sources : all) ?? []) {
+      if (!isFootage(s) || !s.videoId) continue;
+      m.set(s.ref, [...new Set([...(m.get(s.ref) ?? []), s.videoId])]);
+    }
+    return m;
+  }, [all, everyVideo.data, videoId]);
+  const libraryIn = (use: LibraryUse) => new Set(all.filter((s) => s.mediaId && (use === "footage" ? isFootage(s) : s.kind === "upload" && s.mediaType === "audio")).map((s) => s.mediaId!));
+
+  const chips = (s: SourceItem) => {
+    const ids = [...(inVideos.get(s.ref) ?? [])].sort((a, b) => (byId.get(a)?.idx ?? 0) - (byId.get(b)?.idx ?? 0));
+    return (
+      <span className="ws-vchips">
+        {s.mediaId ? <span className="ws-badge-lib">{t("ws.library.badge")}</span> : null}
+        {ids.map((id) => {
+          const v = byId.get(id);
+          return v ? <span key={id} className={`ws-vchip${id === videoId ? " ws-vchip--current" : ""}`} title={v.title}>#{v.idx}</span> : null;
+        })}
+        {canEdit ? <button type="button" className="ws-vchip ws-vchip--add" onClick={() => setVideosOf(s)} aria-label={t("ws.library.useForVideos", { name: s.label })}>{t("ws.library.addVideo")}</button> : null}
+      </span>
+    );
+  };
   const removeButton = (s: SourceItem) => canEdit ? (
-    <Popconfirm title={t("ws.inputs.removeUploadConfirm", { name: s.label })} onConfirm={() => remove.mutate({ source: s })} okText={t("ws.inputs.remove")} cancelText={t("common.cancel")}>
+    <Popconfirm title={t(s.mediaId ? "ws.inputs.removeLibraryConfirm" : "ws.inputs.removeUploadConfirm", { name: s.label })} onConfirm={() => remove.mutate({ source: s })} okText={t("ws.inputs.remove")} cancelText={t("common.cancel")}>
       <button type="button" className="ws-icon-button" aria-label={t("ws.inputs.removeNamed", { name: s.label })}><Trash2 size={13} /></button>
     </Popconfirm>
   ) : null;
 
   return (
-    <div className="ws-inputs">
-      <AudioCard projectId={projectId} canEdit={canEdit} canProduce={canProduce} />
-      {videoId ? <VideoMusicCard projectId={projectId} videoId={videoId} canEdit={canEdit} /> : null}
-
+    <div className="ws-secs ws-inputs">
       {sources.isLoading ? <div className="ws-center"><Spin /></div> : (
         <>
           {counts.videos || shownJobs.length ? (
             <div className="ws-inputs__overview">
-              {counts.videos ? <SummaryBar counts={counts} onFilter={(f) => { setFilter(f); setSection("footage"); }} /> : null}
+              {counts.videos ? <SummaryBar counts={counts} onFilter={setFilter} /> : null}
               {shownJobs.length ? (
                 <section aria-label={t("ws.jobs.title")} className="ws-inputs__jobs">
                   <JobsLine jobs={shownJobs} open={jobsOpen} onToggle={() => setJobsOpen(!jobsOpen)} />
@@ -173,128 +178,101 @@ export function InputsPanel({ projectId, videoId, canEdit, canProduce = false, o
             </div>
           ) : null}
 
-          <Segmented block size="small" value={section} onChange={(v) => setSection(v as Section)} aria-label={t("ws.inputs.sectionLabel")}
-            options={[
-              { value: "footage", label: t("ws.inputs.section.footage", { count: counts.videos }) },
-              { value: "files", label: t("ws.inputs.section.files", { count: uploads.length + references.length }) },
-            ]} />
+          <SectionCard icon={<FolderSearch size={15} />} title={t("ws.inputs.agGoProjects")} count={agGoProjects.length}
+            action={canEdit ? <Button size="small" icon={<Plus size={14} />} onClick={() => setProjectPicker(true)}>{t("ws.inputs.addProject")}</Button> : null}>
+            {agGoProjects.length ? <AgGoProjectList projects={agGoProjects} canEdit={canEdit} onRemove={(s) => remove.mutate({ source: s })} />
+              : <p className="ws-hint ws-inputs__empty">{t("ws.inputs.noProjectYet")}</p>}
+          </SectionCard>
 
-          {section === "footage" ? (
-            <>
-              <section aria-label={t("ws.inputs.agGoProjects")}>
-                <div className="ws-inputs__head">
-                  <h4 className="ws-inputs__h">{t("ws.inputs.agGoProjects")} <span className="ws-hint">{agGoProjects.length || ""}</span></h4>
-                  {canEdit ? <Button size="small" icon={<Plus size={14} />} onClick={() => setProjectPicker(true)}>{t("ws.inputs.addProject")}</Button> : null}
-                </div>
-                {agGoProjects.length ? <AgGoProjectList projects={agGoProjects} canEdit={canEdit} onRemove={(s) => remove.mutate({ source: s })} />
-                  : <p className="ws-hint">{t("ws.inputs.noProjectYet")}</p>}
-              </section>
+          <SectionCard icon={<Film size={15} />} title={videoId ? t("ws.inputs.videoFootage") : t("ws.inputs.preparedFootage")} count={counts.videos}
+            label={t(videoId ? "ws.inputs.videoFootage" : "ws.inputs.preparedFootage")}
+            action={canEdit ? (
+              <AddMenu primary icon={<Plus size={14} />} label={media.percent !== null ? t("common.uploading", { pct: media.percent }) : t("ws.inputs.addFootage")}
+                loading={media.upload.isPending} items={[
+                  ...(videoId ? [{ key: "ag-go", icon: <FolderSearch size={14} />, label: t("ws.inputs.pickVideos"), hint: t("ws.inputs.pickVideosHint"), disabled: !agGoProjects.length, onClick: () => setFootagePicker(true) }] : []),
+                  { key: "upload", icon: <Upload size={14} />, label: t("ws.inputs.uploadFootage"), hint: t("ws.inputs.uploadFootageHint"), onClick: () => footageInput.current?.click() },
+                  { key: "library", icon: <Library size={14} />, label: t("ws.library.fromLibrary"), hint: t("ws.library.fromLibraryHint"), onClick: () => setLibrary("footage") },
+                ]} />
+            ) : null}>
+            {videoAssets.length ? (
+              <FootageAssets assets={videoAssets} videos={videoList} grouped={!videoId} filter={filter} onFilter={setFilter} canEdit={canEdit}
+                onOpenFile={onOpenFile} onPrepare={(assetId, again) => prepare.mutate({ assetId, again })} onRemove={(x) => remove.mutate({ source: x })}
+                onBulk={(ids) => bulk.mutate(ids)} bulkBusy={bulk.isPending} lineExtra={chips}
+                onUploadTo={videoId || !canEdit ? undefined : (id) => { uploadInto.current = id; groupInput.current?.click(); }} />
+            ) : <p className="ws-hint ws-inputs__empty">{agGoProjects.length || videoId ? t("ws.inputs.noVideoYet") : t("ws.inputs.addFootageFirst")}</p>}
+            <input ref={footageInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadFootage")}
+              onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) setPicked(files); }} />
+            <input ref={groupInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadToVideo")}
+              onChange={(e) => {
+                const files = [...(e.target.files ?? [])]; e.target.value = "";
+                if (files.length && uploadInto.current) media.upload.mutate({ files, use: "footage", target: { videoIds: [uploadInto.current] } });
+              }} />
+          </SectionCard>
 
-              {videoId || videoAssets.length || canEdit ? (
-                <section aria-label={videoId ? t("ws.inputs.videoFootage") : t("ws.inputs.preparedFootage")}>
-                  <div className="ws-inputs__head">
-                    <h4 className="ws-inputs__h">{videoId ? t("ws.inputs.videoFootage") : t("ws.inputs.preparedFootage")}</h4>
-                    {videoId && canEdit ? (
-                      <span className="ws-inputs__actions">
-                        <Button size="small" icon={<Plus size={14} />} disabled={!agGoProjects.length} onClick={() => setFootagePicker(true)}>{t("ws.inputs.pickVideos")}</Button>
-                        <Button size="small" icon={<Upload size={14} />} loading={uploadFootage.isPending} title={t("ws.inputs.uploadFootageHint")} onClick={() => footageInput.current?.click()}>
-                          {uploadingFootage.percent !== null ? t("common.uploading", { pct: uploadingFootage.percent }) : t("ws.inputs.uploadFootage")}
-                        </Button>
-                        <input ref={footageInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadFootage")}
-                          onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) uploadFootage.mutate(files); }} />
-                      </span>
-                    ) : null}
-                    {!videoId && canEdit ? (
-                      <span className="ws-inputs__actions">
-                        <Button size="small" icon={<Upload size={14} />} loading={media.upload.isPending} title={t("ws.inputs.uploadFootageHint")} onClick={() => channelFootageInput.current?.click()}>
-                          {media.percent !== null ? t("common.uploading", { pct: media.percent }) : t("ws.inputs.uploadFootage")}
-                        </Button>
-                        <input ref={channelFootageInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadFootage")}
-                          onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) setPicked(files); }} />
-                        <input ref={groupFootageInput} type="file" multiple hidden accept={FOOTAGE_ACCEPT} aria-label={t("ws.inputs.uploadToVideo")}
-                          onChange={(e) => {
-                            const files = [...(e.target.files ?? [])]; e.target.value = "";
-                            if (files.length && uploadInto.current) media.upload.mutate({ files, use: "footage", target: { videoId: uploadInto.current } });
-                          }} />
-                      </span>
-                    ) : null}
-                  </div>
-                  {videoAssets.length ? (
-                    <FootageAssets assets={videoAssets} videos={videos.data?.videos ?? []} grouped={!videoId} filter={filter} onFilter={setFilter} canEdit={canEdit}
-                      onOpenFile={onOpenFile} onPrepare={(assetId, again) => prepare.mutate({ assetId, again })} onRemove={(x) => remove.mutate({ source: x })}
-                      onBulk={(ids) => bulk.mutate(ids)} bulkBusy={bulk.isPending}
-                      onUploadTo={videoId ? undefined : (id) => { uploadInto.current = id; groupFootageInput.current?.click(); }} />
-                  ) : <p className="ws-hint">{agGoProjects.length || videoId ? t("ws.inputs.noVideoYet") : t("ws.inputs.addProjectFirst")}</p>}
-                </section>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <section aria-label={t("ws.inputs.files")}>
-                <div className="ws-inputs__head">
-                  <h4 className="ws-inputs__h">{t("ws.inputs.files")}</h4>
-                  {canEdit ? (
-                    <>
-                      <Button size="small" icon={<Upload size={14} />} loading={upload.isPending} onClick={() => fileInput.current?.click()}>
-                        {uploading.percent !== null ? t("common.uploading", { pct: uploading.percent }) : t("ws.inputs.upload")}
-                      </Button>
-                      <input ref={fileInput} type="file" multiple hidden accept={UPLOAD_ACCEPT} aria-label={t("ws.inputs.upload")}
-                        onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) upload.mutate(files); }} />
-                    </>
-                  ) : null}
-                </div>
-                <p className="ws-hint">{t("ws.inputs.filesHint")}</p>
-                {uploads.length ? (
-                  <ul className="ws-inputs__list">
-                    {uploads.map((s) => {
-                      const Icon = KIND_ICON[s.mediaType];
-                      return (
-                        <li key={s.id} className="ws-inputs__row">
-                          <Icon size={14} aria-hidden />
-                          <button type="button" className="ws-link ws-inputs__name" onClick={() => onOpenFile(s.ref)}>{s.label}</button>
-                          {s.mediaType === "audio" ? <UseAudioButtons projectId={projectId} path={s.ref} canEdit={canEdit} canProduce={canProduce} /> : null}
-                          {removeButton(s)}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : null}
-              </section>
+          <SectionCard icon={<AudioLines size={15} />} title={t("ws.inputs.sound")} count={audioFiles.length} className="ws-inputs__sound"
+            action={canEdit ? (
+              <AddMenu icon={<Plus size={14} />} label={uploading.percent !== null && upload.isPending ? t("common.uploading", { pct: uploading.percent }) : t("ws.inputs.addAudio")}
+                loading={upload.isPending} items={[
+                  { key: "upload", icon: <Upload size={14} />, label: t("ws.inputs.uploadAudio"), hint: t("ws.inputs.uploadAudioHint"), onClick: () => audioInput.current?.click() },
+                  { key: "library", icon: <Library size={14} />, label: t("ws.library.fromLibrary"), onClick: () => setLibrary("audio") },
+                ]} />
+            ) : null}>
+            <AudioCard projectId={projectId} canEdit={canEdit} canProduce={canProduce} />
+            {videoId ? <VideoMusicCard projectId={projectId} videoId={videoId} canEdit={canEdit} /> : null}
+            <span className="ws-sub">{t("ws.inputs.audioFiles")}</span>
+            {audioFiles.length ? (
+              <ul className="ws-inputs__list">
+                {audioFiles.map((s) => (
+                  <li key={s.id} className="ws-inputs__row">
+                    <Music size={14} aria-hidden />
+                    <span className="ws-inputs__text">
+                      <button type="button" className="ws-link ws-inputs__name" onClick={() => onOpenFile(s.ref)}>{s.label}</button>
+                      {s.mediaId ? <span className="ws-vchips"><span className="ws-badge-lib">{t("ws.library.badge")}</span></span> : null}
+                    </span>
+                    <UseAudioButtons projectId={projectId} path={s.ref} canEdit={canEdit} canProduce={canProduce} />
+                    {removeButton(s)}
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="ws-hint ws-inputs__empty">{t("ws.inputs.noAudio")}</p>}
+            <input ref={audioInput} type="file" multiple hidden accept={AUDIO_ACCEPT} aria-label={t("ws.inputs.uploadAudio")}
+              onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) upload.mutate(files); }} />
+          </SectionCard>
 
-              <section aria-label={t("ws.inputs.references")}>
-                <div className="ws-inputs__head">
-                  <h4 className="ws-inputs__h">{t("ws.inputs.references")}</h4>
-                  {canEdit ? (
-                    <>
-                      <Button size="small" icon={<Upload size={14} />} loading={uploadReference.isPending} onClick={() => referenceInput.current?.click()}>
-                        {uploadingReference.percent !== null ? t("common.uploading", { pct: uploadingReference.percent }) : t("ws.inputs.uploadReference")}
-                      </Button>
-                      <input ref={referenceInput} type="file" multiple hidden accept={REFERENCE_ACCEPT} aria-label={t("ws.inputs.uploadReference")}
-                        onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) uploadReference.mutate(files); }} />
-                    </>
-                  ) : null}
-                </div>
-                <p className="ws-hint">{t("ws.inputs.referencesHint")}</p>
-                {references.length ? (
-                  <ul className="ws-inputs__list">
-                    {references.map((s) => (
-                      <li key={s.id} className="ws-inputs__row">
-                        <Film size={14} aria-hidden />
-                        <button type="button" className="ws-link ws-inputs__name" onClick={() => onOpenFile(s.ref)}>{s.label}</button>
-                        {removeButton(s)}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </section>
-            </>
-          )}
+          <SectionCard icon={<FileText size={15} />} title={t("ws.inputs.files")} count={docs.length} hint={t("ws.inputs.filesHint")}
+            action={canEdit ? (
+              <>
+                <Button size="small" icon={<Upload size={14} />} loading={upload.isPending} onClick={() => docInput.current?.click()}>{t("ws.inputs.upload")}</Button>
+                <input ref={docInput} type="file" multiple hidden accept={DOC_ACCEPT} aria-label={t("ws.inputs.upload")}
+                  onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) upload.mutate(files); }} />
+              </>
+            ) : null}>
+            {docs.length ? (
+              <ul className="ws-inputs__list">
+                {docs.map((s) => {
+                  const Icon = KIND_ICON[s.mediaType];
+                  return (
+                    <li key={s.id} className="ws-inputs__row">
+                      <Icon size={14} aria-hidden />
+                      <button type="button" className="ws-link ws-inputs__name" onClick={() => onOpenFile(s.ref)}>{s.label}</button>
+                      {removeButton(s)}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </SectionCard>
+          <p className="ws-hint ws-inputs__moved">{t("ws.inputs.referencesMoved")}</p>
         </>
       )}
 
-      <MediaUploadModal open={!!picked} files={picked ?? []} videos={videos.data?.videos ?? []} uses={["footage"]} busy={media.upload.isPending}
+      <MediaUploadModal open={!!picked} files={picked ?? []} videos={videoList} currentVideoId={videoId} uses={["footage"]} busy={media.upload.isPending}
         onCancel={() => setPicked(null)}
         onConfirm={(use, target) => { const files = picked ?? []; setPicked(null); media.upload.mutate({ files, use, ...(target ? { target } : {}) }); }} />
+      <MediaLibraryDrawer open={library !== null} projectId={projectId} use={library ?? "footage"} videos={videoList} currentVideoId={videoId}
+        inProject={libraryIn(library ?? "footage")} onClose={() => setLibrary(null)} />
+      <FootageVideosModal open={!!videosOf} projectId={projectId} assetId={videosOf?.ref ?? null} name={videosOf?.label ?? ""} videos={videoList}
+        inVideos={videosOf ? inVideos.get(videosOf.ref) ?? [] : []} currentVideoId={videoId} onClose={() => setVideosOf(null)} />
       <AgGoProjectDrawer projectId={projectId} picked={all} open={projectPicker} onClose={() => setProjectPicker(false)} />
       {videoId ? <FootagePicker projectId={projectId} videoId={videoId} sources={all} open={footagePicker} onClose={() => setFootagePicker(false)} /> : null}
     </div>

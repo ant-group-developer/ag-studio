@@ -56,7 +56,11 @@ export function ChatPanel({ threadId, projectId, canWrite, canDecide, onOpenFile
   const lastUpdate = messages.at(-1)?.updatedAt ?? "";
   const signal = `${messages.length}:${lastUpdate}:${messages.at(-1)?.text.length ?? 0}`;
   const { ref, onScroll, atBottom, toBottom } = useStickToBottom(threadId, signal);
-  const active = useMemo(() => [...messages].reverse().find((m) => m.role === "assistant" && (m.status === "running" || m.status === "pending")), [messages]);
+  // the running turn (a job that ended meanwhile may have one waiting after it), else the one waiting
+  const active = useMemo(() => {
+    const turns = [...messages].reverse().filter((m) => m.role === "assistant");
+    return turns.find((m) => m.status === "running") ?? turns.find((m) => m.status === "pending");
+  }, [messages]);
   const suggestions = useMemo(() => suggestionsOf(messages), [messages]);
   const rows = useMemo(() => chatRows(messages), [messages]);
 
