@@ -19,10 +19,11 @@
 .ws-admin__form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ws-admin__form label { font-size: 13px; color: var(--ws-muted); }
 .ws-admin__form .ws-admin__note { flex-basis: 100%; }
-/* a form whose fields stack, each with its label and a line on what it is for */
-.ws-admin__form--fields { flex-direction: column; align-items: stretch; gap: 14px; }
-.ws-admin__field { display: flex; flex-direction: column; gap: 4px; }
-.ws-admin__form .ws-admin__label { font-size: 13px; font-weight: 600; color: var(--ws-text); }
+/* an antd Form of stacked fields (label, field, a line on what it is for, its error) */
+.ws-admin__fields { max-width: 640px; }
+.ws-admin__fields--edit { margin-top: 12px; }
+.ws-admin__fields .ant-form-item-extra { font-size: 12px; }
+.ws-admin__actions { display: flex; gap: 8px; }
 .ws-admin__button {
   border: 1px solid var(--ws-accent); background: var(--ws-accent); color: #fff; border-radius: 8px; padding: 4px 12px;
   font: inherit; font-size: 13px; cursor: pointer;

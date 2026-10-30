@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App as AntApp, Button, Input, InputNumber, Popconfirm, Switch } from "antd";
+import { App as AntApp, Button, Form, Input, InputNumber, Popconfirm, Switch } from "antd";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { StudioHttpError, useStudioClient, type ClaudeAccount } from "../api/studio-client";
@@ -67,45 +67,50 @@ function AddForm() {
   const client = useStudioClient();
   const qc = useQueryClient();
   const { message } = AntApp.useApp();
-  const [name, setName] = useState("");
-  const [token, setToken] = useState("");
-  const [max, setMax] = useState<number | null>(null);
+  const [form] = Form.useForm<AddValues>();
   const add = useMutation({
-    mutationFn: () => client.createClaudeAccount({ name: name.trim(), token: token.trim(), maxConcurrent: max }),
+    mutationFn: (v: AddValues) => client.createClaudeAccount({ name: v.name.trim(), token: v.token.trim(), maxConcurrent: v.maxConcurrent ?? null }),
     onSuccess: (a) => {
       void qc.invalidateQueries({ queryKey: ACCOUNTS_KEY });
       void message.success(t("ws.claudeAccounts.added", { name: a.name }));
-      setName(""); setToken(""); setMax(null);
+      form.resetFields();
     },
     onError: (e) => void message.error(errorText(e, t("ws.claudeAccounts.saveFailed"))),
   });
-  const ready = name.trim() && token.trim();
   return (
     <section className="ws-admin__section" aria-label={t("ws.claudeAccounts.add")}>
       <div className="ws-admin__head"><h2>{t("ws.claudeAccounts.add")}</h2></div>
-      {/* each field with its label and what it is for: placeholders alone did not say */}
-      <form className="ws-admin__form ws-admin__form--fields" onSubmit={(e) => { e.preventDefault(); if (ready) add.mutate(); }}>
-        <label className="ws-admin__field">
-          <span className="ws-admin__label">{t("ws.claudeAccounts.name")}</span>
-          <Input placeholder={t("ws.claudeAccounts.namePlaceholder")} value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
-          <span className="ws-admin__note">{t("ws.claudeAccounts.nameHelp")}</span>
-        </label>
-        <label className="ws-admin__field">
-          <span className="ws-admin__label">{t("ws.claudeAccounts.token")}</span>
-          <Input.Password placeholder={t("ws.claudeAccounts.tokenPlaceholder")} value={token} autoComplete="off"
-            visibilityToggle={false} onChange={(e) => setToken(e.target.value)} />
-          <span className="ws-admin__note">{t("ws.claudeAccounts.tokenHelp")}</span>
-        </label>
-        <label className="ws-admin__field">
-          <span className="ws-admin__label">{t("ws.claudeAccounts.max")}</span>
-          <InputNumber placeholder={t("ws.claudeAccounts.maxPlaceholder")} min={1} max={100} precision={0} value={max}
-            onChange={(v) => setMax(v)} style={{ width: 200 }} />
-          <span className="ws-admin__note">{t("ws.claudeAccounts.maxHelp")}</span>
-        </label>
-        <div><Button type="primary" htmlType="submit" disabled={!ready} loading={add.isPending}>{t("ws.claudeAccounts.addButton")}</Button></div>
-      </form>
+      {/* each field with its label, what it is for, and what it needs (checked here; the API checks again) */}
+      <Form form={form} layout="vertical" requiredMark onFinish={(v) => add.mutate(v)} className="ws-admin__fields">
+        <Form.Item name="name" label={t("ws.claudeAccounts.name")} extra={t("ws.claudeAccounts.nameHelp")}
+          rules={[{ required: true, whitespace: true, message: t("ws.claudeAccounts.nameRequired") }, { max: 60, message: t("ws.claudeAccounts.nameTooLong") }]}>
+          <Input placeholder={t("ws.claudeAccounts.namePlaceholder")} maxLength={60} />
+        </Form.Item>
+        <Form.Item name="token" label={t("ws.claudeAccounts.token")} extra={t("ws.claudeAccounts.tokenHelp")}
+          rules={[{ required: true, whitespace: true, message: t("ws.claudeAccounts.tokenRequired") }, tokenRule(t)]}>
+          <Input.Password placeholder={t("ws.claudeAccounts.tokenPlaceholder")} autoComplete="off" visibilityToggle={false} />
+        </Form.Item>
+        <Form.Item name="maxConcurrent" label={t("ws.claudeAccounts.max")} extra={t("ws.claudeAccounts.maxHelp")}
+          rules={[{ type: "integer", min: 1, max: 100, message: t("ws.claudeAccounts.maxRange") }]}>
+          <InputNumber placeholder={t("ws.claudeAccounts.maxPlaceholder")} min={1} max={100} precision={0} style={{ width: 200 }} />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" loading={add.isPending}>{t("ws.claudeAccounts.addButton")}</Button>
+      </Form>
     </section>
   );
+}
+
+interface AddValues { name: string; token: string; maxConcurrent?: number | null }
+interface EditValues { name: string; maxConcurrent?: number | null; token?: string }
+
+/** A token is the one line `claude setup-token` prints: no spaces inside, at most 2000 characters (as the API checks). */
+function tokenRule(t: (k: string) => string) {
+  return {
+    validator: (_: unknown, v: string | undefined) => {
+      const s = v?.trim() ?? "";
+      return !s || (!/\s/.test(s) && s.length <= 2000) ? Promise.resolve() : Promise.reject(new Error(t("ws.claudeAccounts.tokenInvalid")));
+    },
+  };
 }
 
 function AccountRow({ account: a, canStoreTokens }: { account: ClaudeAccount; canStoreTokens: boolean }) {
@@ -114,14 +119,12 @@ function AccountRow({ account: a, canStoreTokens }: { account: ClaudeAccount; ca
   const qc = useQueryClient();
   const { message } = AntApp.useApp();
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(a.name);
-  const [max, setMax] = useState<number | null>(a.maxConcurrent);
-  const [token, setToken] = useState("");
+  const [form] = Form.useForm<EditValues>();
   const when = (iso: string) => new Date(iso).toLocaleString(i18n.language, { dateStyle: "short", timeStyle: "short" });
   const done = () => void qc.invalidateQueries({ queryKey: ACCOUNTS_KEY });
   const update = useMutation({
     mutationFn: (patch: Parameters<typeof client.updateClaudeAccount>[1]) => client.updateClaudeAccount(a.id, patch),
-    onSuccess: () => { done(); setEditing(false); setToken(""); },
+    onSuccess: () => { done(); setEditing(false); },
     onError: (e) => void message.error(errorText(e, t("ws.claudeAccounts.saveFailed"))),
   });
   const check = useMutation({ mutationFn: () => client.checkClaudeAccount(a.id), onSuccess: done, onError: (e) => void message.error(errorText(e, t("ws.claudeAccounts.saveFailed"))) });
@@ -155,20 +158,29 @@ function AccountRow({ account: a, canStoreTokens }: { account: ClaudeAccount; ca
             </div>
           ) : null}
         {editing ? (
-          <form className="ws-admin__form" onSubmit={(e) => {
-            e.preventDefault();
-            update.mutate({ ...(name.trim() !== a.name ? { name: name.trim() } : {}), ...(max !== a.maxConcurrent ? { maxConcurrent: max } : {}), ...(token.trim() ? { token: token.trim() } : {}) });
-          }}>
-            <Input aria-label={t("ws.claudeAccounts.name")} value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
-            <InputNumber aria-label={t("ws.claudeAccounts.max")} placeholder={t("ws.claudeAccounts.maxPlaceholder")} min={1} max={100} precision={0} value={max}
-              onChange={(v) => setMax(v)} style={{ width: 200 }} />
+          <Form form={form} layout="vertical" requiredMark className="ws-admin__fields ws-admin__fields--edit"
+            initialValues={{ name: a.name, maxConcurrent: a.maxConcurrent, token: "" }}
+            onFinish={(v) => {
+              const name = v.name.trim(); const max = v.maxConcurrent ?? null; const token = v.token?.trim() ?? "";
+              update.mutate({ ...(name !== a.name ? { name } : {}), ...(max !== a.maxConcurrent ? { maxConcurrent: max } : {}), ...(token ? { token } : {}) });
+            }}>
+            <Form.Item name="name" label={t("ws.claudeAccounts.name")}
+              rules={[{ required: true, whitespace: true, message: t("ws.claudeAccounts.nameRequired") }, { max: 60, message: t("ws.claudeAccounts.nameTooLong") }]}>
+              <Input maxLength={60} />
+            </Form.Item>
+            <Form.Item name="maxConcurrent" label={t("ws.claudeAccounts.max")} rules={[{ type: "integer", min: 1, max: 100, message: t("ws.claudeAccounts.maxRange") }]}>
+              <InputNumber placeholder={t("ws.claudeAccounts.maxPlaceholder")} min={1} max={100} precision={0} style={{ width: 200 }} />
+            </Form.Item>
             {!a.isDefault && canStoreTokens ? (
-              <Input.Password aria-label={t("ws.claudeAccounts.newToken")} placeholder={t("ws.claudeAccounts.newToken")} value={token} autoComplete="off"
-                visibilityToggle={false} onChange={(e) => setToken(e.target.value)} />
+              <Form.Item name="token" label={t("ws.claudeAccounts.newToken")} rules={[tokenRule(t)]}>
+                <Input.Password autoComplete="off" visibilityToggle={false} />
+              </Form.Item>
             ) : null}
-            <Button type="primary" htmlType="submit" disabled={!name.trim()} loading={update.isPending}>{t("ws.claudeAccounts.save")}</Button>
-            <Button onClick={() => { setEditing(false); setName(a.name); setMax(a.maxConcurrent); setToken(""); }}>{t("ws.claudeAccounts.cancel")}</Button>
-          </form>
+            <div className="ws-admin__actions">
+              <Button type="primary" htmlType="submit" loading={update.isPending}>{t("ws.claudeAccounts.save")}</Button>
+              <Button onClick={() => { setEditing(false); form.resetFields(); }}>{t("ws.claudeAccounts.cancel")}</Button>
+            </div>
+          </Form>
         ) : null}
       </div>
       <Switch checked={a.enabled} loading={update.isPending} aria-label={t("ws.claudeAccounts.enabled")} onChange={(enabled) => update.mutate({ enabled })} />
