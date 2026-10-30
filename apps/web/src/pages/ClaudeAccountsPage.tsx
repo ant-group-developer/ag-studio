@@ -24,7 +24,7 @@ export function ClaudeAccountsPage() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => client.getMe(), staleTime: 5 * 60_000 });
   const admin = me?.isAdmin ?? false;
   // a check runs on a worker: look again until it says how it went
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ACCOUNTS_KEY, queryFn: () => client.listClaudeAccounts(), enabled: admin,
     refetchInterval: (q) => (q.state.data?.accounts.some((a) => a.check.requestedAt && (!a.check.at || a.check.at < a.check.requestedAt || !a.check.status)) ? 3000 : 15_000),
   });
@@ -40,6 +40,12 @@ export function ClaudeAccountsPage() {
             </div>
           </div>
           {me && !admin ? <p className="ws-admin__note">{t("ws.claudeAccounts.adminOnly")}</p> : null}
+          {/* an API without these routes (not rebuilt) answers 404: say so, not "no accounts" */}
+          {admin && error && !data ? (
+            <p className="ws-admin__note ws-admin__bad">
+              {error instanceof StudioHttpError && error.status === 404 ? t("ws.claudeAccounts.apiTooOld") : errorText(error, t("ws.claudeAccounts.loadFailed"))}
+            </p>
+          ) : null}
           {admin && data && !data.canStoreTokens ? <p className="ws-admin__note ws-admin__bad">{t("ws.claudeAccounts.noSecretKey")}</p> : null}
           {admin && data?.canStoreTokens ? <AddForm /> : null}
           {admin ? (
@@ -47,7 +53,7 @@ export function ClaudeAccountsPage() {
               <div className="ws-admin__head"><h2>{t("ws.claudeAccounts.list")}</h2></div>
               {data?.accounts.length ? (
                 <ul className="ws-admin__list">{data.accounts.map((a) => <AccountRow key={a.id} account={a} canStoreTokens={data.canStoreTokens} />)}</ul>
-              ) : isLoading ? null : <p className="ws-admin__note">{t("ws.claudeAccounts.empty")}</p>}
+              ) : isLoading || error ? null : <p className="ws-admin__note">{t("ws.claudeAccounts.empty")}</p>}
             </section>
           ) : null}
         </div>

@@ -587,6 +587,8 @@ export const wsVi = {
     title: "Tài khoản Claude",
     intro: "Mỗi nhóm chạy agent trên tài khoản Claude của mình, theo thứ tự đã chọn ở tab Tài nguyên của nhóm; nhóm chưa chọn dùng tài khoản mặc định. Tài khoản hết hạn mức thì lượt chuyển sang tài khoản kế tiếp của nhóm; hết cả thì chờ.",
     adminOnly: "Chỉ admin Studio xem được trang này.",
+    apiTooOld: "API Studio đang chạy bản cũ, chưa có tài khoản Claude: build lại và khởi động lại API (và worker).",
+    loadFailed: "Không tải được danh sách tài khoản.",
     noSecretKey: "Máy chủ chưa đặt STUDIO_SECRET_KEY nên chưa lưu được token: chỉ tài khoản mặc định dùng được.",
     list: "Các tài khoản",
     empty: "Chưa có tài khoản nào.",

@@ -590,6 +590,8 @@ export const wsEn: Messages<typeof wsVi> = {
     title: "Claude accounts",
     intro: "Each team runs its agent on its own Claude accounts, in the order chosen on the team's Resources tab; a team with none uses the default account. When an account hits its plan's limit, turns move to the team's next account; when all have, they wait.",
     adminOnly: "Only Studio admins can see this page.",
+    apiTooOld: "The Studio API runs an older build without Claude accounts: rebuild and restart the API (and the worker).",
+    loadFailed: "Could not load the accounts.",
     noSecretKey: "The server has no STUDIO_SECRET_KEY, so it cannot keep tokens: only the default account works.",
     list: "Accounts",
     empty: "No accounts yet.",
