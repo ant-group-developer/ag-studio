@@ -336,8 +336,8 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     checkClaudeAccount(id: string): Promise<ClaudeAccount> {
       return request(getAccessToken, "POST", `/api/studio/claude-accounts/${encodeURIComponent(id)}/check`);
     },
-    /** Studio admin: the farm's pools of machines and how many machines each has (empty: none, or the farm out of reach). */
-    listFarmPools(): Promise<{ pools: { pool: string; machines: number }[] }> {
+    /** The farm's pools with their machines, and the shared machines (no pool); `ok: false`: the farm out of reach. */
+    listFarmPools(): Promise<FarmPools> {
       return request(getAccessToken, "GET", "/api/studio/farm/pools");
     },
     /** The team's Claude accounts and farm pool (owners read, a Studio admin sets). */
@@ -414,6 +414,8 @@ export interface QueueClaudeAccount {
   id: string; name: string; isDefault: boolean; enabled: boolean; maxConcurrent: number | null; running: number;
   rateLimitedUntil: string | null; lastError: string | null; teams: { id: string; name: string }[];
 }
+export interface FarmPoolMachine { id: string; name: string; online: boolean }
+export interface FarmPools { ok: boolean; shared: FarmPoolMachine[]; pools: { pool: string; machines: FarmPoolMachine[] }[] }
 export interface TeamResources { claudeAccounts: { id: string; name: string; enabled: boolean }[]; farmPool: string | null }
 
 /** Something running in a project, with the project it belongs to (the Queue lists many projects). */

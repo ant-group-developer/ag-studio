@@ -40,3 +40,15 @@
 @media (max-width: 900px) {
   .ws-admin { grid-template-columns: minmax(0, 1fr); }
 }
+/* a team's Resources tab: its Claude accounts in order, its farm pool and the pool's machines */
+.ws-resources__list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-width: 640px; }
+.ws-resources__row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-surface); }
+.ws-resources__order { width: 20px; height: 20px; border-radius: 50%; background: var(--ws-accent-soft); color: var(--ws-accent); font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ws-resources__name { font-weight: 600; }
+.ws-resources__tools { margin-left: auto; display: inline-flex; gap: 2px; }
+.ws-resources__empty { margin: 8px 0; color: var(--ws-muted); }
+.ws-resources__add { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.ws-resources__machines { list-style: none; margin: 10px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.ws-resources__dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ws-line); margin-right: 6px; }
+.ws-resources__dot--on { background: #22c55e; }
+.ws-resources .ant-alert { margin: 8px 0; max-width: 640px; }

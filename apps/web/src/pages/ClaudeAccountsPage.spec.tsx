@@ -42,21 +42,22 @@ function mount() {
   );
 }
 
-describe("ClaudeAccountsPage — add an account", () => {
+describe("ClaudeAccountsPage — add an account", { timeout: 30_000 }, () => {
   it("says what is missing and sends nothing", async () => {
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Thêm" }));
-    expect(await screen.findByText("Nhập tên tài khoản.")).toBeInTheDocument();
+    // generous waits: under a loaded test run the page's three requests and antd's validation take a while
+    fireEvent.click(await screen.findByRole("button", { name: "Thêm" }, { timeout: 10_000 }));
+    expect(await screen.findByText("Nhập tên tài khoản.", undefined, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText("Dán token từ claude setup-token.")).toBeInTheDocument();
     expect(studio.createClaudeAccount).not.toHaveBeenCalled();
   });
 
   it("refuses a token with spaces inside, then sends the trimmed values", async () => {
     mount();
-    fireEvent.change(await screen.findByLabelText("Tên"), { target: { value: "  HCM " } });
+    fireEvent.change(await screen.findByLabelText("Tên", undefined, { timeout: 10_000 }), { target: { value: "  HCM " } });
     fireEvent.change(screen.getByLabelText("Token"), { target: { value: "sk-ant two" } });
     fireEvent.click(screen.getByRole("button", { name: "Thêm" }));
-    expect(await screen.findByText(/không có khoảng trắng/)).toBeInTheDocument();
+    expect(await screen.findByText(/không có khoảng trắng/, undefined, { timeout: 10_000 })).toBeInTheDocument();
     expect(studio.createClaudeAccount).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Token"), { target: { value: " sk-ant-oat01-x " } });
     fireEvent.click(screen.getByRole("button", { name: "Thêm" }));

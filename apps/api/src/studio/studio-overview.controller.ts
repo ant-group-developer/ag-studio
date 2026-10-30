@@ -10,6 +10,8 @@ import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
 import { mapErrors } from './http-errors';
 
+interface FarmPoolMachine { id: string; name: string; online: boolean }
+
 export class StudioSettingsDto {
   /** Claude calls at once for the whole Studio (chat and steps that run on their own). */
   @IsOptional() @IsInt() @Min(1) @Max(100) claudeMaxConcurrent?: number;
@@ -83,16 +85,26 @@ export class StudioOverviewController {
     }
   }
 
-  /** Studio admin: the farm's pools (`pool` of each machine) and how many machines each has; none when out of reach. */
+  /**
+   * The farm's pools (`pool` of each machine) with their machines (name, online), and the shared machines (no pool):
+   * what a team's pool is picked from on its Resources tab. Machine names are on the Queue for everyone already.
+   * `ok: false` when the farm is out of reach.
+   */
   @Get('farm/pools')
-  async farmPools(@Req() req: Request) {
-    await this.admin.requireAdmin(req);
+  async farmPools() {
     try {
-      const counts = new Map<string, number>();
-      for (const n of (await this.engine.farmNodes()).nodes) if (n.pool) counts.set(n.pool, (counts.get(n.pool) ?? 0) + 1);
-      return { pools: [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([pool, machines]) => ({ pool, machines })) };
+      const pools = new Map<string, FarmPoolMachine[]>();
+      const shared: FarmPoolMachine[] = [];
+      for (const n of (await this.engine.farmNodes()).nodes) {
+        const m = { id: n.id, name: n.name, online: n.online };
+        if (n.pool) pools.set(n.pool, [...(pools.get(n.pool) ?? []), m]); else shared.push(m);
+      }
+      return {
+        ok: true, shared,
+        pools: [...pools].sort(([a], [b]) => a.localeCompare(b)).map(([pool, machines]) => ({ pool, machines })),
+      };
     } catch {
-      return { pools: [] };
+      return { ok: false, shared: [], pools: [] };
     }
   }
 

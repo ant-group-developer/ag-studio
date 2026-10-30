@@ -86,4 +86,18 @@ describe('StudioOverviewController (real database)', () => {
     await expect(ctl.settings({ claudeMaxConcurrent: 4, assistantName: 'x'.repeat(41) }, req('auth0|admin'))).rejects.toMatchObject({ status: 422 });
     expect(await ctl.claude()).toMatchObject({ max: 5, assistantName: 'Claude' });
   });
+
+  it("the farm's pools with their machines, and the shared machines, to pick a team's pool from", async () => {
+    const hcm = { ...node, id: '7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', name: 'hcm-render', online: false, pool: 'hcm' };
+    let farmUp = true;
+    const engine = { ...s.engine, farmNodes: async () => { if (!farmUp) throw new Error('farm down'); return { nodes: [node, hcm] }; } };
+    const ctl = new StudioOverviewController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), config());
+    expect(await ctl.farmPools()).toEqual({
+      ok: true,
+      shared: [{ id: node.id, name: 'render-01', online: true }],
+      pools: [{ pool: 'hcm', machines: [{ id: hcm.id, name: 'hcm-render', online: false }] }],
+    });
+    farmUp = false;
+    expect(await ctl.farmPools()).toEqual({ ok: false, shared: [], pools: [] });
+  });
 });
