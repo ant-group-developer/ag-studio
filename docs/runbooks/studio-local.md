@@ -36,9 +36,10 @@ Studio dời sang **3101** (`apps/web/.env` → `VITE_STUDIO_API_URL`).
 node scripts/local-stack.mjs up
 ```
 
-- Bật theo thứ tự ag-go-api → farm hub → Studio API → Studio worker → render worker → scan worker → Studio web, đợi
-  từng dịch vụ có cổng trả 200 rồi mới sang dịch vụ sau. Dịch vụ đang chạy sẵn thì bỏ qua.
-- `up all` bật thêm ag-go worker, farm web, ag-go web; `up studio-web go-web` chỉ bật đúng các dịch vụ nêu tên.
+- Bật hết theo thứ tự ag-go-api → ag-go worker → farm hub → Studio API → Studio worker → render worker → scan worker
+  → Studio web → farm web (3011) → ag-go web (5173), đợi từng dịch vụ có cổng trả 200 rồi mới sang dịch vụ sau. Dịch
+  vụ đang chạy sẵn thì bỏ qua.
+- `up studio-web go-web` chỉ bật đúng các dịch vụ nêu tên (`up all` giống `up`).
 - Log từng dịch vụ: `E:\ag-local\dev-run\<tên>.log`; pid lưu ở `E:\ag-local\dev-run\local-stack.json`.
 
 ```bash

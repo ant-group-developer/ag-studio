@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Bật / tắt / xem cả stack Studio chạy trực tiếp trên máy (không Docker). Xem docs/runbooks/studio-local.md.
 //
-//   node scripts/local-stack.mjs up [tên...|all]     bật (mặc định: các dịch vụ chính; "all" thêm ag-go worker, farm web, ag-go web)
+//   node scripts/local-stack.mjs up [tên...|all]     bật (mặc định = all: ag-go api/worker/web, farm api/web, Studio, worker render/scan)
 //   node scripts/local-stack.mjs down [tên...|all]   tắt những gì script này đã bật
 //   node scripts/local-stack.mjs status              dịch vụ nào đang lên
 //

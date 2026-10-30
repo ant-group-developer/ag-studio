@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs script without type declarations
 import { lanAddress, planServices, selectServices, signUrlFixes } from "../../scripts/local-stack-lib.mjs";
 
-type Service = { name: string; cwd: string; command: string; args: string[]; env: Record<string, string>; health: string | null; optional: boolean; log: string };
+type Service = { name: string; cwd: string; command: string; args: string[]; env: Record<string, string>; health: string | null; log: string };
 
 const REPO = resolve("E:/CODE/ag-studio");
 
@@ -58,14 +58,12 @@ describe("planServices", () => {
 describe("selectServices", () => {
   const services = planServices({ repoRoot: REPO, env: {} }) as Service[];
 
-  it("leaves the optional ones (ag-go worker, farm web, ag-go web) out by default", () => {
-    expect((selectServices(services, []) as Service[]).map((s) => s.name)).toEqual([
-      "go-api", "farm-api", "studio-api", "studio-worker", "render-worker", "scan-worker", "studio-web",
-    ]);
+  it("takes everything by default or with 'all', the ag-go worker, farm web and ag-go web included", () => {
+    expect(selectServices(services, [])).toEqual(services);
+    expect(selectServices(services, ["all"])).toEqual(services);
   });
 
-  it("takes everything with 'all', or exactly the names given, in stack order", () => {
-    expect(selectServices(services, ["all"])).toHaveLength(10);
+  it("takes exactly the names given, in stack order", () => {
     expect((selectServices(services, ["studio-web", "go-api"]) as Service[]).map((s) => s.name)).toEqual(["go-api", "studio-web"]);
   });
 
