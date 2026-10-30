@@ -83,14 +83,26 @@ function AddForm() {
   return (
     <section className="ws-admin__section" aria-label={t("ws.claudeAccounts.add")}>
       <div className="ws-admin__head"><h2>{t("ws.claudeAccounts.add")}</h2></div>
-      <form className="ws-admin__form" onSubmit={(e) => { e.preventDefault(); if (ready) add.mutate(); }}>
-        <Input aria-label={t("ws.claudeAccounts.name")} placeholder={t("ws.claudeAccounts.namePlaceholder")} value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
-        <Input.Password aria-label={t("ws.claudeAccounts.token")} placeholder={t("ws.claudeAccounts.tokenPlaceholder")} value={token} autoComplete="off"
-          visibilityToggle={false} onChange={(e) => setToken(e.target.value)} />
-        <InputNumber aria-label={t("ws.claudeAccounts.max")} placeholder={t("ws.claudeAccounts.maxPlaceholder")} min={1} max={100} precision={0} value={max}
-          onChange={(v) => setMax(v)} style={{ width: 200 }} />
-        <Button type="primary" htmlType="submit" disabled={!ready} loading={add.isPending}>{t("ws.claudeAccounts.addButton")}</Button>
-        <p className="ws-admin__note">{t("ws.claudeAccounts.tokenHelp")}</p>
+      {/* each field with its label and what it is for: placeholders alone did not say */}
+      <form className="ws-admin__form ws-admin__form--fields" onSubmit={(e) => { e.preventDefault(); if (ready) add.mutate(); }}>
+        <label className="ws-admin__field">
+          <span className="ws-admin__label">{t("ws.claudeAccounts.name")}</span>
+          <Input placeholder={t("ws.claudeAccounts.namePlaceholder")} value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
+          <span className="ws-admin__note">{t("ws.claudeAccounts.nameHelp")}</span>
+        </label>
+        <label className="ws-admin__field">
+          <span className="ws-admin__label">{t("ws.claudeAccounts.token")}</span>
+          <Input.Password placeholder={t("ws.claudeAccounts.tokenPlaceholder")} value={token} autoComplete="off"
+            visibilityToggle={false} onChange={(e) => setToken(e.target.value)} />
+          <span className="ws-admin__note">{t("ws.claudeAccounts.tokenHelp")}</span>
+        </label>
+        <label className="ws-admin__field">
+          <span className="ws-admin__label">{t("ws.claudeAccounts.max")}</span>
+          <InputNumber placeholder={t("ws.claudeAccounts.maxPlaceholder")} min={1} max={100} precision={0} value={max}
+            onChange={(v) => setMax(v)} style={{ width: 200 }} />
+          <span className="ws-admin__note">{t("ws.claudeAccounts.maxHelp")}</span>
+        </label>
+        <div><Button type="primary" htmlType="submit" disabled={!ready} loading={add.isPending}>{t("ws.claudeAccounts.addButton")}</Button></div>
       </form>
     </section>
   );
@@ -121,11 +133,12 @@ function AccountRow({ account: a, canStoreTokens }: { account: ClaudeAccount; ca
     <li className="ws-admin__track" aria-label={a.name}>
       <div>
         <strong>{a.name}</strong>
-        {a.isDefault ? <span className="ws-admin__note"> · {t("ws.claudeAccounts.default")}</span> : null}
+        {/* renamed: still say it is the default one */}
+        {a.isDefault && a.name.toLowerCase() !== t("ws.claudeAccounts.default").toLowerCase() ? <span className="ws-admin__note"> · {t("ws.claudeAccounts.default")}</span> : null}
         {a.enabled ? null : <span className="ws-admin__note"> · {t("ws.claudeAccounts.off")}</span>}
         <div className="ws-admin__note">
           {a.isDefault ? t("ws.claudeAccounts.defaultToken") : t("ws.claudeAccounts.tokenEnds", { hint: a.tokenHint ?? "····" })}
-          {" · "}{t("ws.claudeAccounts.runningLine", { running: a.running ?? 0, max: a.maxConcurrent ?? t("ws.claudeAccounts.noCap") })}
+          {" · "}{a.maxConcurrent === null ? t("ws.claudeAccounts.runningNoCap", { running: a.running ?? 0 }) : t("ws.claudeAccounts.runningLine", { running: a.running ?? 0, max: a.maxConcurrent })}
           {a.lastUsedAt ? ` · ${t("ws.claudeAccounts.lastUsed", { at: when(a.lastUsedAt) })}` : ""}
         </div>
         <div className="ws-admin__note">

@@ -82,7 +82,7 @@ export function QueuePage() {
                     {(queue?.claudeAccounts ?? []).map((a) => (
                       <li key={a.id}>
                         <strong>{a.name}</strong>{a.enabled ? "" : ` · ${t("ws.claudeAccounts.off")}`}
-                        <div className="ws-admin__note">{t("ws.claudeAccounts.runningLine", { running: a.running, max: a.maxConcurrent ?? t("ws.claudeAccounts.noCap") })}</div>
+                        <div className="ws-admin__note">{a.maxConcurrent === null ? t("ws.claudeAccounts.runningNoCap", { running: a.running }) : t("ws.claudeAccounts.runningLine", { running: a.running, max: a.maxConcurrent })}</div>
                         {a.rateLimitedUntil ? <div className="ws-admin__note ws-admin__bad">{t("ws.claudeAccounts.limited", { until: when(a.rateLimitedUntil) })}</div> : null}
                         {a.lastError ? <div className="ws-admin__note ws-admin__bad">{t("ws.claudeAccounts.lastError", { error: a.lastError })}</div> : null}
                       </li>
