@@ -13,6 +13,7 @@ export const wsEn: Messages<typeof wsVi> = {
     manageTeams: "Manage teams",
     breadcrumbs: "Location",
     queue: "Queue",
+    claudeAccounts: "Claude accounts",
     audit: "Activity",
     stats: "Stats",
     music: "Music library",

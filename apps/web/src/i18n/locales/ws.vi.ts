@@ -10,6 +10,7 @@ export const wsVi = {
     manageTeams: "Quản lý nhóm",
     breadcrumbs: "Vị trí",
     queue: "Hàng đợi",
+    claudeAccounts: "Tài khoản Claude",
     audit: "Nhật ký",
     stats: "Thống kê",
     music: "Kho nhạc",

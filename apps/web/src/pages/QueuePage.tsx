@@ -75,11 +75,11 @@ export function QueuePage() {
               {me?.isAdmin ? <><h2>{t("ws.admin.assistant.title")}</h2><AssistantNameForm /></> : null}
               <h2>{t("ws.admin.claude.title")}</h2>
               {queue ? <ClaudeSettingsForm usage={queue.claude} isAdmin={me?.isAdmin ?? false} /> : null}
-              {me?.isAdmin && queue?.claudeAccounts ? (
+              {me?.isAdmin ? (
                 <>
                   <h2>{t("ws.claudeAccounts.title")}</h2>
                   <ul className="ws-admin__list">
-                    {queue.claudeAccounts.map((a) => (
+                    {(queue?.claudeAccounts ?? []).map((a) => (
                       <li key={a.id}>
                         <strong>{a.name}</strong>{a.enabled ? "" : ` · ${t("ws.claudeAccounts.off")}`}
                         <div className="ws-admin__note">{t("ws.claudeAccounts.runningLine", { running: a.running, max: a.maxConcurrent ?? t("ws.claudeAccounts.noCap") })}</div>

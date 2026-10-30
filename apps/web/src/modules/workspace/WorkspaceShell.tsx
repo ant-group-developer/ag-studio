@@ -95,6 +95,7 @@ export function WorkspaceShell({ teamId, teamCrumb = true, project, crumbs = [],
           {canReview ? <Link to="/stats" className="ws-icon-button">{t("ws.shell.stats")}</Link> : null}
           {canReview ? <Link to="/audit" className="ws-icon-button">{t("ws.shell.audit")}</Link> : null}
           {isAdmin ? <Link to="/queue" className="ws-icon-button">{t("ws.shell.queue")}</Link> : null}
+          {isAdmin ? <Link to="/claude-accounts" className="ws-icon-button">{t("ws.shell.claudeAccounts")}</Link> : null}
           <Dropdown menu={menu} trigger={["click"]} placement="bottomRight">
             <button type="button" className="ws-icon-button" aria-label={nickname}>
               <Avatar src={picture} size="small">{picture ? undefined : initials}</Avatar>
