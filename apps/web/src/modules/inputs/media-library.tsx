@@ -6,6 +6,7 @@ import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type MediaItem, type MediaKind, type MediaUseKind } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
 import { useUploadProgress } from "../common/upload-progress";
+import { AgMusicPicker, useAgMusicEnabled } from "./ag-music-picker";
 import "./media-library.css";
 
 /** The library's kinds a use takes. */
@@ -87,6 +88,7 @@ function MediaCard({ item, selected, inProject, onToggle, onDelete, deleting }: 
           {inProject ? <span className="ws-mcard__in">{t("ws.library.inProject")}</span> : null}
         </span>
         <span className="ws-mcard__name" title={item.name}>{item.name}</span>
+        {item.origin?.system === "ag-music" ? <span className="ws-mcard__origin">{t("ws.library.agMusic.badge")}</span> : null}
         <span className="ws-mcard__meta">{sizeOf(item.bytes)} · {used}</span>
       </button>
       {item.kind === "audio" ? <audio className="ws-mcard__audio" src={item.previewUrl} controls preload="none" aria-label={item.name} /> : null}
@@ -118,6 +120,8 @@ export function MediaLibraryDrawer({ open, projectId, use, videos, currentVideoI
   const [picked, setPicked] = useState<string[]>([]);
   const [targets, setTargets] = useState<string[]>([]);
   const input = useRef<HTMLInputElement>(null);
+  const [agMusic, setAgMusic] = useState(false);
+  const agMusicOn = useAgMusicEnabled(open && use === "audio");
   useEffect(() => {
     if (!open) return;
     setPicked([]); setQ(""); setKind("all");
@@ -190,6 +194,9 @@ export function MediaLibraryDrawer({ open, projectId, use, videos, currentVideoI
         </Button>
         <input ref={input} type="file" multiple hidden accept={ACCEPT[use]} aria-label={t("ws.library.upload")}
           onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) upload.mutate(files); }} />
+        {use === "audio" && agMusicOn ? (
+          <Button size="small" icon={<Music size={14} />} onClick={() => setAgMusic(true)}>{t("ws.library.agMusic.open")}</Button>
+        ) : null}
       </div>
       {list.isLoading ? <div className="ws-center"><Spin /></div> : items.length ? (
         <div className="ws-mlib__grid">
@@ -206,6 +213,8 @@ export function MediaLibraryDrawer({ open, projectId, use, videos, currentVideoI
           <VideoChecklist videos={videos} value={targets} onChange={setTargets} currentVideoId={currentVideoId} label={t("ws.library.videosLabel")} />
         </div>
       ) : null}
+      <AgMusicPicker open={agMusic} onClose={() => setAgMusic(false)}
+        onFetched={(item) => { void qc.invalidateQueries({ queryKey: ["media"] }); setPicked((p) => (p.includes(item.id) ? p : [...p, item.id])); }} />
     </Drawer>
   );
 }

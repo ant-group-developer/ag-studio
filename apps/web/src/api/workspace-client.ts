@@ -343,6 +343,19 @@ export interface MediaItem {
   id: string; kind: MediaKind; name: string; bytes: number; createdAt: string;
   usedIn: { projectId: string; name: string }[];
   previewUrl: string;
+  /** Fetched by Studio from ag-music for the person (not uploaded); null for an upload. */
+  origin?: MediaOrigin | null;
+}
+/** Where an item of the library came from: an ag-music track (2026-11-01). */
+export interface MediaOrigin {
+  system: "ag-music"; trackId: number; fileId: number; code: string | null; type: AgMusicTrackType; origin: string | null; copyrightStatus: string | null;
+}
+export const AG_MUSIC_TRACK_TYPES = ["SONG", "ASSISTED", "ASSET", "MUSIC_INDEX"] as const;
+export type AgMusicTrackType = (typeof AG_MUSIC_TRACK_TYPES)[number];
+/** An approved ag-music track the person may see; `mediaId`: their library item already fetched from it. */
+export interface AgMusicTrack {
+  trackId: number; code: string | null; type: AgMusicTrackType; name: string; artists: string[]; categories: string[];
+  durationMs: number | null; bpm: number | null; thumbnailUrl: string | null; mediaId: string | null;
 }
 /** The project's own words and picture, the branding's, and which videos picked their own. */
 export interface ProjectLookView {
@@ -762,6 +775,22 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
     /** 409 `media_in_use` (`projects`: where) while a project uses it. */
     deleteMedia(mediaId: string): Promise<void> {
       return call("DELETE", `/api/me/media/${enc(mediaId)}`);
+    },
+    /** Whether Studio is wired to ag-music. */
+    agMusicStatus(): Promise<{ enabled: boolean }> {
+      return call("GET", "/api/me/media/ag-music");
+    },
+    /** Approved ag-music tracks the person may see there, newest first (403 `ag_music_forbidden`: no access to ag-music). */
+    listAgMusicTracks(q: { q?: string; type?: AgMusicTrackType; page?: number; size?: number } = {}): Promise<{ items: AgMusicTrack[]; total: number; page: number; size: number }> {
+      return call("GET", `/api/me/media/ag-music/tracks${buildQuery({ q: q.q, type: q.type, page: q.page, size: q.size })}`);
+    },
+    /** A link to listen to an ag-music track before picking it. */
+    agMusicListen(trackId: number): Promise<{ url: string; expiresAt: string }> {
+      return call("GET", `/api/me/media/ag-music/tracks/${trackId}/listen`);
+    },
+    /** The track's main audio into the person's library (the item already fetched from it when there is one). */
+    fetchFromAgMusic(trackId: number): Promise<MediaItem> {
+      return call("POST", "/api/me/media/ag-music", { trackId });
     },
     /** Videos of the project's ag-go projects (the same for everyone of the project), with where each stands here. */
     searchFootage(projectId: string, q: FootageQuery = {}): Promise<{ items: FootageItem[]; nextCursor: string | null; total: number }> {

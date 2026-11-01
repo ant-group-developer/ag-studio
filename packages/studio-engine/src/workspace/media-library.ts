@@ -29,15 +29,25 @@ export type MediaKind = "video" | "image" | "audio";
 /** What a project uses an item as. */
 export type MediaUse = "footage" | "audio" | "reference";
 
+/**
+ * Where Studio fetched an item from for its owner instead of their upload (2026-11-01): the main audio of an approved
+ * ag-music track, with what ag-music says of it (`type`, `origin`, `copyrightStatus` are its constant names).
+ */
+export interface MediaOrigin {
+  system: "ag-music"; trackId: number; fileId: number; code: string | null; type: string; origin: string | null;
+  copyrightStatus: string | null;
+}
+
 export interface MediaItem {
   id: string; owner_id: string; kind: MediaKind; key: string; name: string; bytes: number; clip_key: string | null;
-  created_at: string; deleted_at: string | null;
+  created_at: string; deleted_at: string | null; origin: MediaOrigin | null;
 }
 
 /** An item as the library lists it: where it is used (projects the owner can open or not, by name). */
 export interface MediaItemView {
   id: string; kind: MediaKind; name: string; bytes: number; createdAt: string;
   usedIn: { projectId: string; name: string }[];
+  origin: MediaOrigin | null;
 }
 
 /** The largest file of each kind (a whole video, a photo, a whole music track). */
@@ -93,7 +103,7 @@ export async function requireMediaItem(db: StudioDb, ownerId: string, id: string
  * The file a browser put at `key` becomes an item of the owner's library (the same key again is the item already
  * there). Larger than its kind takes: the object is dropped and `invalid` (`file_too_large`).
  */
-export async function addMediaItem(db: StudioDb, bucket: StudioBucket, p: { ownerId: string; key: string; name: string }, now = new Date().toISOString()): Promise<MediaItem> {
+export async function addMediaItem(db: StudioDb, bucket: StudioBucket, p: { ownerId: string; key: string; name: string; origin?: MediaOrigin }, now = new Date().toISOString()): Promise<MediaItem> {
   const at = mediaAt(p.ownerId, p.key);
   if (!at) throw new StudioRunError("invalid", "Mã tải lên không hợp lệ", { code: "upload_key" });
   const known = await getMediaItem(db, at.mediaId);
@@ -110,10 +120,30 @@ export async function addMediaItem(db: StudioDb, bucket: StudioBucket, p: { owne
   }
   const name = p.name.trim().slice(0, 255) || `${at.mediaId}${extname(p.key)}`;
   await db.run(
-    "INSERT INTO media_items (id, owner_id, kind, key, name, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-    [at.mediaId, p.ownerId, at.kind, p.key, name, head.size, now],
+    "INSERT INTO media_items (id, owner_id, kind, key, name, bytes, created_at, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+    [at.mediaId, p.ownerId, at.kind, p.key, name, head.size, now, p.origin ? JSON.stringify(p.origin) : null],
   );
   return (await getMediaItem(db, at.mediaId))!;
+}
+
+/** The owner's item fetched from ag-music track `trackId` (not deleted), if they picked it before. */
+export async function findAgMusicItem(db: StudioDb, ownerId: string, trackId: number): Promise<MediaItem | undefined> {
+  return db.get<MediaItem>(
+    "SELECT * FROM media_items WHERE owner_id = ? AND origin->>'system' = 'ag-music' AND origin->>'trackId' = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
+    [ownerId, String(trackId)],
+  );
+}
+
+/** Which of these ag-music tracks the owner already has in their library: track id → item id. */
+export async function agMusicItemIds(db: StudioDb, ownerId: string, trackIds: number[]): Promise<Map<number, string>> {
+  if (!trackIds.length) return new Map();
+  const rows = await db.all<{ id: string; track_id: string }>(
+    `SELECT id, origin->>'trackId' AS track_id FROM media_items
+     WHERE owner_id = ? AND origin->>'system' = 'ag-music' AND origin->>'trackId' IN (${trackIds.map(() => "?").join(", ")}) AND deleted_at IS NULL
+     ORDER BY created_at`,
+    [ownerId, ...trackIds.map(String)],
+  );
+  return new Map(rows.map((r) => [Number(r.track_id), r.id]));
 }
 
 /** The owner's library, newest first: by kind and a part of the name, with the projects each is used in. */
@@ -130,7 +160,7 @@ export async function listMediaItems(db: StudioDb, ownerId: string, o: { kind?: 
   );
   const used = await mediaUsage(db, rows.map((r) => r.id));
   return {
-    items: rows.map((r) => ({ id: r.id, kind: r.kind, name: r.name, bytes: Number(r.bytes), createdAt: r.created_at, usedIn: used.get(r.id) ?? [] })),
+    items: rows.map((r) => ({ id: r.id, kind: r.kind, name: r.name, bytes: Number(r.bytes), createdAt: r.created_at, usedIn: used.get(r.id) ?? [], origin: r.origin ?? null })),
     total: Number(totals?.n ?? 0), bytes: Number(totals?.bytes ?? 0),
   };
 }

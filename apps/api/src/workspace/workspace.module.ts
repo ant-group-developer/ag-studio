@@ -12,6 +12,8 @@ import { ProjectsController } from './projects.controller';
 import { ThreadsController } from './threads.controller';
 import { VideosController } from './videos.controller';
 import { WorkspaceService } from './workspace.service';
+import { AgMusicController } from './ag-music.controller';
+import { AgMusicService } from './ag-music.service';
 import { MediaController } from './media.controller';
 import { MediaLibraryService } from './media-library.service';
 import { ProjectFootageService } from './project-footage.service';

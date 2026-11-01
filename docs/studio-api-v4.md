@@ -107,6 +107,23 @@ interface TeamSkill {
   - `POST music/uploads` (admin Studio) `{name, size, contentType?}` → `{key, url, contentType, expiresAt}`: link PUT lên R2
     (`uploads/library/<uuid>`, 1 giờ); > 100 MB → 413 `audio_too_large`
   - `PATCH music/:trackId` (admin Studio) `{displayName?, moods?, active?}` → bài nhạc; 404 `not_found`
+- Nhạc từ ag-music-v2 vào thư viện media của từng người (2026-11-01, AMV2-98): không phải tải bài ở ag-music về rồi tải
+  lên lại. API gọi ag-music (`AG_MUSIC_API_URL`, có `/api/v1`; bỏ trống thì tắt) **bằng chính access token của người
+  dùng** (cùng tenant, cùng audience Auth0, không cần khoá): ag-music kiểm người đó xem được bài (`music.tracks.read` +
+  phạm vi xem) và chỉ trả bài đã duyệt (SONG `PASSED`; nhạc AI / asset / index không có bước duyệt). Item lấy về có
+  `origin {system: 'ag-music', trackId, fileId, code, type, origin, copyrightStatus}` (cột `media_items.origin`,
+  migration 0008); item tải lên có `origin: null`.
+  - `GET me/media/ag-music` → `{enabled}`: web chỉ hiện nút "Từ ag-music" (drawer Thư viện của tôi, khi chọn audio) khi bật
+  - `GET me/media/ag-music/tracks?q&type&page&size` → `{items: {trackId, code, type, name, artists, categories, durationMs,
+    bpm, thumbnailUrl, mediaId}[], total, page, size}`: mới trước; `type` một trong `SONG|ASSISTED|ASSET|MUSIC_INDEX`,
+    `page` từ 0, `size` ≤ 50; `mediaId` là item người đó đã lấy từ bài này (null nếu chưa)
+  - `GET me/media/ag-music/tracks/:trackId/listen` → `{url, expiresAt}`: link nghe thử thẳng từ kho của ag-music
+  - `POST me/media/ag-music {trackId}` → item (như `POST me/media`): ag-music tính một lượt tải (trừ chủ bài), API chép
+    file audio chính từ link ag-music trả về lên R2 dưới thư mục của người đó (≤ 300 MB). Bài đã lấy trước đó thì trả item
+    cũ, không gọi ag-music nữa
+  - Lỗi: thiếu cấu hình 503 `ag_music_disabled`; ag-music từ chối quyền 403 `ag_music_forbidden`; không có bài 404
+    `ag_music_not_found`; bài chưa duyệt 422 `track_not_approved`; file quá lớn 413 `file_too_large`; ag-music hay kho
+    file không trả lời 502 `ag_music_unavailable`
 
 ## Nhật ký hoạt động (`/audit`)
 
