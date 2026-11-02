@@ -147,6 +147,11 @@
   margin-bottom: 20px;
 }
 
+.login-expired.ant-alert {
+  margin: -8px 0 16px;
+  border-radius: 12px;
+}
+
 .login-button.ant-btn {
   height: 50px;
   font-size: 15px;
