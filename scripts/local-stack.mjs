@@ -7,16 +7,17 @@
 //
 // `up` cũng trỏ `sign_url` của chủ job `studio` và `ag-go` trong DB farm (container postgres16) về địa chỉ LAN hiện tại
 // của máy: đổi IP (DHCP) thì mọi job farm hỏng ở bước tải đầu tiên với `fetch failed`. `status` chỉ báo khi lệch.
+// `up` và `status` cũng báo DB farm còn thiếu migration nào của ag-farm (hub mới + DB cũ = worker nhận 500), kèm lệnh chạy.
 //
 // Dịch vụ đã lên (health trả 200, hoặc tiến trình do script bật còn sống) thì `up` bỏ qua, nên chạy lại an toàn.
 // `down` chỉ tắt tiến trình do script bật (pid trong <AG_LOCAL_DIR>/dev-run/local-stack.json), không đụng tiến trình
 // bạn tự bật ở terminal khác, và không đụng container Docker. Không in giá trị biến môi trường nào.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lanAddress, planServices, selectServices, signUrlFixes } from "./local-stack-lib.mjs";
+import { lanAddress, pendingMigrations, planServices, selectServices, signUrlFixes } from "./local-stack-lib.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const services = planServices({ repoRoot, env: process.env });
@@ -45,6 +46,9 @@ async function waitHealthy(url, ms) {
   return false;
 }
 const isUp = async (s, state) => (s.health ? healthy(s.health) : alive(state[s.name]?.pid));
+
+const WINDOWS_LAUNCHER = `const c = require("node:child_process").spawn(process.argv[1], { stdio: "inherit", shell: true, windowsHide: true });
+c.on("exit", (code) => process.exit(code ?? 1));`;
 
 function stop(pid) {
   if (isWindows) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
@@ -77,6 +81,20 @@ function syncSignUrls(fix) {
   }
 }
 
+/** Only says which ag-farm migrations the database lacks, and how to run them: they change a shared schema. */
+function checkFarmMigrations() {
+  const apiDir = services.find((s) => s.name === "farm-api").cwd;
+  const migDir = resolve(apiDir, "src/database/migrations");
+  if (!existsSync(migDir)) return;
+  let pending;
+  try {
+    pending = pendingMigrations(readdirSync(migDir), psql("SELECT timestamp FROM migrations").trim().split(/\r?\n/).filter(Boolean));
+  } catch (e) { console.log(`? migration farm: không đọc được DB farm (${e.message})`); return; }
+  if (!pending.length) { console.log("= migration farm: đủ"); return; }
+  console.log(`! migration farm: DB thiếu ${pending.join(", ")} (hub sẽ trả 500 cho heartbeat/claim của worker). Chạy:`);
+  console.log(`    cd ${apiDir}; node --require ts-node/register ../../node_modules/typeorm/cli.js migration:run -d src/database/data-source.ts`);
+}
+
 async function up(list) {
   const state = readState();
   for (const s of list) {
@@ -84,9 +102,12 @@ async function up(list) {
     if (!existsSync(s.cwd)) { console.log(`! ${s.name}: không thấy thư mục ${s.cwd}`); return 1; }
     mkdirSync(dirname(s.log), { recursive: true });
     const out = openSync(s.log, "a");
-    // shell trên Windows: yarn và corepack là file .cmd; đối số ở đây không có dấu nháy nên an toàn.
-    const child = spawn(s.command, s.args, {
-      cwd: s.cwd, env: { ...process.env, ...s.env }, detached: true, stdio: ["ignore", out, out], windowsHide: true, shell: isWindows,
+    // Windows: yarn và corepack là file .cmd nên cần cmd.exe, nhưng cmd.exe tách riêng (detached) không có console và
+    // tiến trình con của nó mất stdout/stderr (log trống). Nên tách riêng một node trung gian, node đó mới chạy lệnh qua
+    // shell. Đối số ở đây không có dấu nháy nên ghép chuỗi an toàn.
+    const [file, args] = isWindows ? [process.execPath, ["-e", WINDOWS_LAUNCHER, [s.command, ...s.args].join(" ")]] : [s.command, s.args];
+    const child = spawn(file, args, {
+      cwd: s.cwd, env: { ...process.env, ...s.env }, detached: true, stdio: ["ignore", out, out], windowsHide: true,
     });
     child.unref();
     state[s.name] = { pid: child.pid, started_at: new Date().toISOString() };
@@ -104,6 +125,7 @@ async function up(list) {
     }
   }
   syncSignUrls(true);
+  checkFarmMigrations();
   return 0;
 }
 
@@ -131,10 +153,13 @@ async function status(list) {
     console.log(`${mark} ${s.name.padEnd(14)} ${(s.health ?? "(không có cổng)").padEnd(36)} ${who}`);
   }
   syncSignUrls(false);
+  checkFarmMigrations();
   return 0;
 }
 
 const [command = "status", ...names] = process.argv.slice(2);
+// Tên tab terminal (OSC 0: Windows Terminal, VS Code, phần lớn terminal khác) để biết tab này của repo nào.
+if (process.stdout.isTTY) process.stdout.write(`\x1b]0;${basename(repoRoot)} · local-stack ${command}\x07`);
 try {
   const list = command === "status" && names.length === 0 ? services : selectServices(services, names);
   const run = { up, down, status }[command];

@@ -5,7 +5,7 @@
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs script without type declarations
-import { lanAddress, planServices, selectServices, signUrlFixes } from "../../scripts/local-stack-lib.mjs";
+import { lanAddress, pendingMigrations, planServices, selectServices, signUrlFixes } from "../../scripts/local-stack-lib.mjs";
 
 type Service = { name: string; cwd: string; command: string; args: string[]; env: Record<string, string>; health: string | null; log: string };
 
@@ -94,5 +94,18 @@ describe("the farm's sign_url follows this machine's address", () => {
     ], "192.168.1.27")).toEqual([
       { id: "studio", from: "http://192.168.1.2:3101/api/farm/sign", to: "http://192.168.1.27:3101/api/farm/sign" },
     ]);
+  });
+});
+
+describe("the farm's database is behind its hub", () => {
+  it("lists the migration files not in the migrations table, ignoring specs and other files", () => {
+    expect(pendingMigrations([
+      "2900000000000-node-accept-shared.ts",
+      "2700000000000-node-pool.ts",
+      "2800000000000-node-pools.ts",
+      "studio-beats.db-spec.ts",
+      "index.ts",
+    ], ["2700000000000", 2600000000000])).toEqual(["2800000000000-node-pools", "2900000000000-node-accept-shared"]);
+    expect(pendingMigrations(["2700000000000-node-pool.ts"], ["2700000000000"])).toEqual([]);
   });
 });

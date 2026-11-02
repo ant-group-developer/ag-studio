@@ -68,3 +68,17 @@ export function signUrlFixes(owners, ip) {
   const want = { studio: `http://${ip}:3101/api/farm/sign`, "ag-go": `http://${ip}:3738/api/analysis/farm/sign` };
   return owners.filter((o) => want[o.id] && o.sign_url !== want[o.id]).map((o) => ({ id: o.id, from: o.sign_url, to: want[o.id] }));
 }
+
+/**
+ * ag-farm's migrations (`apps/api/src/database/migrations/<13-digit timestamp>-<name>.ts`) that are not in its
+ * `migrations` table. The hub does not run them itself (`migrationsRun: false`): a hub built past its database answers
+ * every worker heartbeat and claim with HTTP 500 while its /health still says ok.
+ */
+export function pendingMigrations(files, appliedTimestamps) {
+  const applied = new Set(appliedTimestamps.map(String));
+  return files
+    .map((f) => /^(\d{13})-.+\.ts$/.exec(f))
+    .filter((m) => m && !applied.has(m[1]))
+    .map((m) => m[0].replace(/\.ts$/, ""))
+    .sort();
+}
