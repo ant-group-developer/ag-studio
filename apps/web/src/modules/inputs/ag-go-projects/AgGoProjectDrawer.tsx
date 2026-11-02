@@ -250,72 +250,76 @@ export function AgGoProjectDrawer({ projectId, picked, open, onClose }: { projec
       extra={selected.size > 0 ? (
         <Button type="primary" icon={<Plus size={16} />} loading={busy} onClick={() => void addSelected()}>{t("ws.agp.addSelected", { count: selected.size })}</Button>
       ) : null}
-      styles={{ body: { background: token.colorBgLayout, padding: 16 } }}
+      styles={{ body: { background: token.colorBgLayout, padding: 0 } }}
     >
-      {list.error ? <Alert closable showIcon type="error" style={{ marginBottom: 16 }} message={t("ws.inputs.agGoUnavailable")} /> : null}
-      <FilterSidebarLayout state={sidebar} activeCount={activeCount} onClear={() => changeFilters({})}
-        sidebar={<ProjectFilterSidebar value={filters} onChange={changeFilters} />} contentStyle={{ padding: "0 12px 12px" }}>
-        <ProTable<AgGoProject>
-          rowKey="id" columns={columns} dataSource={items} loading={view === "list" && list.isFetching} search={false}
-          columnsState={{ persistenceKey: "studio.agp.columns", persistenceType: "localStorage", defaultValue: { createdAt: { show: false } } }}
-          headerTitle={
-            <Space size={12} wrap>
-              <FilterToggleButton state={sidebar} activeCount={activeCount} />
-              <ProjectSearchBox keyword={filters.keyword ?? ""} onSearch={(kw) => changeFilters({ ...filters, keyword: kw || undefined })} onPick={pick} />
-            </Space>
-          }
-          options={{ reload: () => void list.refetch(), density: false, setting: true, fullScreen: false }}
-          pagination={{
-            current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: PAGE_SIZE_OPTIONS, showTotal,
-            onChange: (p, s) => { setPage(s !== pageSize ? 1 : p); setPageSize(s); },
-          }}
-          rowSelection={{
-            selectedRowKeys: [...selectedIds], preserveSelectedRowKeys: true,
-            getCheckboxProps: (p) => ({ disabled: !canSelect(p), "aria-label": p.name }),
-            onChange: (keys, rows) => setSelected((m) => {
-              const wanted = new Set(keys.map(String));
-              const next = new Map([...m].filter(([id]) => wanted.has(id)));
-              for (const r of rows) if (r && wanted.has(r.id)) next.set(r.id, r);
-              return next;
-            }),
-          }}
-          tableAlertRender={false}
-          locale={{ emptyText: <Empty description={<Typography.Text type="secondary">{emptyText}</Typography.Text>} /> }}
-          scroll={{ x: 1400 }} sticky={DRAWER_TABLE_STICKY}
-          tableRender={(_props, _dom, domList) => (
-            <>
-              {domList.toolbar}
-              {selectionAlert}
-              {view === "grid" ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  {list.isLoading ? <ProjectGridSkeleton /> : (
-                    <ProjectGridView
-                      items={items} isLoading={false} emptyText={emptyText}
-                      selectedIds={selectedIds} addedIds={addedIds} stateOf={stateOf} canSelect={canSelect} onToggle={toggle} onOpen={setViewing}
-                      onFilterFolder={(folderId) => applyQuickFilter({ folderIds: [folderId] })}
-                      onFilterLocation={({ countryId, provinceId }) => applyQuickFilter({ countryId, provinceId })}
-                    />
-                  )}
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, paddingBottom: 16 }}>
-                    <Pagination current={page} pageSize={pageSize} total={total} showSizeChanger pageSizeOptions={PAGE_SIZE_OPTIONS} showTotal={showTotal}
-                      onChange={(p, s) => { setPage(s !== pageSize ? 1 : p); setPageSize(s); }} />
+      {/* Padding on an inner box, not the drawer body: sticky items (table header, filter sidebar) stick to the body's
+          content edge, so body padding would leave a gap above them that scrolled rows show through. */}
+      <div style={{ padding: 16 }}>
+        {list.error ? <Alert closable showIcon type="error" style={{ marginBottom: 16 }} message={t("ws.inputs.agGoUnavailable")} /> : null}
+        <FilterSidebarLayout state={sidebar} activeCount={activeCount} onClear={() => changeFilters({})}
+          sidebar={<ProjectFilterSidebar value={filters} onChange={changeFilters} />} contentStyle={{ padding: "0 12px 12px" }}>
+          <ProTable<AgGoProject>
+            rowKey="id" columns={columns} dataSource={items} loading={view === "list" && list.isFetching} search={false}
+            columnsState={{ persistenceKey: "studio.agp.columns", persistenceType: "localStorage", defaultValue: { createdAt: { show: false } } }}
+            headerTitle={
+              <Space size={12} wrap>
+                <FilterToggleButton state={sidebar} activeCount={activeCount} />
+                <ProjectSearchBox keyword={filters.keyword ?? ""} onSearch={(kw) => changeFilters({ ...filters, keyword: kw || undefined })} onPick={pick} />
+              </Space>
+            }
+            options={{ reload: () => void list.refetch(), density: false, setting: true, fullScreen: false }}
+            pagination={{
+              current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: PAGE_SIZE_OPTIONS, showTotal,
+              onChange: (p, s) => { setPage(s !== pageSize ? 1 : p); setPageSize(s); },
+            }}
+            rowSelection={{
+              selectedRowKeys: [...selectedIds], preserveSelectedRowKeys: true,
+              getCheckboxProps: (p) => ({ disabled: !canSelect(p), "aria-label": p.name }),
+              onChange: (keys, rows) => setSelected((m) => {
+                const wanted = new Set(keys.map(String));
+                const next = new Map([...m].filter(([id]) => wanted.has(id)));
+                for (const r of rows) if (r && wanted.has(r.id)) next.set(r.id, r);
+                return next;
+              }),
+            }}
+            tableAlertRender={false}
+            locale={{ emptyText: <Empty description={<Typography.Text type="secondary">{emptyText}</Typography.Text>} /> }}
+            scroll={{ x: 1400 }} sticky={DRAWER_TABLE_STICKY}
+            tableRender={(_props, _dom, domList) => (
+              <>
+                {domList.toolbar}
+                {selectionAlert}
+                {view === "grid" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    {list.isLoading ? <ProjectGridSkeleton /> : (
+                      <ProjectGridView
+                        items={items} isLoading={false} emptyText={emptyText}
+                        selectedIds={selectedIds} addedIds={addedIds} stateOf={stateOf} canSelect={canSelect} onToggle={toggle} onOpen={setViewing}
+                        onFilterFolder={(folderId) => applyQuickFilter({ folderIds: [folderId] })}
+                        onFilterLocation={({ countryId, provinceId }) => applyQuickFilter({ countryId, provinceId })}
+                      />
+                    )}
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, paddingBottom: 16 }}>
+                      <Pagination current={page} pageSize={pageSize} total={total} showSizeChanger pageSizeOptions={PAGE_SIZE_OPTIONS} showTotal={showTotal}
+                        onChange={(p, s) => { setPage(s !== pageSize ? 1 : p); setPageSize(s); }} />
+                    </div>
                   </div>
-                </div>
-              ) : domList.table}
-            </>
-          )}
-          toolBarRender={() => [
-            <SortDropdown<AgGoProjectSort>
-              key="sort" fields={SORT_FIELDS.map((f) => ({ value: f, label: t(`ws.agp.sort.${f}`) }))} sortBy={sort.sortBy} sortOrder={sort.sortOrder}
-              onChange={(c) => { setSort((s) => ({ ...s, ...c })); setPage(1); }}
-            />,
-            <Radio.Group key="view" value={view} onChange={(e) => setView(e.target.value as ViewMode)} buttonStyle="solid" aria-label={t("ws.agp.viewMode")}>
-              <Radio.Button value="list" className="agp-icon-radio" aria-label={t("ws.agp.viewList")} title={t("ws.agp.viewList")}><List size={16} /></Radio.Button>
-              <Radio.Button value="grid" className="agp-icon-radio" aria-label={t("ws.agp.viewGrid")} title={t("ws.agp.viewGrid")}><LayoutGrid size={16} /></Radio.Button>
-            </Radio.Group>,
-          ]}
-        />
-      </FilterSidebarLayout>
+                ) : domList.table}
+              </>
+            )}
+            toolBarRender={() => [
+              <SortDropdown<AgGoProjectSort>
+                key="sort" fields={SORT_FIELDS.map((f) => ({ value: f, label: t(`ws.agp.sort.${f}`) }))} sortBy={sort.sortBy} sortOrder={sort.sortOrder}
+                onChange={(c) => { setSort((s) => ({ ...s, ...c })); setPage(1); }}
+              />,
+              <Radio.Group key="view" value={view} onChange={(e) => setView(e.target.value as ViewMode)} buttonStyle="solid" aria-label={t("ws.agp.viewMode")}>
+                <Radio.Button value="list" className="agp-icon-radio" aria-label={t("ws.agp.viewList")} title={t("ws.agp.viewList")}><List size={16} /></Radio.Button>
+                <Radio.Button value="grid" className="agp-icon-radio" aria-label={t("ws.agp.viewGrid")} title={t("ws.agp.viewGrid")}><LayoutGrid size={16} /></Radio.Button>
+              </Radio.Group>,
+            ]}
+          />
+        </FilterSidebarLayout>
+      </div>
       <AgGoProjectDetailDrawer
         project={viewing} access={viewing ? accessById.get(viewing.id) : undefined} added={viewing ? addedIds.has(viewing.id) : false}
         adding={addingOne} onAdd={(p) => void addOne(p)} onClose={() => setViewing(null)}

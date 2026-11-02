@@ -1,12 +1,12 @@
-import { Button, Typography } from "antd";
+import { Alert, Button, Typography } from "antd";
 import { ArrowRight, ShieldCheck, Users } from "lucide-react";
 import { useAiTranslation } from "../modules/common/assistant-name";
 import { LanguageSwitch } from "../modules/common/LanguageSwitch";
 
 const { Title, Text } = Typography;
 
-/** Màn chào trước khi đăng nhập, cùng bố cục với ag-go-web. */
-export function LoginScreen({ onLogin }: { onLogin: () => void }) {
+/** Màn chào trước khi đăng nhập, cùng bố cục với ag-go-web. `expired`: phiên cũ đã hết hạn, mời đăng nhập lại. */
+export function LoginScreen({ onLogin, expired = false }: { onLogin: () => void; expired?: boolean }) {
   const { t } = useAiTranslation();
   const siteName = t("app.title");
 
@@ -41,9 +41,10 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
             <span className="login-card-brand-name">{siteName}</span>
           </div>
           <Title level={3} id="login-card-title" className="login-card-title">
-            {t("auth.welcome")}
+            {t(expired ? "auth.expiredTitle" : "auth.welcome")}
           </Title>
-          <Text className="login-card-subtitle">{t("auth.loginPrompt")}</Text>
+          <Text className="login-card-subtitle">{t(expired ? "auth.expiredPrompt" : "auth.loginPrompt")}</Text>
+          {expired && <Alert type="warning" showIcon className="login-expired" message={t("auth.expiredNote")} />}
           <Button
             type="primary"
             size="large"
@@ -53,7 +54,7 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
             icon={<ArrowRight size={16} />}
             iconPosition="end"
           >
-            {t("auth.login")}
+            {t(expired ? "auth.loginAgain" : "auth.login")}
           </Button>
           <Text className="login-card-note">
             <ShieldCheck size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />

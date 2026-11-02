@@ -1,12 +1,17 @@
 import { Injectable, PayloadTooLargeException, UnsupportedMediaTypeException } from '@nestjs/common';
 import { extname } from 'node:path';
 import {
-  addMediaItem, addMediaToProject, MEDIA_MAX_BYTES, mediaAt, mediaKindOf, newMediaKey, REFERENCE_UPLOAD_MAX_BYTES, REFERENCE_VIDEO_EXTS,
-  type MediaItem, type MediaKind, type MediaUse, type SourceRecord,
+  addMediaItem, addMediaToProject, getMediaItem, MEDIA_MAX_BYTES, mediaAt, mediaKindOf, mediaUsage, newMediaKey, REFERENCE_UPLOAD_MAX_BYTES,
+  REFERENCE_VIDEO_EXTS, type MediaItem, type MediaItemView, type MediaKind, type MediaUse, type SourceRecord,
 } from '@ag-studio/engine';
 import { EngineService } from '../studio/engine.service';
 import { safeFileName } from './file-names';
 import { UPLOAD_LINK_TTL_SECONDS } from './raw-uploads';
+
+/** How long a preview link of an item plays (the drawer reloads well within it). */
+const PREVIEW_TTL_SECONDS = 3600;
+
+export type MediaItemResponse = MediaItemView & { previewUrl: string };
 
 /** What a person's audio or video upload becomes in a project when they did not say: audio, else a reference video. */
 export const defaultUse = (kind: MediaKind): MediaUse => (kind === 'audio' ? 'audio' : 'reference');
@@ -65,6 +70,25 @@ export class MediaLibraryService {
     const { key } = newMediaKey(ownerId, name);
     await this.engine.bucket.putFile(key, path);
     return addMediaItem(this.engine.db, this.engine.bucket, { ownerId, key, name });
+  }
+
+  /** An item as the library answers it: where it is used and a link to its file. */
+  async view(item: MediaItem): Promise<MediaItemResponse> {
+    const fresh = (await getMediaItem(this.engine.db, item.id)) ?? item;
+    const usedIn = (await mediaUsage(this.engine.db, [fresh.id])).get(fresh.id) ?? [];
+    const [withUrl] = await this.withPreviews([{
+      id: fresh.id, kind: fresh.kind, name: fresh.name, bytes: Number(fresh.bytes), createdAt: fresh.created_at, usedIn, origin: fresh.origin ?? null,
+    }]);
+    return withUrl!;
+  }
+
+  /** A signed link to each item's file (a photo shown, a video or song played straight from the bucket). */
+  async withPreviews(items: MediaItemView[]): Promise<MediaItemResponse[]> {
+    if (!items.length) return [];
+    const keys = new Map((await this.engine.db.all<{ id: string; key: string }>(
+      `SELECT id, key FROM media_items WHERE id IN (${items.map(() => '?').join(', ')})`, items.map((i) => i.id),
+    )).map((r) => [r.id, r.key]));
+    return Promise.all(items.map(async (i) => ({ ...i, previewUrl: await this.engine.bucket.signedGetUrl(keys.get(i.id)!, PREVIEW_TTL_SECONDS) })));
   }
 
   /** The person's items into the project (`addMediaToProject`). */

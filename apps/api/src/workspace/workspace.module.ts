@@ -12,6 +12,8 @@ import { ProjectsController } from './projects.controller';
 import { ThreadsController } from './threads.controller';
 import { VideosController } from './videos.controller';
 import { WorkspaceService } from './workspace.service';
+import { AgMusicController } from './ag-music.controller';
+import { AgMusicService } from './ag-music.service';
 import { MediaController } from './media.controller';
 import { MediaLibraryService } from './media-library.service';
 import { ProjectFootageService } from './project-footage.service';
@@ -20,8 +22,8 @@ import { ProjectFootageService } from './project-footage.service';
 @Module({
   imports: [StudioModule],
   controllers: [ProjectsController, VideosController, FilesController, ThreadsController, PlaybookController, InputsController, ResearchController, ActionsController, VideoMediaController, VideoLookController,
-    FileStreamController, MediaController],
-  providers: [WorkspaceService, ProjectFootageService, FileLinkService, MediaLibraryService],
+    FileStreamController, MediaController, AgMusicController],
+  providers: [WorkspaceService, ProjectFootageService, FileLinkService, MediaLibraryService, AgMusicService],
   exports: [WorkspaceService, ProjectFootageService, FileLinkService, MediaLibraryService],
 })
 export class WorkspaceModule {}

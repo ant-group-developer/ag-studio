@@ -3,6 +3,7 @@ import { Alert, Spin } from "antd";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { LoginScreen } from "./login-screen";
+import { useSessionExpired } from "./session-expiry";
 
 interface AuthProviderProps {
   children: ReactNode;
@@ -48,10 +49,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 /** Chưa đăng nhập thì hiện màn bắt đầu; đã đăng nhập thì vào ứng dụng. */
 export function AuthGate({ children }: AuthProviderProps) {
   const { t } = useTranslation();
-  const { isLoading, isAuthenticated, loginWithRedirect } = useAuth0();
+  const { isLoading, isAuthenticated, loginWithRedirect, logout } = useAuth0();
+  const expired = useSessionExpired();
 
   if (isLoading) {
     return <Spin fullscreen tip={t("auth.authenticating")} />;
+  }
+  if (expired) {
+    // Xoá token cũ trong localStorage trước, không thì sau khi quay về Auth0 vẫn đọc lại refresh token hỏng.
+    const loginAgain = async () => {
+      await logout({ openUrl: false });
+      await loginWithRedirect();
+    };
+    return <LoginScreen expired onLogin={() => void loginAgain()} />;
   }
   if (!isAuthenticated) {
     return <LoginScreen onLogin={() => void loginWithRedirect()} />;

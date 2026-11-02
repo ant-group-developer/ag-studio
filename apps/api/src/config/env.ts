@@ -17,6 +17,8 @@ export const envSchema = z.object({
   ACCOUNT_APPLICATION_CODE: z.string().optional(),
   AG_GO_API_URL: z.string().url(),
   AG_GO_SERVICE_KEY: z.string(),
+  /** ag-music-v2's API with its version (`…/api/v1`): music picked from it into someone's library. Unset: off. */
+  AG_MUSIC_API_URL: z.string().url().optional(),
   FARM_URL: z.string().url(),
   FARM_OWNER_KEY: z.string(),
   FARM_TICKET_PUBLIC_KEY: z.string(),
