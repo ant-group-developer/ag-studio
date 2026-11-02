@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Request } from 'express';
 import {
-  assistantName, claudeMaxConcurrent, claudeUsage, claudeUsageByAccount, listClaudeAccounts, parseClaudeMaxConcurrent, referenceFetchNodes, setAssistantName, setClaudeMaxConcurrent, studioActivity,
+  assistantName, claudeMaxConcurrent, claudeUsage, claudeUsageByAccount, listClaudeAccounts, parseClaudeMaxConcurrent, nodeInPool, referenceFetchNodes, setAssistantName, setClaudeMaxConcurrent, studioActivity,
   youtubeBlock,
 } from '@ag-studio/engine';
 import { StudioAdminService } from '../auth/studio-admin.service';
@@ -86,9 +86,10 @@ export class StudioOverviewController {
   }
 
   /**
-   * The farm's pools (`pool` of each machine) with their machines (name, online), and the shared machines (no pool):
-   * what a team's pool is picked from on its Resources tab. Machine names are on the Queue for everyone already.
-   * `ok: false` when the farm is out of reach.
+   * The farm's pools (`pools` of each machine: a machine shows in each of its pools) with their machines (name, online),
+   * and the machines that take shared jobs (no pool, or a pooled one with `accept_shared`): what a team's pool is picked
+   * from on its Resources tab. Machine names are on the Queue for everyone already. `ok: false` when the farm is out of
+   * reach.
    */
   @Get('farm/pools')
   async farmPools() {
@@ -97,7 +98,8 @@ export class StudioOverviewController {
       const shared: FarmPoolMachine[] = [];
       for (const n of (await this.engine.farmNodes()).nodes) {
         const m = { id: n.id, name: n.name, online: n.online };
-        if (n.pool) pools.set(n.pool, [...(pools.get(n.pool) ?? []), m]); else shared.push(m);
+        for (const p of n.pools ?? []) pools.set(p, [...(pools.get(p) ?? []), m]);
+        if (nodeInPool(n, null)) shared.push(m);
       }
       return {
         ok: true, shared,

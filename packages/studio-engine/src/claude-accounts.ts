@@ -6,6 +6,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { HarnessError } from "@harness/contracts";
+import { nodeTakesPool } from "@ag-farm/protocol";
 import { openSecret, sealSecret } from "./secret-box.js";
 import type { StudioDb } from "./studio-db.js";
 
@@ -256,9 +257,21 @@ export async function projectFarmPool(db: StudioDb, projectId: string): Promise<
   ))?.farm_pool ?? null;
 }
 
-/** Farm machines a team's jobs can run on: those of its pool (null: the shared ones, with no pool). */
-export function nodesOfPool<N extends { pool?: string | null }>(nodes: readonly N[], pool: string | null): N[] {
-  return nodes.filter((n) => (n.pool ?? null) === pool);
+/** A farm machine as `GET /v1/owner/nodes` shows its pools: `pools` (none: a shared machine) and `accept_shared`. */
+export interface PooledNode { pools?: readonly string[] | null; accept_shared?: boolean }
+
+/**
+ * Whether a job of `pool` (null: no pool) can run on the machine, by the farm's rule (`nodeTakesPool`): a pool's job
+ * only on a machine of that pool; a job of no pool on a shared machine, or a pooled one that takes shared jobs. A hub
+ * that does not send `accept_shared` (built before it) gives pooled machines no shared jobs.
+ */
+export function nodeInPool(n: PooledNode, pool: string | null): boolean {
+  return nodeTakesPool(pool ?? undefined, n.pools ?? [], n.accept_shared === true);
+}
+
+/** Farm machines a team's jobs can run on: those of its pool (null: the machines that take shared jobs). */
+export function nodesOfPool<N extends PooledNode>(nodes: readonly N[], pool: string | null): N[] {
+  return nodes.filter((n) => nodeInPool(n, pool));
 }
 
 export const FARM_POOL_RE =/^[a-z0-9][a-z0-9_-]{0,39}$/;

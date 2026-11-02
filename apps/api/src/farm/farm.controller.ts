@@ -22,6 +22,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Public } from '../auth/public.decorator';
 import { TicketGuard } from '../auth/ticket.guard';
 import type { TicketClaims } from '../auth/ticket.guard';
+import { farmAttemptOutputPrefix } from '@ag-studio/engine';
 import { StudioDbService } from '../db/studio-db.service';
 import { AgGoClient } from '../ag-go/client';
 import {
@@ -40,6 +41,8 @@ interface FarmJobRow {
   production_id: string;
   job_type: string;
   is_final_render: boolean;
+  /** The `library:` inputs the job may read (migration 0010); null: a job sent before, signed as before. */
+  input_keys: string[] | null;
 }
 
 /** What a project's preview asks ag-go for: a clean rendition, the short edge nearest 480. */
@@ -94,7 +97,7 @@ export class FarmController {
 
   private async lookupJob(farmJobId: string): Promise<FarmJobRow | null> {
     return (await this.db.get<FarmJobRow>(
-      `SELECT farm_job_id, stage_key, attempt_id, project_id AS production_id, job_type, is_final_render
+      `SELECT farm_job_id, stage_key, attempt_id, project_id AS production_id, job_type, is_final_render, input_keys
          FROM project_farm_jobs WHERE farm_job_id = ?`,
       [farmJobId],
     )) ?? null;
@@ -118,6 +121,10 @@ export class FarmController {
     const job = await this.lookupJob(ticketClaims.job_id);
     if (!job) {
       throw new ForbiddenException(`Unknown farm job: ${ticketClaims.job_id}`);
+    }
+    // the hub signs the job's type into the ticket: a ticket of another type is not this job's
+    if (ticketClaims.type !== job.job_type) {
+      throw new ForbiddenException(`Ticket type ${ticketClaims.type} is not the job's (${job.job_type})`);
     }
 
     const prodId = job.production_id;
@@ -147,6 +154,10 @@ export class FarmController {
           const r2Key = `${inputPrefix}${subPath}`;
           authorizations.push({ op, r2Key });
         } else if (input.startsWith('library:')) {
+          // only the library files the job names (its payload, its composition), not anyone's
+          if (job.input_keys && !job.input_keys.includes(input)) {
+            throw new ForbiddenException(`Input not in this job: ${input}`);
+          }
           const subPath = input.slice('library:'.length);
           const r2Key = `library/${subPath}`;
           authorizations.push({ op, r2Key });
@@ -164,8 +175,9 @@ export class FarmController {
         op.op === 'mp_complete' ||
         op.op === 'mp_abort'
       ) {
-        // Each job writes under its own prefix: productions/<prodId>/jobs/<stage>/<attempt>/out/
-        const outputPrefix = getJobOutputPrefix(prodId, job.stage_key, job.attempt_id);
+        // Each try of a job writes under its own prefix: productions/<prodId>/jobs/<stage>/<attempt>/out/a<try>/, so a
+        // machine still on an older try (its lease lost) cannot overwrite what the completed try wrote
+        const outputPrefix = farmAttemptOutputPrefix(getJobOutputPrefix(prodId, job.stage_key, job.attempt_id), ticketClaims.attempt);
         const r2Key = resolveOutputKey(outputPrefix, op.output);
         authorizations.push({ op, r2Key });
       } else {

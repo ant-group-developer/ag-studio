@@ -87,15 +87,19 @@ describe('StudioOverviewController (real database)', () => {
     expect(await ctl.claude()).toMatchObject({ max: 5, assistantName: 'Claude' });
   });
 
-  it("the farm's pools with their machines, and the shared machines, to pick a team's pool from", async () => {
-    const hcm = { ...node, id: '7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', name: 'hcm-render', online: false, pool: 'hcm' };
+  it("the farm's pools with their machines (one in each of its pools), and the machines taking shared jobs, to pick a team's pool from", async () => {
+    const hcm = { ...node, id: '7a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', name: 'hcm-render', online: false, pools: ['hcm', 'hn'], pool: 'hcm', accept_shared: false };
+    const both = { ...node, id: '8a1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', name: 'hn-render', online: true, pools: ['hn'], pool: 'hn', accept_shared: true };
     let farmUp = true;
-    const engine = { ...s.engine, farmNodes: async () => { if (!farmUp) throw new Error('farm down'); return { nodes: [node, hcm] }; } };
+    const engine = { ...s.engine, farmNodes: async () => { if (!farmUp) throw new Error('farm down'); return { nodes: [node, hcm, both] }; } };
     const ctl = new StudioOverviewController(engine as unknown as EngineService, new StudioAdminService(accounts, s.db), config());
     expect(await ctl.farmPools()).toEqual({
       ok: true,
-      shared: [{ id: node.id, name: 'render-01', online: true }],
-      pools: [{ pool: 'hcm', machines: [{ id: hcm.id, name: 'hcm-render', online: false }] }],
+      shared: [{ id: node.id, name: 'render-01', online: true }, { id: both.id, name: 'hn-render', online: true }],
+      pools: [
+        { pool: 'hcm', machines: [{ id: hcm.id, name: 'hcm-render', online: false }] },
+        { pool: 'hn', machines: [{ id: hcm.id, name: 'hcm-render', online: false }, { id: both.id, name: 'hn-render', online: true }] },
+      ],
     });
     farmUp = false;
     expect(await ctl.farmPools()).toEqual({ ok: false, shared: [], pools: [] });

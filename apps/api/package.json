@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ag-farm/protocol": "link:../../../ag-farm/packages/protocol",
     "@ag-studio/engine": "workspace:*",
     "@aws-sdk/client-s3": "^3.0.0",
     "@aws-sdk/s3-request-presigner": "^3.0.0",

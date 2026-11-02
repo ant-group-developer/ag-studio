@@ -151,6 +151,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@ag-farm/protocol':
+        specifier: link:../../../ag-farm/packages/protocol
+        version: link:../../../ag-farm/packages/protocol
       '@ag-studio/engine':
         specifier: workspace:*
         version: link:../../packages/studio-engine

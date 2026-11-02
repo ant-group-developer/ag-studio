@@ -123,14 +123,19 @@ describe("Claude accounts", () => {
     const db = await fresh();
     const nodes = [
       { name: "shared", online: true, kinds: ["studio.reference_fetch"] },
-      { name: "hcm-1", online: true, kinds: ["studio.reference_fetch"], pool: "hcm" },
-      { name: "hcm-off", online: false, kinds: ["studio.reference_fetch"], pool: "hcm" },
+      { name: "hcm-1", online: true, kinds: ["studio.reference_fetch"], pools: ["hcm"], accept_shared: false },
+      { name: "hcm-off", online: false, kinds: ["studio.reference_fetch"], pools: ["hcm", "hn"], accept_shared: false },
+      // in a pool and taking shared jobs too
+      { name: "hn-1", online: true, kinds: ["studio.reference_fetch"], pools: ["hn"], accept_shared: true },
+      // a hub built before accept_shared: a pooled machine takes no shared job
+      { name: "old-hub", online: true, kinds: ["studio.reference_fetch"], pools: ["hcm"] },
     ];
-    expect(nodesOfPool(nodes, "hcm").map((n) => n.name)).toEqual(["hcm-1", "hcm-off"]);
-    expect(nodesOfPool(nodes, null).map((n) => n.name)).toEqual(["shared"]);
-    expect(referenceFetchNodes(nodes, "hcm").map((n) => n.name)).toEqual(["hcm-1"]);
-    expect(referenceFetchNodes(nodes, null).map((n) => n.name)).toEqual(["shared"]);
-    expect(referenceFetchNodes(nodes).map((n) => n.name)).toEqual(["shared", "hcm-1"]);
+    expect(nodesOfPool(nodes, "hcm").map((n) => n.name)).toEqual(["hcm-1", "hcm-off", "old-hub"]);
+    expect(nodesOfPool(nodes, "hn").map((n) => n.name)).toEqual(["hcm-off", "hn-1"]);
+    expect(nodesOfPool(nodes, null).map((n) => n.name)).toEqual(["shared", "hn-1"]);
+    expect(referenceFetchNodes(nodes, "hcm").map((n) => n.name)).toEqual(["hcm-1", "old-hub"]);
+    expect(referenceFetchNodes(nodes, null).map((n) => n.name)).toEqual(["shared", "hn-1"]);
+    expect(referenceFetchNodes(nodes).map((n) => n.name)).toEqual(["shared", "hcm-1", "hn-1", "old-hub"]);
     expect(await teamFarmPool(db, "team-a")).toBeNull();
     await setTeamFarmPool(db, "team-a", " hcm-1 ", T0);
     expect(await teamFarmPool(db, "team-a")).toBe("hcm-1");

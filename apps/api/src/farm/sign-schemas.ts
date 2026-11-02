@@ -21,7 +21,11 @@ const InputNameSchema = z
   .string()
   .min(1)
   .max(320)
-  .regex(/^[a-z][a-z0-9_]*(:[A-Za-z0-9._\-/]+)?$/);
+  .regex(/^[a-z][a-z0-9_]*(:[A-Za-z0-9._\-/]+)?$/)
+  // as the protocol's: no empty, . or .. segment after the colon (library:../x is not under library/)
+  .refine((v) => v.indexOf(':') < 0 || !v.slice(v.indexOf(':') + 1).split('/').some((s) => s === '' || s === '.' || s === '..'), {
+    message: 'Input path must not contain empty, . or .. segments',
+  });
 
 const ContentTypeSchema = z.string().min(3).max(120);
 const UploadIdSchema = z.string().min(1).max(1024);

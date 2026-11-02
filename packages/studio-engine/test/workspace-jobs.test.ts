@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import {
   claimJob, createJob, createJobRunner, createProject, createThread, estimateSecondsLeft, finishJob, getJob, JOB_STALE_MS, jobView, listJobs,
-  listMessages, postUserMessage, reportJob, requestJobCancel, requeueStaleJobs, runFarmStep, secondsPerUnit, seedWorkspace, studioLogger,
+  listMessages, postUserMessage, reportJob, requestJobCancel, requeueStaleJobs, runFarmStep, secondsPerUnit, seedWorkspace, setTeamFarmPool, studioLogger,
   type JobHandler, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
@@ -301,22 +301,49 @@ describe("farm step of a project job", () => {
     const job = await createJob(db, { projectId: project.id, kind: "prepare_asset", title: "A", request: {}, createdBy: "u" }, at(0));
     const wav = join(mkdtempSync(join(tmpdir(), "farm-step-")), "a.wav");
     writeFileSync(wav, "RIFF");
-    const { farm, calls } = fakeFarm([{}, { status: "leased", node_id: "00000000-0000-4000-8000-0000000000a1", progress_percent: 40, progress_stage: "whisper" }, { status: "completed" }]);
+    const { farm, calls } = fakeFarm([{}, { status: "leased", node_id: "00000000-0000-4000-8000-0000000000a1", progress_percent: 40, progress_stage: "whisper", attempt_count: 2 }, { status: "completed", attempt_count: 2 }]);
     const updates: unknown[] = [];
     const r = await runFarmStep({ db, bucket, farm, pollMs: 1 }, job, {
       type: "studio.transcribe", payload: { x: 1 }, stageKey: "prepare", attemptId: job.id, uploads: [{ localPath: wav, relPath: "audio/a.wav" }],
     }, { onUpdate: (u) => { updates.push(u); }, stopRequested: async () => null });
     expect(bucket.objects.has(`productions/${project.id}/jobs/prepare/${job.id}/in/audio/a.wav`)).toBe(true);
     expect(calls.submit[0]).toMatchObject({ type: "studio.transcribe", correlation_id: `studio-job-prepare-${job.id}`, affinity_key: project.id });
-    expect(await db.get("SELECT project_id, job_id, stage_key, attempt_id, job_type, is_final_render, requirements FROM project_farm_jobs")).toEqual({
+    expect(await db.get("SELECT project_id, job_id, stage_key, attempt_id, job_type, is_final_render, requirements, input_keys FROM project_farm_jobs")).toEqual({
       project_id: project.id, job_id: job.id, stage_key: "prepare", attempt_id: job.id, job_type: "studio.transcribe", is_final_render: false, requirements: {},
+      input_keys: [],
     });
     expect(updates).toEqual([
       { phase: "Farm · đang chờ máy nhận", progress: null, node: null, farmJobId: "00000000-0000-4000-8000-00000000f001", waiting: true },
       { phase: "Farm · GPU-02 · whisper", progress: 0.4, node: "GPU-02", farmJobId: "00000000-0000-4000-8000-00000000f001", waiting: false },
     ]);
-    expect(r.outputPrefix).toBe(`productions/${project.id}/jobs/prepare/${job.id}/out/`);
+    // the outputs of the try that completed (the 2nd)
+    expect(r.outputPrefix).toBe(`productions/${project.id}/jobs/prepare/${job.id}/out/a2/`);
     void dir;
+  });
+
+  it("records the library files the job may read: those its payload and its uploaded JSON (a composition) name", async () => {
+    const { db, bucket, project } = await setup();
+    const job = await createJob(db, { projectId: project.id, kind: "render_preview", title: "R", request: {}, createdBy: "u" }, at(0));
+    const comp = join(mkdtempSync(join(tmpdir(), "farm-step-")), "composition.json");
+    writeFileSync(comp, JSON.stringify({ music: { path: "library:music/a.m4a" }, logo: { path: "library:brands/x/logo.png" }, narration: [{ wav: "stage:tts/L1.wav" }] }));
+    const { farm } = fakeFarm([{}, { status: "completed", attempt_count: 1 }]);
+    await runFarmStep({ db, bucket, farm, pollMs: 1 }, job, {
+      type: "studio.render_preview", payload: { composition: "stage:composition.json", voice: { reference: "library:voices/v.wav" } }, stageKey: "render", attemptId: job.id,
+      uploads: [{ localPath: comp, relPath: "composition.json" }],
+    }, { onUpdate: () => {}, stopRequested: async () => null });
+    expect(await db.get("SELECT input_keys FROM project_farm_jobs")).toEqual({
+      input_keys: ["library:brands/x/logo.png", "library:music/a.m4a", "library:voices/v.wav"],
+    });
+  });
+
+  it("a team's pool with no farm machine: the farm refuses the job at once and the step says what to do", async () => {
+    const { db, bucket, project } = await setup();
+    await setTeamFarmPool(db, "team-1", "hcm", at(0));
+    const job = await createJob(db, { projectId: project.id, kind: "render_preview", title: "R", request: {}, createdBy: "u" }, at(0));
+    const { farm } = fakeFarm([{}]);
+    farm.submitJob = async () => { throw Object.assign(new Error("No farm machine is in pool"), { name: "FarmHttpError", status: 400, code: "pool_unknown" }); };
+    await expect(runFarmStep({ db, bucket, farm, pollMs: 1 }, job, { type: "studio.render_preview", payload: {}, stageKey: "render", attemptId: job.id },
+      { onUpdate: () => {}, stopRequested: async () => null })).rejects.toThrow('pool farm "hcm" của nhóm không có máy nào');
   });
 
   it("a stop request cancels the farm job; a failed farm job throws its reason", async () => {

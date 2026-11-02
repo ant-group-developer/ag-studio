@@ -53,7 +53,7 @@ function farm(bucket: Awaited<ReturnType<typeof world>>["bucket"], opts: { refus
       sent.push({ type: req.type, payload: p });
       const [, stage, attempt] = /^studio-job-(.+)-([^-]+-[^-]+-[^-]+-[^-]+-[^-]+)$/.exec(req.correlation_id)!;
       const prod = req.type === "scan.prep" ? projectOf : String(p.production_id);
-      const out = jobOutputPrefix(prod, stage!, attempt!);
+      const out = `${jobOutputPrefix(prod, stage!, attempt!)}a1/`;
       if (req.type === "scan.prep") {
         for (const f of ["frames/001.jpg", "frames/002.jpg", "sheets/01.jpg", "audio.wav"]) bucket.objects.set(`${out}${f}`, Buffer.from(f));
         bucket.objects.set(`${out}prep.json`, Buffer.from(JSON.stringify({
@@ -69,9 +69,9 @@ function farm(bucket: Awaited<ReturnType<typeof world>>["bucket"], opts: { refus
         }));
         bucket.objects.set(`${out}transcribe.json`, Buffer.from(JSON.stringify({ schema: "ag.studio.transcribe/v1", production_id: prod, engine: { name: "whisperx", version: null }, sources })));
       }
-      return { job: { id: `farm-${sent.length}`, status: "completed" } };
+      return { job: { id: `farm-${sent.length}`, status: "completed", attempt_count: 1 } };
     },
-    async getJob(id: string) { return { id, status: "completed", progress_percent: 100, node_id: null, error: null }; },
+    async getJob(id: string) { return { id, status: "completed", attempt_count: 1, progress_percent: 100, node_id: null, error: null }; },
     async ackJob() { return {}; },
     async cancelJob() { return {}; },
   };

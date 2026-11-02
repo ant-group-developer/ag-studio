@@ -86,7 +86,7 @@ async function setup(o: { nodes?: { online: boolean; kinds: string[] }[]; ytdlp?
       const videoId = String(payload.video_id);
       const error = refusal(videoId);
       if (!error) {
-        await bucket.put(`productions/${project.id}/jobs/reference_fetch/${attempt}/out/${String(payload.output)}`, o.video ? await o.video() : Buffer.from("not a video"));
+        await bucket.put(`productions/${project.id}/jobs/reference_fetch/${attempt}/out/a1/${String(payload.output)}`, o.video ? await o.video() : Buffer.from("not a video"));
       }
       views.set(id, error
         ? view({ id, status: "failed", node_id: NODE_ID, error })
@@ -130,7 +130,7 @@ describe("reference videos through the farm (no ffmpeg needed)", () => {
       job_id: job.id, job_type: "studio.reference_fetch", stage_key: "reference_fetch", attempt_id: `${job.id}-r1`,
     });
     expect(s.phases).toContain("Đang tải video mẫu 1/1 trên máy PC-01");
-    expect(s.fetched).toEqual([`productions/${s.project.id}/jobs/reference_fetch/${job.id}-r1/out/reference/U_17EqTHUIo.mp4`]);
+    expect(s.fetched).toEqual([`productions/${s.project.id}/jobs/reference_fetch/${job.id}-r1/out/a1/reference/U_17EqTHUIo.mp4`]);
     expect(s.left()).toEqual([]); // never kept on the bucket
     expect((s.ytdlp as ReturnType<typeof spyYtDlp>).calls).toEqual([]); // the blocked server is not asked, not even for titles
     // the file was not a video, so nothing was measured; what the machine said is kept

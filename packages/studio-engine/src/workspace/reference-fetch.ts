@@ -13,6 +13,7 @@ import {
 } from "@ag-farm/protocol";
 import { jobOutputPrefix } from "@harness/executors";
 import type { StudioBucket } from "../bucket.js";
+import { nodeInPool, type PooledNode } from "../claude-accounts.js";
 import type { StudioDb } from "../studio-db.js";
 import { YT_FAILURE_REASON, YtDlpError } from "../yt-dlp.js";
 import { ackFarmJob, FarmJobFailed, runFarmStep, type FarmWatch, type ProjectFarm } from "./farm.js";
@@ -27,8 +28,8 @@ export const REFERENCE_FETCH_STAGE = "reference_fetch";
  * Farm machines online now that take `studio.reference_fetch`; with `pool`, only those a job of that pool can run on
  * (null: the shared machines). Without it (the Queue): every one.
  */
-export function referenceFetchNodes<N extends { online: boolean; kinds: readonly string[]; pool?: string | null }>(nodes: readonly N[], pool?: string | null): N[] {
-  return nodes.filter((n) => n.online && n.kinds.includes(REFERENCE_FETCH_KIND) && (pool === undefined || (n.pool ?? null) === pool));
+export function referenceFetchNodes<N extends { online: boolean; kinds: readonly string[] } & PooledNode>(nodes: readonly N[], pool?: string | null): N[] {
+  return nodes.filter((n) => n.online && n.kinds.includes(REFERENCE_FETCH_KIND) && (pool === undefined || nodeInPool(n, pool)));
 }
 
 /**
@@ -37,7 +38,7 @@ export function referenceFetchNodes<N extends { online: boolean; kinds: readonly
  * `listNodes`) counts none: Studio's own yt-dlp then.
  */
 export function referenceFetchers(farm: Pick<ProjectFarm, "listNodes">, everyMs = 30_000): ReferenceFetchers {
-  type Node = { name: string; online: boolean; kinds: string[]; pool?: string | null };
+  type Node = { name: string; online: boolean; kinds: string[] } & PooledNode;
   let cached: { at: number; nodes: Promise<Node[]> } | null = null;
   return (pool) => {
     if (!farm.listNodes) return Promise.resolve([]);

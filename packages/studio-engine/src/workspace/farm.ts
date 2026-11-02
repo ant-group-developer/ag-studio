@@ -4,6 +4,7 @@
  * sending another), recorded in `project_farm_jobs` for `/farm/sign`, then watched: waiting in line, the machine that
  * took it, its progress. Stop cancels it on the farm. The farm's key layout is kept: the project is the "production".
  */
+import { readFileSync } from "node:fs";
 import { jobOutputPrefix, stageInputPrefix } from "@harness/executors";
 import type { FarmOwnerClient } from "@ag-farm/owner-client";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
@@ -75,6 +76,34 @@ function farmUnreachable(e: unknown): boolean {
   return status >= 500 || status === 408 || status === 429;
 }
 
+/**
+ * Where one try (`attempt`) of a farm job writes its outputs: `<job output prefix>a<attempt>/`. `POST /farm/sign` signs
+ * puts there by the ticket's attempt, so a machine still running an older try (its lease lost) cannot overwrite the
+ * outputs of the try that completed; Studio reads the completed try's.
+ */
+export function farmAttemptOutputPrefix(jobPrefix: string, attempt: number): string {
+  return `${jobPrefix}a${attempt}/`;
+}
+
+/**
+ * The `library:` inputs a farm job may read: every string naming one in its payload and in the JSON files it uploads
+ * (a render's composition names the music, logo and brand). Recorded with the job; `/farm/sign` signs only these.
+ */
+export function libraryInputKeys(payload: unknown, uploads: readonly { localPath: string; relPath: string }[] = []): string[] {
+  const found = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") { if (v.startsWith("library:")) found.add(v); }
+    else if (Array.isArray(v)) for (const x of v) walk(x);
+    else if (v && typeof v === "object") for (const x of Object.values(v)) walk(x);
+  };
+  walk(payload);
+  for (const u of uploads) {
+    if (!u.relPath.endsWith(".json")) continue;
+    try { walk(JSON.parse(readFileSync(u.localPath, "utf8"))); } catch { /* not JSON: names nothing */ }
+  }
+  return [...found].sort();
+}
+
 /** Node names by id, read from the farm at most once a minute. */
 function nodeNames(farm: ProjectFarm): (id: string | null) => Promise<string | null> {
   let names = new Map<string, string>();
@@ -120,11 +149,20 @@ export async function runFarmStep(
     type: step.type as never, correlation_id: `studio-job-${step.stageKey}-${step.attemptId}`, affinity_key: job.project_id,
     max_attempts: step.maxAttempts ?? 2, payload: step.payload,
     ...(Object.keys(requirements).length ? { requirements: requirements as never } : {}),
+  }).catch((e: unknown) => {
+    // the farm has no machine in the team's pool: the job would wait forever, the farm refuses it at once
+    if ((e as { code?: unknown }).code === "pool_unknown") {
+      throw new Error(`pool farm "${pool}" của nhóm không có máy nào: admin farm gán máy vào pool này, hoặc đổi pool của nhóm ở tab Tài nguyên`);
+    }
+    throw e;
   });
   await d.db.run(
-    `INSERT INTO project_farm_jobs (farm_job_id, job_id, project_id, video_id, stage_key, attempt_id, job_type, is_final_render, requirements, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-    [sent.id, job.id, job.project_id, job.video_id, step.stageKey, step.attemptId, step.type, step.isFinalRender === true, JSON.stringify(requirements), now()],
+    `INSERT INTO project_farm_jobs (farm_job_id, job_id, project_id, video_id, stage_key, attempt_id, job_type, is_final_render, requirements, input_keys, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    [
+      sent.id, job.id, job.project_id, job.video_id, step.stageKey, step.attemptId, step.type, step.isFinalRender === true, JSON.stringify(requirements),
+      JSON.stringify(libraryInputKeys(step.payload, step.uploads)), now(),
+    ],
   );
   const nameOf = nodeNames(d.farm);
   const pollMs = d.pollMs ?? 3000;
@@ -166,14 +204,16 @@ export async function runFarmStep(
       await d.farm.cancelJob(sent.id).catch(() => undefined);
       // a render needs a machine of its render level: one still on an older render worker never takes it
       const level = (step.requirements as { studio_render_min?: unknown } | undefined)?.studio_render_min;
-      const why = typeof level === "number" ? `máy có thể đang tắt, hoặc chưa máy nào lên bản render worker đạt mức render ≥ ${level}` : "máy có thể đang tắt";
+      const machines = pool ? `máy của pool "${pool}"` : "máy";
+      const why = typeof level === "number" ? `${machines} có thể đang tắt, hoặc chưa máy nào lên bản render worker đạt mức render ≥ ${level}` : `${machines} có thể đang tắt`;
       throw new Error(`không máy farm nào nhận việc sau ${Math.round(d.queueTimeoutMs / 60_000)} phút (${why})`);
     }
     await watch.onUpdate({ phase, progress: view.progress_percent === null ? null : view.progress_percent / 100, node, farmJobId: sent.id, waiting });
     await sleep(pollMs);
     view = await askAgain();
   }
-  return { outputPrefix: jobOutputPrefix(job.project_id, step.stageKey, step.attemptId), farmJob: view };
+  // the outputs of the try that completed (`farmAttemptOutputPrefix`)
+  return { outputPrefix: farmAttemptOutputPrefix(jobOutputPrefix(job.project_id, step.stageKey, step.attemptId), view.attempt_count), farmJob: view };
 
   /** The job's state from the farm; while it is out of reach, the last one known (until `unreachableTimeoutMs`). */
   async function askAgain(): Promise<FarmJobView> {
