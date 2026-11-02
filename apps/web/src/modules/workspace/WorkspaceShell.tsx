@@ -9,6 +9,7 @@ import { rememberedTeam } from "../../helpers/last-team";
 import { useAppUserMenu } from "../common/use-app-user-menu";
 import { useReplayTour } from "../onboarding/ProductTour";
 import { StartChecklist } from "../onboarding/StartChecklist";
+import { ManageMenu } from "./ManageMenu";
 import { NewTeamModal } from "./NewTeamModal";
 import { ProjectPicker } from "./ProjectPicker";
 import { TeamPicker } from "./TeamPicker";
@@ -92,9 +93,7 @@ export function WorkspaceShell({ teamId, teamCrumb = true, project, crumbs = [],
           {actions}
           <StartChecklist />
           <Link to="/guide" className="ws-icon-button" data-tour="guide"><BookOpen size={14} aria-hidden />{t("ws.shell.guide")}</Link>
-          {canReview ? <Link to="/stats" className="ws-icon-button">{t("ws.shell.stats")}</Link> : null}
-          {canReview ? <Link to="/audit" className="ws-icon-button">{t("ws.shell.audit")}</Link> : null}
-          {isAdmin ? <Link to="/queue" className="ws-icon-button">{t("ws.shell.queue")}</Link> : null}
+          <ManageMenu canReview={canReview} isAdmin={isAdmin} />
           <Dropdown menu={menu} trigger={["click"]} placement="bottomRight">
             <button type="button" className="ws-icon-button" aria-label={nickname}>
               <Avatar src={picture} size="small">{picture ? undefined : initials}</Avatar>

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   agentToolList, agentTools, callAgentTool, createAgentRunner, createProject, createThread, createVideo, getMessage, getProject, getThread, getVideo,
   listFileVersions, listLessonProposals, listMessages, listVideos, MemoryBucket, mcpToolNames, postSystemMessage, postUserMessage, projectDir, requestCancel, seedWorkspace,
-  verifyAgentToken, type StudioDb,
+  verifyAgentToken, type StudioDb, createClaudeAccount, getClaudeAccount, noteAccountRateLimited, secretKey, setTeamClaudeAccounts,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 import { listAudit, messageView } from "../src/index.js";
@@ -73,7 +73,7 @@ async function setup(env: Record<string, string> = {}, extra: Partial<Parameters
     skills: { builtinDir: join(ROOT, "agent-skills"), pluginsRoot: join(root, "plugins") },
     ...extra,
   });
-  const calls = () => readdirSync(join(logs, "calls")).sort().map((f) => JSON.parse(readFileSync(join(logs, "calls", f), "utf8")) as { argv: string[]; prompt: string; append: string });
+  const calls = () => readdirSync(join(logs, "calls")).sort().map((f) => JSON.parse(readFileSync(join(logs, "calls", f), "utf8")) as { argv: string[]; prompt: string; append: string; oauth: string | null });
   const say = (text: string) => postUserMessage(w.db, { threadId: thread.id, text, actor: { id: "auth0|u", role: "editor" } });
   const turnOf = async (id: string) => (await getMessage(w.db, id))!;
   return { ...w, project, dir, thread, runner, calls, say, turnOf, bucket };
@@ -264,6 +264,10 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     const limited = await turnOf(turn!.id);
     expect(limited.status).toBe("rate_limited");
     expect(Date.parse(limited.not_before!)).toBeGreaterThan(Date.now() + 4 * 60_000);
+    // the turn waits as long as its account (the team has none: `default`, the env's token)
+    expect((await db.get<{ rate_limited_until: string }>("SELECT rate_limited_until FROM claude_accounts WHERE id = 'default'"))?.rate_limited_until).toBe(limited.not_before);
+    // time passes
+    await db.run("UPDATE claude_accounts SET rate_limited_until = ? WHERE id = 'default'", [new Date(Date.now() - 1000).toISOString()]);
     await db.run("UPDATE agent_messages SET not_before = ? WHERE id = ?", [new Date(Date.now() - 1000).toISOString(), turn!.id]);
     await db.run("UPDATE agent_threads SET session_started = true WHERE id = ?", [thread.id]);
     await runner.tick();
@@ -272,5 +276,41 @@ describe("agent runner (fake CLI, real MCP server)", { timeout: 60_000 }, () => 
     const last = calls().at(-1)!;
     expect(last.prompt).toContain("phiên mới của một luồng đã có");
     expect(last.prompt).toContain("Lượt trước bị ngắt");
+    // a turn that went through clears the account's limit
+    expect(await db.get("SELECT rate_limited_until, rate_limit_hits FROM claude_accounts WHERE id = 'default'")).toEqual({ rate_limited_until: null, rate_limit_hits: 0 });
+  });
+
+  it("a team's turns run on its own Claude accounts: the next one when the first hits its limit, then they wait", async () => {
+    const key = secretKey("a-long-enough-secret-key")!;
+    const { runner, say, turnOf, db, calls } = await setup({ CLAUDE_CODE_OAUTH_TOKEN: "env-tok", FAKE_STUDIO_MODE: "rate-limited:tok-a" }, { secretKey: key });
+    // no account of its own: the env's token, recorded as `default`
+    const { turn: first } = await say("xin chào");
+    await runner.tick(); await runner.idle();
+    expect(calls().at(-1)!.oauth).toBe("env-tok");
+    expect((await turnOf(first!.id)).claude_account_id).toBe("default");
+
+    const a = await createClaudeAccount(db, key, { name: "A", token: "tok-a" }, "admin", new Date().toISOString());
+    const b = await createClaudeAccount(db, key, { name: "B", token: "tok-b" }, "admin", new Date().toISOString());
+    await setTeamClaudeAccounts(db, "team-1", [a.id, b.id]);
+    const { turn } = await say("tiếp nhé");
+    await runner.tick(); await runner.idle();
+    expect(calls().at(-1)!.oauth).toBe("tok-a");
+    expect(await turnOf(turn!.id)).toMatchObject({ status: "rate_limited", claude_account_id: a.id });
+    expect(Date.parse((await getClaudeAccount(db, a.id))!.rate_limited_until!)).toBeGreaterThan(Date.now() + 4 * 60_000);
+    // B can take it now: the turn goes again at once, on B
+    await runner.tick(); await runner.idle();
+    expect(calls().at(-1)!.oauth).toBe("tok-b");
+    expect(await turnOf(turn!.id)).toMatchObject({ status: "done", claude_account_id: b.id });
+    expect(await db.get("SELECT claude_account_id FROM llm_calls WHERE attempt_id = ? ORDER BY created_at DESC LIMIT 1", [turn!.id])).toEqual({ claude_account_id: b.id });
+
+    // both at their limit: the next turn waits for the first back, and never borrows the default account
+    await noteAccountRateLimited(db, b.id, new Date().toISOString());
+    const n = calls().length;
+    const { turn: third } = await say("thêm nữa");
+    await runner.tick(); await runner.idle();
+    expect(calls()).toHaveLength(n);
+    const waited = await turnOf(third!.id);
+    expect(waited.status).toBe("rate_limited");
+    expect(waited.not_before).toBe((await getClaudeAccount(db, a.id))!.rate_limited_until);
   });
 });

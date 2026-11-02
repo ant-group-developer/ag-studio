@@ -46,6 +46,24 @@ describe('AccountDirectoryService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('asks again about someone it did not find after 30 s, while a found person stays cached 5 min', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementationOnce(() => reply({ data: [{ id: 'u-1', name: 'An' }] }));
+      const s = svc();
+      expect((await s.summaries(['auth0|u-1', 'auth0|u-2'])).has('auth0|u-2')).toBe(false);
+      vi.advanceTimersByTime(31_000);
+      fetchMock.mockImplementationOnce(() => reply({ data: [{ id: 'u-2', name: 'Bình' }] }));
+      const people = await s.summaries(['auth0|u-1', 'auth0|u-2']);
+      expect(people.get('auth0|u-2')?.name).toBe('Bình');
+      expect(people.get('auth0|u-1')?.name).toBe('An');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect((fetchMock.mock.calls[1] as [URL])[0].searchParams.get('user_ids')).toBe('u-2');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reads the { statusCode, message, data } envelope of the local Account API', async () => {
     fetchMock.mockImplementation(() =>
       reply({ statusCode: 200, message: 'ok', data: { data: [{ id: 'u-9', name: 'Demo', email: 'demo@ant-group.net', avatar: 'https://x/d.png' }], meta: {} }, timestamp: 'now' }),

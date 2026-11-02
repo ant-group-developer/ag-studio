@@ -35,6 +35,7 @@ const prompt = await new Promise((res) => { let s = ""; process.stdin.setEncodin
 const n = readdirSync(join(logDir, "calls")).length;
 writeFileSync(join(logDir, "calls", `${String(n).padStart(3, "0")}.json`), JSON.stringify({
   argv, prompt, cwd, append: flag("--append-system-prompt") ?? null, env: Object.keys(process.env).sort(),
+  oauth: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? null,
 }, null, 2));
 
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
@@ -54,6 +55,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (modes.has("agent-rate-limit-once") && !existsSync(join(logDir, ".rate-limited"))) {
   writeFileSync(join(logDir, ".rate-limited"), "1");
+  process.stderr.write("You've hit your 5-hour limit · resets 3pm (Asia/Ho_Chi_Minh)\n");
+  process.exit(1);
+}
+
+// FAKE_STUDIO_MODE rate-limited:<token>: that CLAUDE_CODE_OAUTH_TOKEN's plan is at its limit
+if (modes.has(`rate-limited:${process.env.CLAUDE_CODE_OAUTH_TOKEN ?? ""}`)) {
   process.stderr.write("You've hit your 5-hour limit · resets 3pm (Asia/Ho_Chi_Minh)\n");
   process.exit(1);
 }

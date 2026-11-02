@@ -22,6 +22,7 @@ import { extname, join } from "node:path";
 import { measureShots, mergeCuts, pickFrameTimes } from "@harness/core";
 import { detectCuts, grabFrame, probeMedia, tileSheet } from "../cut-ffmpeg.js";
 import { StudioRunError } from "../errors.js";
+import { projectFarmPool } from "../claude-accounts.js";
 import { clearYoutubeBlocked, noteYoutubeBlocked, referenceRoute, type YoutubeBlockWhere } from "../settings.js";
 import type { StudioBucket } from "../bucket.js";
 import type { StudioDb } from "../studio-db.js";
@@ -211,7 +212,7 @@ export function styleWatchHandler(d: StyleWatchDeps): JobHandler {
     if (ids.length) {
       const yt = d.ytdlp ?? null;
       // a farm machine when one can take it (unless only the farm is remembered blocked and Studio has its own yt-dlp)
-      const fetchers = d.farm ? await d.farm.fetchers().catch(() => [] as string[]) : [];
+      const fetchers = d.farm ? await d.farm.fetchers(await projectFarmPool(d.db, job.project_id)).catch(() => [] as string[]) : [];
       const farm = fetchers.length && (!yt || await referenceRoute(d.db, ctx.now(), fetchers.length) === "farm") ? d.farm ?? null : null;
       const via: YoutubeBlockWhere = farm ? "farm" : "studio";
       // the numbers are a nicety read by Studio's yt-dlp; through the farm they come with each video

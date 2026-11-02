@@ -10,7 +10,7 @@ import type { TimelineV4 } from "@harness/contracts";
 import type { JobView as FarmJobView } from "@ag-farm/protocol";
 import {
   createJobRunner, createProject, createThread, createVideo, getJob, getVideo, latestVideoRevision, queueRender, renderHandler, RENDER_KINDS, RevisionConflictError, savePrepared, saveVideoRevision, seedWorkspace,
-  studioLogger, videoRenders, type JobHandler, type JobKind, type ProjectFarm,
+  setTeamFarmPool, studioLogger, videoRenders, type JobHandler, type JobKind, type ProjectFarm,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -29,7 +29,7 @@ function timeline(videoId: string, over: Partial<TimelineV4> = {}): TimelineV4 {
 
 const view = (over: Partial<FarmJobView>): FarmJobView => ({
   id: "00000000-0000-4000-8000-00000000f0f0", owner: "studio", type: "studio.render_preview", lane: "gpu", status: "queued", priority: 0,
-  correlation_id: "c", affinity_key: null, group_key: null, attempt_count: 0, max_attempts: 2, node_id: null, progress_percent: null,
+  correlation_id: "c", affinity_key: null, group_key: null, attempt_count: 1, max_attempts: 2, node_id: null, progress_percent: null,
   progress_stage: null, result: null, error: null, created_at: NOW, updated_at: NOW, finished_at: null, acked_at: null, ...over,
 } as FarmJobView);
 
@@ -59,7 +59,7 @@ async function setup(renderWarnings: string[] = [], inspect: ReturnType<typeof i
       submitted.push({ type: req.type, payload, requirements: req.requirements });
       const stage = req.type === "studio.render_final" ? "render-final" : req.type === "studio.export_premiere" ? "premiere" : "render-preview";
       const jobId = String(req.correlation_id).split(`studio-job-${stage}-`)[1];
-      const out = `productions/${project.id}/jobs/${stage}/${jobId}/out/`;
+      const out = `productions/${project.id}/jobs/${stage}/${jobId}/out/a1/`;
       const manifest = req.type === "studio.export_premiere"
         ? { schema: "ag.studio.premiere/v1", output: payload.output, size_bytes: 2_097_152, media: "proxy", files: [], warnings: ["1 font thay thế"] }
         : { schema: "ag.studio.render/v1", production_id: project.id, revision: 1, output: payload.output, width: 1920, height: 1080, duration_s: 64.5, size_bytes: 1000, watermarked: true, sources: [], warnings: renderWarnings,
@@ -94,7 +94,7 @@ describe("video renders", () => {
     expect(s.bucket.objects.has(`productions/${s.project.id}/jobs/render-preview/${job.id}/in/composition.json`)).toBe(true);
     expect(await s.db.get("SELECT job_type, is_final_render, stage_key FROM project_farm_jobs")).toEqual({ job_type: "studio.render_preview", is_final_render: false, stage_key: "render-preview" });
     expect((await videoRenders(s.db, s.project.id, s.video.id))[0]).toMatchObject({
-      kind: "render_preview", revision: 1, key: `productions/${s.project.id}/jobs/render-preview/${job.id}/out/videos/${s.video.id}/previews/${job.id}.mp4`,
+      kind: "render_preview", revision: 1, key: `productions/${s.project.id}/jobs/render-preview/${job.id}/out/a1/videos/${s.video.id}/previews/${job.id}.mp4`,
       duration_s: 64.5, watermarked: true,
     });
     const notes = readdirSync(join(s.dir, "videos", s.video.id, "renders"));
@@ -124,6 +124,19 @@ describe("video renders", () => {
     await s.run();
     expect(s.submitted[2]!.requirements).toEqual({ studio_render_min: 2 });
     expect(s.submitted[3]!.requirements).toBeUndefined();
+  });
+
+  it("a team with its own farm pool sends every job to it", async () => {
+    const s = await setup();
+    await setTeamFarmPool(s.db, "team-1", "hcm", NOW);
+    await saveVideoRevision(s.db, s.video.id, { baseRevision: 0, data: timeline(s.video.id), authorId: "u" });
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "render_preview", createdBy: "u" }, NOW);
+    await queueRender(s.db, { projectId: s.project.id, videoId: s.video.id, kind: "export_premiere", createdBy: "u" }, NOW);
+    await s.run();
+    await s.run();
+    expect(s.submitted.map((j) => j.requirements)).toEqual([{ studio_render_min: 2, pool: "hcm" }, { pool: "hcm" }]);
+    // what was sent is what Studio keeps (the fake farm answers one job id, so one row)
+    expect(await s.db.get("SELECT requirements FROM project_farm_jobs")).toEqual({ requirements: { studio_render_min: 2, pool: "hcm" } });
   });
 
   it("keeps every worker warning in the result but leaves loudnorm_not_linear out of the note", async () => {

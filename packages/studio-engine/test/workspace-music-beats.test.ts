@@ -22,7 +22,7 @@ const DOWNBEATS = BEATS.filter((_, k) => k % 4 === 0);
 
 const view = (over: Partial<FarmJobView>): FarmJobView => ({
   id: "00000000-0000-4000-8000-00000000ffff", owner: "studio", type: "studio.beats", lane: "interactive", status: "queued", priority: 0,
-  correlation_id: "c", affinity_key: null, group_key: null, attempt_count: 0, max_attempts: 2, node_id: null, progress_percent: null,
+  correlation_id: "c", affinity_key: null, group_key: null, attempt_count: 1, max_attempts: 2, node_id: null, progress_percent: null,
   progress_stage: null, result: null, error: null, created_at: NOW, updated_at: NOW, finished_at: null, acked_at: null, ...over,
 } as FarmJobView);
 
@@ -42,7 +42,7 @@ async function setup(o: { farmIdle?: boolean } = {}) {
     submitJob: async (req) => {
       submitted.push({ type: String(req.type), payload: req.payload as Record<string, unknown>, requirements: req.requirements });
       const [, stage, jobId] = String(req.correlation_id).match(/^studio-job-(\w+)-(.+)$/)!;
-      await w.bucket.put(`productions/${project.id}/jobs/${stage}/${jobId}/out/beats.json`, Buffer.from(JSON.stringify({
+      await w.bucket.put(`productions/${project.id}/jobs/${stage}/${jobId}/out/a1/beats.json`, Buffer.from(JSON.stringify({
         schema: "ag.studio.beats/v1", production_id: project.id, engine: { name: "librosa:0.11.0", version: null },
         tracks: [{ track_id: "music", duration_s: 60, bpm: 120, beats_per_bar: 4, beats: BEATS, downbeats: DOWNBEATS, sections: [{ start: 0, end: 60, bpm: 120 }] }],
       })));

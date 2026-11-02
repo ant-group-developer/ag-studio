@@ -12,6 +12,7 @@ import type { AppLanguage } from "./i18n/language";
 const TeamsPage = lazy(() => import("./pages/TeamsPage").then((m) => ({ default: m.TeamsPage })));
 const TeamDetailPage = lazy(() => import("./pages/TeamDetailPage").then((m) => ({ default: m.TeamDetailPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
+const ClaudeAccountsPage = lazy(() => import("./pages/ClaudeAccountsPage").then((m) => ({ default: m.ClaudeAccountsPage })));
 const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
 const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
 const MusicLibraryPage = lazy(() => import("./pages/MusicLibraryPage").then((m) => ({ default: m.MusicLibraryPage })));
@@ -42,6 +43,7 @@ export function App() {
                     <Route path="/p/:projectId/c/:threadId" element={<ProjectPage />} />
                     <Route path="/p/:projectId/v/:videoId" element={<ProjectPage />} />
                     <Route path="/queue" element={<QueuePage />} />
+                    <Route path="/claude-accounts" element={<ClaudeAccountsPage />} />
                     <Route path="/audit" element={<AuditPage />} />
                     <Route path="/stats" element={<StatsPage />} />
                     <Route path="/music" element={<MusicLibraryPage />} />

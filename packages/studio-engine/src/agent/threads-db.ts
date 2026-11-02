@@ -29,6 +29,8 @@ export interface MessageRecord {
   not_before: string | null; error: string | null; cancel_requested: boolean; attempts: number;
   llm_call_id: string | null; cost_usd: number | null; created_by: string | null; actor_role: ActorRole | null;
   started_at: string | null; finished_at: string | null; created_at: string; updated_at: string;
+  /** The Claude account it ran on last (migration 0007); null before it ran. */
+  claude_account_id: string | null;
   /** `ChangedFile[]` written after the turn (migration 0038); null before it or for turns that changed nothing yet. */
   changed_files?: ChangedFile[] | null;
 }
@@ -260,12 +262,21 @@ export async function nextPendingAgentTurns(db: StudioDb, now: string, limit: nu
   );
 }
 
-/** Pending → running, unless another worker took it first (or a message replaced it). */
-export async function markAgentTurnRunning(db: StudioDb, id: string, now: string): Promise<boolean> {
+/** Pending → running on a Claude account, unless another worker took it first (or a message replaced it). */
+export async function markAgentTurnRunning(db: StudioDb, id: string, now: string, claudeAccountId: string | null = null): Promise<boolean> {
   return db.tx(async () => (await db.run(
-    "UPDATE agent_messages SET status = 'running', started_at = COALESCE(started_at, ?), attempts = attempts + 1, updated_at = ? WHERE id = ? AND status IN ('pending', 'rate_limited')",
-    [now, now, id],
+    `UPDATE agent_messages SET status = 'running', started_at = COALESCE(started_at, ?), attempts = attempts + 1, claude_account_id = COALESCE(?, claude_account_id), updated_at = ?
+      WHERE id = ? AND status IN ('pending', 'rate_limited')`,
+    [now, claudeAccountId, now, id],
   )).changes === 1);
+}
+
+/** A turn none of its team's Claude accounts can take before `notBefore` (all at their plan's limit) waits until then. */
+export async function deferAgentTurn(db: StudioDb, id: string, notBefore: string, now: string): Promise<void> {
+  await db.run(
+    "UPDATE agent_messages SET status = 'rate_limited', error = 'rate_limited', not_before = ?, updated_at = ? WHERE id = ? AND status IN ('pending', 'rate_limited')",
+    [notBefore, now, id],
+  );
 }
 
 /** What the running turn has said and done so far. */

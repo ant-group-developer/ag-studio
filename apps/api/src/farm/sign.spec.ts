@@ -24,15 +24,16 @@ const MOCK_FINAL_JOB = {
   job_type: 'studio.render_final',
 };
 
-function makeTicketClaims(jobId: string, owner = 'studio') {
+function makeTicketClaims(jobId: string, over: { type?: string; attempt?: number; owner?: string } = {}) {
+  const { type = 'studio.render_preview', attempt = 1, owner = 'studio' } = over;
   return {
     iss: 'ag-farm',
     sub: 'worker-node-uuid',
     jti: 'jti-uuid',
     job_id: jobId,
     owner,
-    type: 'studio.render_preview',
-    attempt: 1,
+    type,
+    attempt,
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 3600,
   };
@@ -133,6 +134,46 @@ describe('FarmController /farm/sign', () => {
     expect(dbRun).not.toHaveBeenCalled();
   });
 
+  it("refuses a ticket whose job type is not the job's", async () => {
+    dbGet.mockReturnValue(MOCK_JOB);
+    const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id, { type: 'studio.tts' }), ip: '127.0.0.1' } as never;
+    await expect(controller.sign({ ops: [{ op: 'get', input: 'stage:a.json' }] }, req)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('signs only the library files the job names; a job sent before input_keys is signed as before', async () => {
+    // a real client: presigning is local, nothing is sent
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (controller as any).s3 = new S3Client({ region: 'auto', endpoint: 'https://r2.example.com', forcePathStyle: true, credentials: { accessKeyId: 'k', secretAccessKey: 's' } });
+    const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+    dbGet.mockReturnValue({ ...MOCK_JOB, input_keys: ['library:music/a.m4a'] });
+    const ok = await controller.sign({ ops: [{ op: 'get', input: 'library:music/a.m4a' }] }, req);
+    expect(ok.results).toHaveLength(1);
+    await expect(controller.sign({ ops: [{ op: 'get', input: 'library:studio/projects/other/voice.wav' }] }, req)).rejects.toThrow(
+      ForbiddenException,
+    );
+    dbGet.mockReturnValue({ ...MOCK_JOB, input_keys: null });
+    expect((await controller.sign({ ops: [{ op: 'get', input: 'library:studio/projects/other/voice.wav' }] }, req)).results).toHaveLength(1);
+  });
+
+  it('a library path with a .. segment is not a valid input', async () => {
+    dbGet.mockReturnValue({ ...MOCK_JOB, input_keys: null });
+    const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+    await expect(controller.sign({ ops: [{ op: 'get', input: 'library:music/../secret.wav' }] }, req)).rejects.toThrow(/Invalid sign request/);
+  });
+
+  it("each try writes under its own prefix: an older try's ticket cannot write where the newer one does", async () => {
+    dbGet.mockReturnValue(MOCK_JOB);
+    const keys: string[] = [];
+    for (const attempt of [1, 2]) {
+      const req = { ticketClaims: makeTicketClaims(MOCK_JOB.farm_job_id, { attempt }), ip: '127.0.0.1' } as never;
+      await controller.sign({ ops: [{ op: 'mp_create', output: 'render.json', content_type: 'application/json' }] }, req);
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const call of ((controller as any).s3.send as ReturnType<typeof vi.fn>).mock.calls) keys.push(call[0].input.Key);
+    const base = getJobOutputPrefix('prod-1', 'render-preview', 'attempt-1');
+    expect(keys).toEqual([`${base}a1/render.json`, `${base}a2/render.json`]);
+  });
+
   /** project_farm_jobs lookup -> `job`; the project's ag-go projects -> `projects`. */
   function routeDb(job: unknown, projects: string[] = ['agp-1']) {
     dbGet.mockImplementation((sql: string) => (sql.includes('project_farm_jobs') ? job : undefined));
@@ -220,7 +261,7 @@ describe('FarmController /farm/sign', () => {
     dbRun.mockReturnValue({ changes: 1 });
 
     const req = {
-      ticketClaims: makeTicketClaims(MOCK_FINAL_JOB.farm_job_id),
+      ticketClaims: makeTicketClaims(MOCK_FINAL_JOB.farm_job_id, { type: 'studio.render_final' }),
       ip: '127.0.0.1',
     } as never;
     await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
@@ -278,7 +319,7 @@ describe('FarmController /farm/sign', () => {
     it("is found in project_farm_jobs: its own prefixes, the project's ag-go projects, a clean 480p rendition preferred", async () => {
       routeProject(PROJECT_JOB);
       agGoResolveAssets.mockResolvedValue({ items: [item], missing: [] });
-      const req = { ticketClaims: makeTicketClaims(PROJECT_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+      const req = { ticketClaims: makeTicketClaims(PROJECT_JOB.farm_job_id, { type: 'studio.transcribe' }), ip: '127.0.0.1' } as never;
       const res = await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
       expect(agGoResolveAssets).toHaveBeenCalledWith({ projectIds: ['agp-1', 'agp-2'], assetIds: ['asset-1'], purpose: 'preview', prefer: { short_edge: 480, clean: true } });
       expect(sqls.some((s) => s.includes("kind = 'ag_go_project'"))).toBe(true);
@@ -290,7 +331,7 @@ describe('FarmController /farm/sign', () => {
     it('a final render of a project asks for the original, without a preference', async () => {
       routeProject({ ...PROJECT_JOB, is_final_render: true });
       agGoResolveAssets.mockResolvedValue({ items: [{ ...item, sourceKind: 'original' }], missing: [] });
-      const req = { ticketClaims: makeTicketClaims(PROJECT_JOB.farm_job_id), ip: '127.0.0.1' } as never;
+      const req = { ticketClaims: makeTicketClaims(PROJECT_JOB.farm_job_id, { type: 'studio.transcribe' }), ip: '127.0.0.1' } as never;
       await controller.sign({ ops: [{ op: 'get', input: 'asset:asset-1' }] }, req);
       expect(agGoResolveAssets).toHaveBeenCalledWith({ projectIds: ['agp-1', 'agp-2'], assetIds: ['asset-1'], purpose: 'final' });
     });

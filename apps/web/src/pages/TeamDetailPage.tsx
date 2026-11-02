@@ -26,6 +26,7 @@ import { PAGE_TABLE_STICKY } from "../helpers/sticky-table-header";
 import { SortDropdown } from "../helpers/sort-dropdown";
 import { TableRefreshButton } from "../helpers/table-refresh-button";
 import { useDebouncedValue } from "../helpers/use-debounced-value";
+import { TeamResourcesTab } from "../modules/team/TeamResourcesTab";
 import { TeamSkillsTab } from "../modules/team/TeamSkillsTab";
 import { AuditTable } from "../modules/audit/AuditTable";
 import { ClaudeStatsView } from "../modules/stats/ClaudeStatsView";
@@ -57,7 +58,7 @@ export function TeamDetailPage() {
   const queryClient = useQueryClient();
 
   // URL state
-  const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(["members", "skills", "stats", "audit"] as const).withDefault("members"));
+  const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(["members", "skills", "stats", "audit", "resources"] as const).withDefault("members"));
   const [page, setPage] = useQueryState("m_page", parseAsInteger.withDefault(1));
   const [sortBy, setSortBy] = useQueryState("m_sortBy", parseAsString.withDefault("name"));
   const [sortOrder, setSortOrder] = useQueryState(
@@ -291,13 +292,14 @@ export function TeamDetailPage() {
           </div>
           <Tabs
             activeKey={tab}
-            onChange={(k) => void setTab(k as "members" | "skills" | "stats" | "audit")}
+            onChange={(k) => void setTab(k as "members" | "skills" | "stats" | "audit" | "resources")}
             items={[
               { key: "members", label: t("teamSkills.tabMembers"), children: membersTab },
               { key: "skills", label: t("teamSkills.tabSkills"), children: teamId ? <TeamSkillsTab teamId={teamId} canEdit={canEditSkills} /> : null },
               ...(canReview && teamId ? [
                 { key: "stats", label: t("ws.stats.title"), children: <ClaudeStatsView teamId={teamId} /> },
                 { key: "audit", label: t("ws.audit.title"), children: <AuditTable teamId={teamId} /> },
+                { key: "resources", label: t("ws.teamResources.tab"), children: <TeamResourcesTab teamId={teamId} isAdmin={!!me?.isAdmin} /> },
               ] : []),
             ]}
           />

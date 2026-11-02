@@ -55,7 +55,7 @@ export class AgentToolsController {
       const answer = await callAgentTool(this.tools.all, {
         db: this.engine.db, claims: call.claims, message: call.message, thread: call.thread, project: call.project, video: call.video,
         workspaceDir: await this.workspace.dir(call.project.id), role: call.role, now: () => new Date().toISOString(), footage: this.footage,
-        siteName: this.siteName.current(), referenceFetchers: () => referenceFetcherNames(this.engine), bucket: this.engine.bucket,
+        siteName: this.siteName.current(), referenceFetchers: (pool) => referenceFetcherNames(this.engine, pool), bucket: this.engine.bucket,
         ...(tools ? { audio: { db: this.engine.db, bucket: this.engine.bucket, ...tools } } : {}),
       }, body.name, body.arguments ?? {});
       await record(answer.isError ? 'error' : 'ok', answer.text);

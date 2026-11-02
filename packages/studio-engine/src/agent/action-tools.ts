@@ -4,6 +4,7 @@
  */
 import { z } from "zod";
 import { StudioRunError } from "../errors.js";
+import { projectFarmPool } from "../claude-accounts.js";
 import { referenceDownloadBlock, youtubeBlock } from "../settings.js";
 import { ACTION_KINDS, ACTION_ROLE, proposeAction } from "./actions.js";
 import type { AgentTool } from "./tools.js";
@@ -33,7 +34,7 @@ export const ACTION_TOOLS: AgentTool[] = [
       // YouTube blocking the Studio server refuses the card only when no farm machine can fetch instead (or the farm
       // is blocked too): through the farm it would work (`referenceDownloadBlock`)
       const studioBlock = a.kind === "reference_download" ? await youtubeBlock(ctx.db, ctx.now()) : null;
-      const fetchers = studioBlock && ctx.referenceFetchers ? await ctx.referenceFetchers().catch(() => [] as string[]) : [];
+      const fetchers = studioBlock && ctx.referenceFetchers ? await ctx.referenceFetchers(await projectFarmPool(ctx.db, ctx.project.id)).catch(() => [] as string[]) : [];
       const blocked = studioBlock ? await referenceDownloadBlock(ctx.db, ctx.now(), fetchers.length) : null;
       if (blocked) {
         throw new StudioRunError("rejected", [

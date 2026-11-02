@@ -21,6 +21,8 @@ interface AccountUser {
 
 const AUTH0_PREFIX = 'auth0|';
 const CACHE_TTL_MS = 5 * 60 * 1000;
+/** Someone Account API did not know yet: asked again soon, so a person synced into Account API shows up within a minute. */
+const MISS_TTL_MS = 30 * 1000;
 const TIMEOUT_MS = 5000;
 
 /**
@@ -76,7 +78,7 @@ export class AccountDirectoryService {
       const found = new Map(users.map((u) => [userIdOf(u.id), this.toSummary(u)]));
       for (const userId of chunk) {
         const value = found.get(userId) ?? null;
-        this.cache.set(userId, { value, expiresAt: now + CACHE_TTL_MS });
+        this.cache.set(userId, { value, expiresAt: now + (value ? CACHE_TTL_MS : MISS_TTL_MS) });
         if (value) result.set(userId, value);
       }
     }

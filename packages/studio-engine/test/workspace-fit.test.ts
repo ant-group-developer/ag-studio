@@ -20,7 +20,7 @@ const SRC = studioSourceId(ASSET);
 
 const view = (over: Partial<FarmJobView>): FarmJobView => ({
   id: "00000000-0000-4000-8000-00000000ffff", owner: "studio", type: "studio.tts", lane: "gpu", status: "queued", priority: 0,
-  correlation_id: "c", affinity_key: null, group_key: null, attempt_count: 0, max_attempts: 2, node_id: null, progress_percent: null,
+  correlation_id: "c", affinity_key: null, group_key: null, attempt_count: 1, max_attempts: 2, node_id: null, progress_percent: null,
   progress_stage: null, result: null, error: null, created_at: NOW, updated_at: NOW, finished_at: null, acked_at: null, ...over,
 } as FarmJobView);
 
@@ -66,7 +66,7 @@ async function setup() {
     submitJob: async (req) => {
       submitted.push(req.payload);
       const jobId = String(req.correlation_id).split("studio-job-tts-")[1];
-      const out = `productions/${project.id}/jobs/tts/${jobId}/out/`;
+      const out = `productions/${project.id}/jobs/tts/${jobId}/out/a1/`;
       await w.bucket.put(`${out}tts.json`, Buffer.from(JSON.stringify({
         schema: "ag.studio.tts/v1", production_id: project.id, language: "vi", engine: { name: "fake", version: null },
         lines: [{ line_id: "L001", output: "tts/L001.wav", duration_s: 3.2, words: [{ word: "Chào", start: 0, end: 0.4 }] }],

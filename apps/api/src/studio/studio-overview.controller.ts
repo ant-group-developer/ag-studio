@@ -3,12 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Request } from 'express';
 import {
-  assistantName, claudeMaxConcurrent, claudeUsage, parseClaudeMaxConcurrent, referenceFetchNodes, setAssistantName, setClaudeMaxConcurrent, studioActivity,
+  assistantName, claudeMaxConcurrent, claudeUsage, claudeUsageByAccount, listClaudeAccounts, parseClaudeMaxConcurrent, nodeInPool, referenceFetchNodes, setAssistantName, setClaudeMaxConcurrent, studioActivity,
   youtubeBlock,
 } from '@ag-studio/engine';
 import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from './engine.service';
 import { mapErrors } from './http-errors';
+
+interface FarmPoolMachine { id: string; name: string; online: boolean }
 
 export class StudioSettingsDto {
   /** Claude calls at once for the whole Studio (chat and steps that run on their own). */
@@ -56,8 +58,17 @@ export class StudioOverviewController {
     let farm: { ok: true } | { ok: false; error: string } = { ok: true };
     try { machines = (await this.engine.farmNodes()).nodes; } catch (e) { farm = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
     const now = this.engine.core.clock.now();
+    // an admin sees each Claude account: turns on it now, and whether it waits for its plan's limit
+    let claudeAccounts = null;
+    if (isAdmin) {
+      const running = await claudeUsageByAccount(this.engine.db, now);
+      claudeAccounts = (await listClaudeAccounts(this.engine.db)).map((a) => ({
+        id: a.id, name: a.name, isDefault: a.isDefault, enabled: a.enabled, maxConcurrent: a.maxConcurrent, running: running.get(a.id) ?? 0,
+        rateLimitedUntil: a.rateLimitedUntil && a.rateLimitedUntil > now ? a.rateLimitedUntil : null, lastError: a.lastError, teams: a.teams,
+      }));
+    }
     return {
-      claude: await this.claude(), items, hidden, machines, farm,
+      claude: await this.claude(), claudeAccounts, items, hidden, machines, farm,
       youtube: await youtubeBlock(this.engine.db, now), youtubeFarm: await youtubeBlock(this.engine.db, now, 'farm'),
       referenceFetchers: machines ? referenceFetchNodes(machines).map((n) => n.name) : null,
     };
@@ -71,6 +82,31 @@ export class StudioOverviewController {
       return { nodes: nodes.filter((n) => n.kinds.includes('studio.render_final')) };
     } catch {
       return { nodes: [] };
+    }
+  }
+
+  /**
+   * The farm's pools (`pools` of each machine: a machine shows in each of its pools) with their machines (name, online),
+   * and the machines that take shared jobs (no pool, or a pooled one with `accept_shared`): what a team's pool is picked
+   * from on its Resources tab. Machine names are on the Queue for everyone already. `ok: false` when the farm is out of
+   * reach.
+   */
+  @Get('farm/pools')
+  async farmPools() {
+    try {
+      const pools = new Map<string, FarmPoolMachine[]>();
+      const shared: FarmPoolMachine[] = [];
+      for (const n of (await this.engine.farmNodes()).nodes) {
+        const m = { id: n.id, name: n.name, online: n.online };
+        for (const p of n.pools ?? []) pools.set(p, [...(pools.get(p) ?? []), m]);
+        if (nodeInPool(n, null)) shared.push(m);
+      }
+      return {
+        ok: true, shared,
+        pools: [...pools].sort(([a], [b]) => a.localeCompare(b)).map(([pool, machines]) => ({ pool, machines })),
+      };
+    } catch {
+      return { ok: false, shared: [], pools: [] };
     }
   }
 

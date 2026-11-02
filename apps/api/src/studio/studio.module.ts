@@ -3,9 +3,10 @@ import { EngineService } from './engine.service';
 import { StudioOverviewController } from './studio-overview.controller';
 import { MusicLibraryController } from './music-library.controller';
 import { StatsController } from './stats.controller';
+import { ClaudeAccountsController } from './claude-accounts.controller';
 
 @Module({
-  controllers: [StudioOverviewController, MusicLibraryController, StatsController],
+  controllers: [StudioOverviewController, MusicLibraryController, StatsController, ClaudeAccountsController],
   providers: [EngineService],
   exports: [EngineService],
 })

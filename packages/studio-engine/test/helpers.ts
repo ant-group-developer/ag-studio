@@ -15,7 +15,7 @@ export function fakeJpeg(id: string | number): Buffer { return Buffer.from(`\xff
 
 /**
  * ag-farm owner API stand-in. Answers `studio.tts`, `studio.transcribe` and the renders at once, writing their outputs
- * where the project farm steps read them: `productions/<projectId>/jobs/<stageKey>/<correlation>/out/`.
+ * where the project farm steps read them: `productions/<projectId>/jobs/<stageKey>/<correlation>/out/a1/` (the first try).
  */
 export function fakeFarm(bucket: MemoryBucket) {
   const jobs = new Map<string, { id: string; type: string; payload: Record<string, unknown>; requirements: Record<string, unknown>; status: string; result: unknown; error: unknown }>();
@@ -29,7 +29,7 @@ export function fakeFarm(bucket: MemoryBucket) {
       const attemptId = String(req.correlation_id ?? id);
       // FarmExecutor resolves output prefix as: productions/<productionId>/jobs/<stageKey>/<attemptId>/out/
       const stageKey = req.type === "studio.tts" ? "tts" : req.type === "studio.transcribe" ? "transcribe" : "render-final";
-      const out = `productions/${prod}/jobs/${stageKey}/${attemptId}/out/`;
+      const out = `productions/${prod}/jobs/${stageKey}/${attemptId}/out/a1/`;
       // Shot-cut episodes (phase 5): narration read and footage listened to, as the render worker answers them
       if (req.type === "studio.tts") {
         const lines = (p.lines as { line_id: string; text: string }[]).map((l) => {
@@ -80,7 +80,7 @@ export function fakeFarm(bucket: MemoryBucket) {
       jobs.set(id, { id, type: req.type, payload: p, requirements: req.requirements ?? {}, status: "completed", result: { manifest: "render.json" }, error: null });
       return { job: { id }, created: true };
     },
-    async getJob(id: string) { const j = jobs.get(id)!; return { ...j, progress_percent: 100 }; },
+    async getJob(id: string) { const j = jobs.get(id)!; return { ...j, attempt_count: 1, progress_percent: 100 }; },
     async ackJob() { return {}; },
     async cancelJob() { return {}; },
   };
