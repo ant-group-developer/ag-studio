@@ -29,7 +29,13 @@ const fail = (httpStatus: number, errorCode: string) => json({ success: false, d
 const TRACK = {
   id: 7, type: 'SONG', name: 'Mưa chiều', code: 'S-7', bpm: 92, durationMs: 185_000, thumbnailUrl: null,
   categories: [{ id: 1, kind: 'GENRE', name: 'Lofi' }], artists: [{ id: 3, name: 'Hà An' }],
+  instrumental: true, peaks: [0.1, 0.8, 0.4], downloadCount: 12,
 };
+const DETAIL = {
+  id: 7, bpm: 92, artists: [{ id: 3, name: 'Hà An' }],
+  categories: [{ id: 1, kind: 'GENRE', name: 'Lofi' }, { id: 5, kind: 'THEME', name: 'Mưa' }, { id: 9, kind: 'MOOD', name: 'Chill' }],
+};
+const DESCRIBED = { artists: ['Hà An'], categories: [{ kind: 'GENRE', name: 'Lofi' }, { kind: 'THEME', name: 'Mưa' }, { kind: 'MOOD', name: 'Chill' }], bpm: 92 };
 const EXPORT = {
   trackId: 7, code: 'S-7', type: 'SONG', name: 'Mưa chiều', artists: [{ id: 3, name: 'Hà An' }], origin: 'ORIGINAL', copyrightStatus: 'CLEAN',
   fileId: 70, fileName: 'Mưa chiều.mp3', contentType: 'audio/mpeg', sizeBytes: 5, durationMs: 185_000, url: FILE_URL, expiresAt: '2026-11-01T10:00:00Z',
@@ -47,8 +53,9 @@ describe('ag-music into the media library (real database)', () => {
     const engine = s.engine as unknown as EngineService;
     const media = new MediaLibraryService(engine);
     const config = { get: (k: string) => (k === 'AG_MUSIC_API_URL' ? agMusicUrl : undefined) } as unknown as ConfigService;
-    picker = new AgMusicController(new AgMusicService(config, engine, media), media);
-    library = new MediaController(engine, media);
+    const agMusic = new AgMusicService(config, engine, media);
+    picker = new AgMusicController(agMusic, media);
+    library = new MediaController(engine, media, agMusic);
   }
 
   beforeEach(async () => {
@@ -59,6 +66,7 @@ describe('ag-music into the media library (real database)', () => {
     answer = (method, url) => {
       if (url.href === FILE_URL) return new Response(Buffer.from('audio'), { status: 200, headers: { 'content-length': '5' } });
       if (method === 'GET' && url.pathname === '/api/v1/tracks') return ok({ items: [TRACK], page: 0, size: 20, totalElements: 1, totalPages: 1 });
+      if (method === 'GET' && url.pathname === '/api/v1/tracks/7') return ok(DETAIL);
       if (method === 'GET' && url.pathname === '/api/v1/tracks/7/playback') return ok({ trackId: 7, audioUrl: 'https://storage.test/listen', expiresAt: 'x', durationMs: 1 });
       if (method === 'POST' && url.pathname === '/api/v1/tracks/7/export') return ok(EXPORT);
       if (method === 'POST' && url.pathname === '/api/v1/tracks/7/export/confirm') return ok({ counted: true });
@@ -92,7 +100,8 @@ describe('ag-music into the media library (real database)', () => {
     expect(picker.status()).toEqual({ enabled: true });
     const first = await picker.tracks({ q: 'mưa', type: 'SONG', page: '1', size: '10' }, req(EDITOR));
     expect(first).toEqual({
-      items: [{ trackId: 7, code: 'S-7', type: 'SONG', name: 'Mưa chiều', artists: ['Hà An'], categories: ['Lofi'], durationMs: 185_000, bpm: 92, thumbnailUrl: null, mediaId: null }],
+      items: [{ trackId: 7, code: 'S-7', type: 'SONG', name: 'Mưa chiều', artists: ['Hà An'], categories: ['Lofi'], durationMs: 185_000, bpm: 92, thumbnailUrl: null, mediaId: null,
+        instrumental: true, peaks: [0.1, 0.8, 0.4], downloadCount: 12 }],
       total: 1, page: 0, size: 20,
     });
     const u = new URL(calls[0]!.url);
@@ -100,23 +109,56 @@ describe('ag-music into the media library (real database)', () => {
     expect(Object.fromEntries(u.searchParams)).toEqual({ approved: 'true', sort: 'NEWEST', page: '1', size: '10', keyword: 'mưa', types: 'SONG' });
     expect(await Promise.resolve().then(() => picker.tracks({ type: 'BAD' }, req(EDITOR))).catch(code)).toBe('invalid');
 
+    // the filters of ag-music's sidebar and the order go along
+    await picker.tracks({ type: 'ASSET', categoryIds: '1,4', instrumental: 'false', purposes: 'SHORT,ASMR', bpmFrom: '80', sort: 'MOST_DOWNLOADED' }, req(EDITOR));
+    expect(Object.fromEntries(new URL(calls.at(-1)!.url).searchParams)).toEqual({
+      approved: 'true', types: 'ASSET', categoryIds: '1,4', instrumental: 'false', purposes: 'SHORT,ASMR', bpmFrom: '80',
+      sort: 'MOST_DOWNLOADED', page: '0', size: '20',
+    });
+    expect(await Promise.resolve().then(() => picker.tracks({ categoryIds: '1,x' }, req(EDITOR))).catch(code)).toBe('invalid');
+    expect(await Promise.resolve().then(() => picker.tracks({ origins: 'drop table' }, req(EDITOR))).catch(code)).toBe('invalid');
+
     const item = await picker.fetch({ trackId: 7 }, req(EDITOR));
     expect((await picker.tracks({}, req(EDITOR))).items[0]!.mediaId).toBe(item.id);
     // someone else has not fetched it
     expect((await picker.tracks({}, req('auth0|other', 'tok-other'))).items[0]!.mediaId).toBeNull();
   });
 
+  it('asks ag-music the counts of the filter sidebar on the same filters, approved tracks only', async () => {
+    const facets = { categories: { GENRE: [{ id: 1, name: 'Lofi', count: 3 }] }, artists: [], instrumental: { true: 3 }, voiceGenders: {}, releaseStatuses: {}, origins: {}, purposes: {} };
+    answer = (method, url) => (url.pathname === '/api/v1/tracks/facets' ? ok(facets) : fail(404, 'NotFound'));
+    expect(await picker.facets({ q: 'mưa', type: 'SONG', artistIds: '3' }, req(EDITOR))).toEqual(facets);
+    expect(calls.at(-1)!.auth).toBe('Bearer tok-editor');
+    expect(Object.fromEntries(new URL(calls.at(-1)!.url).searchParams)).toEqual({ approved: 'true', keyword: 'mưa', types: 'SONG', artistIds: '3' });
+  });
+
+  it('describes in the library a track copied before its genre, theme... were kept, once', async () => {
+    const plain = answer;
+    // ag-music did not describe it at copy time
+    answer = (method, url) => (url.pathname === '/api/v1/tracks/7' ? fail(503, 'Down') : plain(method, url));
+    const item = await picker.fetch({ trackId: 7 }, req(EDITOR));
+    expect(item.origin).not.toHaveProperty('categories');
+    answer = plain;
+    calls.length = 0;
+    const listed = await library.list({ kind: 'audio' }, req(EDITOR));
+    expect(listed.items[0]!.origin).toMatchObject(DESCRIBED);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`GET ${API}/tracks/7`]);
+    calls.length = 0;
+    expect((await library.list({ kind: 'audio' }, req(EDITOR))).items[0]!.origin).toMatchObject(DESCRIBED);
+    expect(calls).toEqual([]);
+  });
+
   it('copies the main audio under the person once, remembering the track; picked again it is the same item', async () => {
     const item = await picker.fetch({ trackId: 7 }, req(EDITOR));
     expect(item).toMatchObject({
       kind: 'audio', name: 'Mưa chiều.mp3', bytes: 5, usedIn: [],
-      origin: { system: 'ag-music', trackId: 7, fileId: 70, code: 'S-7', type: 'SONG', origin: 'ORIGINAL', copyrightStatus: 'CLEAN' },
+      origin: { system: 'ag-music', trackId: 7, fileId: 70, code: 'S-7', type: 'SONG', origin: 'ORIGINAL', copyrightStatus: 'CLEAN', ...DESCRIBED },
       previewUrl: expect.stringContaining('memory://library/studio/users/auth0_editor-'),
     });
     // the download is counted after the copy is in the library
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`POST ${API}/tracks/7/export`, `GET ${FILE_URL}`, `POST ${API}/tracks/7/export/confirm`]);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`POST ${API}/tracks/7/export`, `GET ${API}/tracks/7`, `GET ${FILE_URL}`, `POST ${API}/tracks/7/export/confirm`]);
     expect(calls[0]!.auth).toBe('Bearer tok-editor');
-    expect(calls[2]!.auth).toBe('Bearer tok-editor');
+    expect(calls[3]!.auth).toBe('Bearer tok-editor');
 
     calls.length = 0;
     expect((await picker.fetch({ trackId: 7 }, req(EDITOR))).id).toBe(item.id);

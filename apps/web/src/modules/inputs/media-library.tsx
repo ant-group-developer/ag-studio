@@ -6,7 +6,7 @@ import { StudioHttpError } from "../../api/http";
 import { useWorkspaceClient, type MediaItem, type MediaKind, type MediaUseKind } from "../../api/workspace-client";
 import { useAiTranslation } from "../common/assistant-name";
 import { useUploadProgress } from "../common/upload-progress";
-import { AgMusicPicker, useAgMusicEnabled } from "./ag-music-picker";
+import { AgMusicPicker, pauseOthers, useAgMusicEnabled } from "./ag-music-picker";
 import "./media-library.css";
 
 /** The library's kinds a use takes. */
@@ -20,6 +20,9 @@ const ACCEPT: Record<MediaUseKind, string> = {
 const LIMIT = 120;
 
 interface VideoRef { id: string; idx: number; title: string }
+
+/** ag-music's category kinds in the order its sidebar has them. */
+const CATEGORY_ORDER = ["GENRE", "THEME", "MOOD", "EFFECT", "INSTRUMENT"];
 
 const sizeOf = (bytes: number) => (bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : bytes >= 1024 ** 2 ? `${Math.round(bytes / 1024 ** 2)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
@@ -70,32 +73,46 @@ export function FootageVideosModal({ open, projectId, assetId, name, videos, inV
   );
 }
 
-/** One item: a picture of it (a photo, a video's first frame, a note for audio), its name, size and where it is used. */
-function MediaCard({ item, selected, inProject, onToggle, onDelete, deleting }: {
+/** One row of the library: tick, a small picture (a photo, a video's first frame, a note for audio), name, size, where it is used. */
+function MediaRow({ item, selected, inProject, onToggle, onDelete, deleting }: {
   item: MediaItem; selected: boolean; inProject: boolean; onToggle: () => void; onDelete: () => void; deleting: boolean;
 }) {
   const { t } = useAiTranslation();
+  const ag = item.origin?.system === "ag-music" ? item.origin : null;
+  const cats = [...(ag?.categories ?? [])].sort((a, b) => CATEGORY_ORDER.indexOf(a.kind) - CATEGORY_ORDER.indexOf(b.kind));
   const used = !item.usedIn.length ? t("ws.library.unused")
     : item.usedIn.length === 1 ? t("ws.library.usedIn", { name: item.usedIn[0]!.name }) : t("ws.library.usedInMore", { name: item.usedIn[0]!.name, count: item.usedIn.length - 1 });
   return (
-    <div className={`ws-mcard${selected ? " ws-mcard--on" : ""}${inProject ? " ws-mcard--in" : ""}`}>
-      <button type="button" className="ws-mcard__pick" aria-pressed={selected} disabled={inProject} onClick={onToggle} aria-label={item.name}>
-        <span className="ws-mcard__cover">
+    <li className={`ws-mrow${selected ? " ws-mrow--on" : ""}${inProject ? " ws-mrow--in" : ""}`}>
+      <button type="button" className="ws-mrow__pick" aria-pressed={selected} disabled={inProject} onClick={onToggle} aria-label={item.name}>
+        <span className="ws-mrow__tick" aria-hidden>{selected ? <Check size={12} /> : null}</span>
+        <span className={`ws-mrow__cover ws-mrow__cover--${item.kind}`}>
           {item.kind === "image" ? <img src={item.previewUrl} alt="" loading="lazy" />
             : item.kind === "video" ? <video src={`${item.previewUrl}#t=0.5`} preload="metadata" muted playsInline />
-              : <Music size={28} aria-hidden />}
-          <span className="ws-mcard__tick" aria-hidden>{selected ? <Check size={12} /> : null}</span>
-          {inProject ? <span className="ws-mcard__in">{t("ws.library.inProject")}</span> : null}
+              : <Music size={18} aria-hidden />}
         </span>
-        <span className="ws-mcard__name" title={item.name}>{item.name}</span>
-        {item.origin?.system === "ag-music" ? <span className="ws-mcard__origin">{t("ws.library.agMusic.badge")}</span> : null}
-        <span className="ws-mcard__meta">{sizeOf(item.bytes)} · {used}</span>
+        <span className="ws-mrow__text">
+          <span className="ws-mrow__name" title={item.name}>{item.name}</span>
+          <span className="ws-mrow__meta">
+            {ag ? <span className="ws-mrow__origin">{t("ws.library.agMusic.badge")} · {t(`ws.library.agMusic.type.${ag.type}`)}</span> : null}
+            <span title={used}>{[ag?.artists?.join(", "), ag?.bpm ? `${ag.bpm} BPM` : null, sizeOf(item.bytes), used].filter(Boolean).join(" · ")}</span>
+          </span>
+          {cats.length ? (
+            <span className="ws-mrow__tags">
+              {cats.map((c) => (
+                <span key={`${c.kind}:${c.name}`} className={`ws-mrow__tag ws-mrow__tag--${c.kind.toLowerCase()}`}
+                  title={`${CATEGORY_ORDER.includes(c.kind) ? t(`ws.library.agMusic.group.${c.kind}`) : c.kind}: ${c.name}`}>{c.name}</span>
+              ))}
+            </span>
+          ) : null}
+        </span>
+        {inProject ? <span className="ws-mrow__in">{t("ws.library.inProject")}</span> : null}
       </button>
-      {item.kind === "audio" ? <audio className="ws-mcard__audio" src={item.previewUrl} controls preload="none" aria-label={item.name} /> : null}
+      {item.kind === "audio" ? <audio className="ws-mrow__audio" src={item.previewUrl} controls preload="none" aria-label={item.name} onPlay={(e) => pauseOthers(e.currentTarget)} /> : null}
       <Popconfirm title={t("ws.library.deleteConfirm", { name: item.name })} okText={t("ws.library.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")} onConfirm={onDelete}>
-        <button type="button" className="ws-icon-button ws-mcard__delete" aria-label={t("ws.library.deleteNamed", { name: item.name })} disabled={deleting}><Trash2 size={13} /></button>
+        <button type="button" className="ws-icon-button ws-mrow__delete" aria-label={t("ws.library.deleteNamed", { name: item.name })} disabled={deleting}><Trash2 size={13} /></button>
       </Popconfirm>
-    </div>
+    </li>
   );
 }
 
@@ -165,15 +182,17 @@ export function MediaLibraryDrawer({ open, projectId, use, videos, currentVideoI
     },
     onError: fail(t("ws.library.addFailed")),
   });
+  /** What "pick all" ticks: what is listed and not in the project yet. */
+  const pickable = useMemo(() => items.filter((i) => !inProject.has(i.id)).map((i) => i.id), [items, inProject]);
+  const allOn = pickable.length > 0 && pickable.every((id) => picked.includes(id));
   const pickedKinds = useMemo(() => {
     const by = new Map(items.map((i) => [i.id, i.kind]));
     return picked.map((id) => by.get(id)).filter(Boolean) as MediaKind[];
   }, [items, picked]);
 
   return (
-    <Drawer open={open} onClose={onClose} width={820} destroyOnHidden
+    <Drawer open={open} onClose={onClose} width={880} destroyOnHidden rootClassName="ws-mlib"
       title={<span className="ws-mlib__title"><Library size={16} aria-hidden />{t("ws.library.title")}</span>}
-      extra={<span className="ws-hint">{t(`ws.library.for.${use}`)}</span>}
       footer={(
         <div className="ws-mlib__foot">
           <strong>{t("ws.library.picked", { count: picked.length })}</strong>
@@ -185,29 +204,38 @@ export function MediaLibraryDrawer({ open, projectId, use, videos, currentVideoI
       )}>
       <div className="ws-mlib__tools">
         {kinds.length > 1 ? (
-          <Segmented<MediaKind | "all"> size="small" value={kind} onChange={setKind} aria-label={t("ws.library.kindLabel")}
+          <Segmented<MediaKind | "all"> value={kind} onChange={setKind} aria-label={t("ws.library.kindLabel")}
             options={[{ value: "all", label: t("ws.library.kind.all") }, ...kinds.map((k) => ({ value: k, label: t(`ws.library.kind.${k}`) }))]} />
         ) : null}
-        <Input.Search size="small" allowClear placeholder={t("ws.library.search")} aria-label={t("ws.library.search")} value={q} onChange={(e) => setQ(e.target.value)} />
-        <Button size="small" icon={<Upload size={14} />} loading={upload.isPending} onClick={() => input.current?.click()}>
+        <Input.Search allowClear placeholder={t("ws.library.search")} aria-label={t("ws.library.search")} value={q} onChange={(e) => setQ(e.target.value)} />
+        <Button icon={<Upload size={14} />} loading={upload.isPending} onClick={() => input.current?.click()}>
           {uploading.percent !== null ? t("common.uploading", { pct: uploading.percent }) : t("ws.library.upload")}
         </Button>
         <input ref={input} type="file" multiple hidden accept={ACCEPT[use]} aria-label={t("ws.library.upload")}
           onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; if (files.length) upload.mutate(files); }} />
         {use === "audio" && agMusicOn ? (
-          <Button size="small" icon={<Music size={14} />} onClick={() => setAgMusic(true)}>{t("ws.library.agMusic.open")}</Button>
+          <Button icon={<Music size={14} />} onClick={() => setAgMusic(true)}>{t("ws.library.agMusic.open")}</Button>
         ) : null}
       </div>
-      {list.isLoading ? <div className="ws-center"><Spin /></div> : items.length ? (
-        <div className="ws-mlib__grid">
-          {items.map((i) => (
-            <MediaCard key={i.id} item={i} selected={picked.includes(i.id)} inProject={inProject.has(i.id)} deleting={remove.isPending && remove.variables === i.id}
-              onToggle={() => setPicked((p) => (p.includes(i.id) ? p.filter((x) => x !== i.id) : [...p, i.id]))} onDelete={() => remove.mutate(i.id)} />
-          ))}
+      <section className="ws-mlib__panel">
+        <div className="ws-mlib__head">
+          <Checkbox checked={allOn} indeterminate={!allOn && pickable.some((id) => picked.includes(id))} disabled={!pickable.length}
+            onChange={(e) => setPicked((p) => (e.target.checked ? [...new Set([...p, ...pickable])] : p.filter((id) => !pickable.includes(id))))}>
+            {t("ws.library.pickAll")}
+          </Checkbox>
+          <span className="ws-hint ws-mlib__for">{t(`ws.library.for.${use}`)}{list.data ? ` · ${t("ws.library.count", { count: items.length })}` : ""}</span>
         </div>
-      ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={q.trim() ? t("ws.library.noMatch") : t("ws.library.empty")} />}
+        {list.isLoading ? <div className="ws-center"><Spin /></div> : items.length ? (
+          <ul className="ws-mlib__list" aria-label={t("ws.library.title")}>
+            {items.map((i) => (
+              <MediaRow key={i.id} item={i} selected={picked.includes(i.id)} inProject={inProject.has(i.id)} deleting={remove.isPending && remove.variables === i.id}
+                onToggle={() => setPicked((p) => (p.includes(i.id) ? p.filter((x) => x !== i.id) : [...p, i.id]))} onDelete={() => remove.mutate(i.id)} />
+            ))}
+          </ul>
+        ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={q.trim() ? t("ws.library.noMatch") : t("ws.library.empty")} />}
+      </section>
       {use === "footage" ? (
-        <div className="ws-mlib__targets">
+        <div className="ws-mlib__panel ws-mlib__targets">
           <span className="ws-sub"><Plus size={12} aria-hidden /> {t("ws.library.intoVideos")}</span>
           <p className="ws-hint">{t("ws.library.intoVideosHint")}</p>
           <VideoChecklist videos={videos} value={targets} onChange={setTargets} currentVideoId={currentVideoId} label={t("ws.library.videosLabel")} />

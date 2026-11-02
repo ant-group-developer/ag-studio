@@ -31,11 +31,14 @@ export type MediaUse = "footage" | "audio" | "reference";
 
 /**
  * Where Studio fetched an item from for its owner instead of their upload (2026-11-01): the main audio of an approved
- * ag-music track, with what ag-music says of it (`type`, `origin`, `copyrightStatus` are its constant names).
+ * ag-music track, with what ag-music says of it (`type`, `origin`, `copyrightStatus` are its constant names). Since
+ * 2026-11-02 also its artists, categories (`kind`: GENRE, THEME, MOOD, EFFECT, INSTRUMENT) and BPM, for the library
+ * to show; items copied before get them the next time the library is listed (`setMediaOrigin`).
  */
 export interface MediaOrigin {
   system: "ag-music"; trackId: number; fileId: number; code: string | null; type: string; origin: string | null;
   copyrightStatus: string | null;
+  artists?: string[]; categories?: { kind: string; name: string }[]; bpm?: number | null;
 }
 
 export interface MediaItem {
@@ -138,6 +141,11 @@ export async function findAgMusicItem(db: StudioDb, ownerId: string, trackId: nu
     "SELECT * FROM media_items WHERE owner_id = ? AND origin->>'system' = 'ag-music' AND origin->>'trackId' = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
     [ownerId, String(trackId)],
   );
+}
+
+/** What Studio knows of where the owner's item came from, rewritten (more of ag-music's description). */
+export async function setMediaOrigin(db: StudioDb, ownerId: string, id: string, origin: MediaOrigin): Promise<void> {
+  await db.run("UPDATE media_items SET origin = ? WHERE id = ? AND owner_id = ?", [JSON.stringify(origin), id, ownerId]);
 }
 
 /** The ag-music tracks a project uses (through a source pointing at an item fetched from ag-music, anyone's), by name. */

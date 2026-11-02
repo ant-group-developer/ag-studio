@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Optional, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { deleteMediaItem, listMediaItems, renameMediaItem } from '@ag-studio/engine';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
+import { AgMusicService } from './ag-music.service';
 import { MediaLibraryService, type MediaItemResponse } from './media-library.service';
 import { SignUploadFields } from './raw-uploads';
 import { parseBody } from './zod-body';
@@ -29,14 +30,18 @@ export type { MediaItemResponse };
 @Controller('me/media')
 @UseGuards(RolesGuard)
 export class MediaController {
-  constructor(private readonly engine: EngineService, private readonly media: MediaLibraryService) {}
+  constructor(private readonly engine: EngineService, private readonly media: MediaLibraryService, @Optional() private readonly agMusic?: AgMusicService) {}
 
-  /** Newest first; `kind`, part of the name `q`, paging. Each with where it is used and a link to play or show it. */
+  /**
+   * Newest first; `kind`, part of the name `q`, paging. Each with where it is used and a link to play or show it; tracks
+   * copied from ag-music with their artists and categories (asked of ag-music once for items copied before they were kept).
+   */
   @Get()
   list(@Query() raw: unknown, @Req() req: Request): Promise<{ items: MediaItemResponse[]; total: number; bytes: number }> {
     return mapErrors(async () => {
       const q = parseBody(ListSchema, raw);
       const r = await listMediaItems(this.engine.db, req.authContext!.userId, q);
+      await this.agMusic?.describeMissing(req.authContext!.userId, req.authContext!.accessToken, r.items);
       return { ...r, items: await this.media.withPreviews(r.items) };
     });
   }

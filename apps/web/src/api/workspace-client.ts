@@ -349,14 +349,42 @@ export interface MediaItem {
 /** Where an item of the library came from: an ag-music track (2026-11-01). */
 export interface MediaOrigin {
   system: "ag-music"; trackId: number; fileId: number; code: string | null; type: AgMusicTrackType; origin: string | null; copyrightStatus: string | null;
+  artists?: string[]; categories?: { kind: string; name: string }[]; bpm?: number | null;
 }
-export const AG_MUSIC_TRACK_TYPES = ["SONG", "ASSISTED", "ASSET", "MUSIC_INDEX"] as const;
+/** In the order of ag-music's own menu. */
+export const AG_MUSIC_TRACK_TYPES = ["SONG", "ASSET", "MUSIC_INDEX", "ASSISTED"] as const;
 export type AgMusicTrackType = (typeof AG_MUSIC_TRACK_TYPES)[number];
 /** An approved ag-music track the person may see; `mediaId`: their library item already fetched from it. */
 export interface AgMusicTrack {
   trackId: number; code: string | null; type: AgMusicTrackType; name: string; artists: string[]; categories: string[];
   durationMs: number | null; bpm: number | null; thumbnailUrl: string | null; mediaId: string | null;
+  instrumental?: boolean | null;
+  /** Waveform of the main audio, reduced; `null` until ag-music has processed it. */
+  peaks?: number[] | null;
+  downloadCount?: number;
 }
+export const AG_MUSIC_CATEGORY_KINDS = ["GENRE", "THEME", "MOOD", "EFFECT", "INSTRUMENT"] as const;
+export type AgMusicCategoryKind = (typeof AG_MUSIC_CATEGORY_KINDS)[number];
+export const AG_MUSIC_SORTS = ["NEWEST", "MOST_DOWNLOADED", "MOST_PLAYED", "NAME"] as const;
+export type AgMusicSort = (typeof AG_MUSIC_SORTS)[number];
+/** ag-music's filters (in a group "or", between groups "and"). */
+export interface AgMusicFilter {
+  q?: string; type?: AgMusicTrackType; categoryIds?: number[]; artistIds?: number[]; instrumental?: boolean;
+  voiceGenders?: string[]; purposes?: string[]; origins?: string[]; releaseStatuses?: string[]; bpmFrom?: number; bpmTo?: number;
+}
+export interface AgMusicFacetItem { id: number; name: string; count: number }
+/** How many tracks each choice of ag-music's filter sidebar leaves. */
+export interface AgMusicFacets {
+  categories: Partial<Record<AgMusicCategoryKind, AgMusicFacetItem[]>>; artists: AgMusicFacetItem[];
+  instrumental: Record<string, number>; voiceGenders: Record<string, number>; releaseStatuses: Record<string, number>;
+  origins: Record<string, number>; purposes: Record<string, number>;
+}
+const agMusicQuery = (q: AgMusicFilter & { sort?: AgMusicSort; page?: number; size?: number }) => buildQuery({
+  q: q.q, type: q.type, categoryIds: q.categoryIds?.join(",") || undefined, artistIds: q.artistIds?.join(",") || undefined,
+  instrumental: q.instrumental === undefined ? undefined : String(q.instrumental), voiceGenders: q.voiceGenders?.join(",") || undefined,
+  purposes: q.purposes?.join(",") || undefined, origins: q.origins?.join(",") || undefined, releaseStatuses: q.releaseStatuses?.join(",") || undefined,
+  bpmFrom: q.bpmFrom, bpmTo: q.bpmTo, sort: q.sort, page: q.page, size: q.size,
+});
 /** The project's own words and picture, the branding's, and which videos picked their own. */
 export interface ProjectLookView {
   own: OwnLook; channel: OwnLook;
@@ -781,8 +809,12 @@ export function createWorkspaceClient(getAccessToken: () => Promise<string>) {
       return call("GET", "/api/me/media/ag-music");
     },
     /** Approved ag-music tracks the person may see there, newest first (403 `ag_music_forbidden`: no access to ag-music). */
-    listAgMusicTracks(q: { q?: string; type?: AgMusicTrackType; page?: number; size?: number } = {}): Promise<{ items: AgMusicTrack[]; total: number; page: number; size: number }> {
-      return call("GET", `/api/me/media/ag-music/tracks${buildQuery({ q: q.q, type: q.type, page: q.page, size: q.size })}`);
+    listAgMusicTracks(q: AgMusicFilter & { sort?: AgMusicSort; page?: number; size?: number } = {}): Promise<{ items: AgMusicTrack[]; total: number; page: number; size: number }> {
+      return call("GET", `/api/me/media/ag-music/tracks${agMusicQuery(q)}`);
+    },
+    /** Counts per choice of ag-music's filter sidebar, on the same filters. */
+    agMusicFacets(q: AgMusicFilter = {}): Promise<AgMusicFacets> {
+      return call("GET", `/api/me/media/ag-music/tracks/facets${agMusicQuery(q)}`);
     },
     /** A link to listen to an ag-music track before picking it. */
     agMusicListen(trackId: number): Promise<{ url: string; expiresAt: string }> {

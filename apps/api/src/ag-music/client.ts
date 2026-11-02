@@ -21,9 +21,39 @@ export interface AgMusicTrackItem {
   thumbnailUrl: string | null;
   categories: { id: number; kind: string; name: string }[];
   artists: AgMusicRef[];
+  instrumental?: boolean;
+  /** Waveform of the main audio, reduced (`null` until ag-music has processed the file). */
+  peaks?: number[] | null;
+  downloadCount?: number;
+  playCount?: number;
+}
+
+/** Kinds of ag-music categories, the groups of its filter sidebar. */
+export const AG_MUSIC_CATEGORY_KINDS = ['GENRE', 'THEME', 'MOOD', 'EFFECT', 'INSTRUMENT'] as const;
+export type AgMusicCategoryKind = (typeof AG_MUSIC_CATEGORY_KINDS)[number];
+
+export interface AgMusicFacetItem { id: number; name: string; count: number }
+
+/** ag-music `GET /tracks/facets`: how many tracks per choice of each filter group, on the same filter. */
+export interface AgMusicFacets {
+  categories: Partial<Record<AgMusicCategoryKind, AgMusicFacetItem[]>>;
+  artists: AgMusicFacetItem[];
+  instrumental: Record<string, number>;
+  voiceGenders: Record<string, number>;
+  releaseStatuses: Record<string, number>;
+  origins: Record<string, number>;
+  purposes: Record<string, number>;
 }
 
 export interface AgMusicPage<T> { items: T[]; page: number; size: number; totalElements: number; totalPages: number }
+
+/** ag-music `GET /tracks/{id}` (the fields Studio reads): what the library shows of a copied track. */
+export interface AgMusicTrackDetail {
+  id: number;
+  bpm: number | null;
+  categories: { id: number; kind: string; name: string }[];
+  artists: AgMusicRef[];
+}
 
 /** ag-music `GET /tracks/{id}/playback`: a link to listen to the main audio. */
 export interface AgMusicPlayback { trackId: number; audioUrl: string; expiresAt: string; durationMs: number | null }
@@ -55,7 +85,43 @@ export type AgMusicExportBlock = 'DELETED' | 'NOT_FOUND' | 'NOT_APPROVED' | 'COP
 /** ag-music `POST /tracks/export-status`: one per id asked, in the same order. */
 export interface AgMusicExportStatus { trackId: number; usable: boolean; reason: AgMusicExportBlock | null; copyrightStatus: string | null }
 
-export interface AgMusicTrackQuery { keyword?: string; types?: AgMusicTrackType[]; page?: number; size?: number }
+export const AG_MUSIC_SORTS = ['NEWEST', 'MOST_DOWNLOADED', 'MOST_PLAYED', 'NAME'] as const;
+export type AgMusicSort = (typeof AG_MUSIC_SORTS)[number];
+
+/** The filters of ag-music's track list Studio passes on (in a group "or", between groups "and"). */
+export interface AgMusicTrackFilter {
+  keyword?: string | undefined;
+  types?: AgMusicTrackType[] | undefined;
+  categoryIds?: number[] | undefined;
+  artistIds?: number[] | undefined;
+  instrumental?: boolean | undefined;
+  voiceGenders?: string[] | undefined;
+  purposes?: string[] | undefined;
+  origins?: string[] | undefined;
+  releaseStatuses?: string[] | undefined;
+  bpmFrom?: number | undefined;
+  bpmTo?: number | undefined;
+}
+
+export interface AgMusicTrackQuery extends AgMusicTrackFilter { sort?: AgMusicSort | undefined; page?: number; size?: number }
+
+/** Always approved tracks only (and not a copyright violation): the ones that can be copied. */
+function filterParams(f: AgMusicTrackFilter): URLSearchParams {
+  const params = new URLSearchParams({ approved: 'true' });
+  const list = (k: string, v: readonly (string | number)[] | undefined) => { if (v?.length) params.set(k, v.join(',')); };
+  if (f.keyword) params.set('keyword', f.keyword);
+  list('types', f.types);
+  list('categoryIds', f.categoryIds);
+  list('artistIds', f.artistIds);
+  if (f.instrumental !== undefined) params.set('instrumental', String(f.instrumental));
+  list('voiceGenders', f.voiceGenders);
+  list('purposes', f.purposes);
+  list('origins', f.origins);
+  list('releaseStatuses', f.releaseStatuses);
+  if (f.bpmFrom !== undefined) params.set('bpmFrom', String(f.bpmFrom));
+  if (f.bpmTo !== undefined) params.set('bpmTo', String(f.bpmTo));
+  return params;
+}
 
 /** ag-music answered with an error (`status` 0: it could not be reached). `code`: its ProblemDetail's code. */
 export class AgMusicClientError extends Error {
@@ -75,12 +141,22 @@ export class AgMusicClient {
     this.timeoutMs = opts.timeoutMs ?? 20_000;
   }
 
-  /** Approved tracks the person may see, newest first. */
+  /** Approved tracks the person may see, newest first unless `sort` says otherwise. */
   listTracks(accessToken: string, q: AgMusicTrackQuery): Promise<AgMusicPage<AgMusicTrackItem>> {
-    const params = new URLSearchParams({ approved: 'true', sort: 'NEWEST', page: String(q.page ?? 0), size: String(q.size ?? 20) });
-    if (q.keyword) params.set('keyword', q.keyword);
-    if (q.types?.length) params.set('types', q.types.join(','));
+    const params = filterParams(q);
+    params.set('sort', q.sort ?? 'NEWEST');
+    params.set('page', String(q.page ?? 0));
+    params.set('size', String(q.size ?? 20));
     return this.request('GET', `/tracks?${params}`, accessToken);
+  }
+
+  /** Counts per choice of the filter sidebar, on the approved tracks the person may see that match `f`. */
+  facets(accessToken: string, f: AgMusicTrackFilter): Promise<AgMusicFacets> {
+    return this.request('GET', `/tracks/facets?${filterParams(f)}`, accessToken);
+  }
+
+  track(accessToken: string, trackId: number): Promise<AgMusicTrackDetail> {
+    return this.request('GET', `/tracks/${trackId}`, accessToken);
   }
 
   playback(accessToken: string, trackId: number): Promise<AgMusicPlayback> {

@@ -8,19 +8,38 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { addMediaItem, agMusicItemIds, agMusicTracksOfProject, findAgMusicItem, MEDIA_MAX_BYTES, newMediaKey, type MediaItem } from '@ag-studio/engine';
-import { AgMusicClient, AgMusicClientError, type AgMusicExportStatus, type AgMusicTrackType } from '../ag-music/client';
+import {
+  addMediaItem, agMusicItemIds, agMusicTracksOfProject, findAgMusicItem, MEDIA_MAX_BYTES, newMediaKey, setMediaOrigin, type MediaItem, type MediaItemView,
+  type MediaOrigin,
+} from '@ag-studio/engine';
+import {
+  AgMusicClient, AgMusicClientError, type AgMusicExportStatus, type AgMusicFacets, type AgMusicSort, type AgMusicTrackFilter, type AgMusicTrackType,
+} from '../ag-music/client';
 import { EngineService } from '../studio/engine.service';
 import { MediaLibraryService } from './media-library.service';
 
 /** Copying a whole track from ag-music's bucket to Studio's: a 300 MB WAV well within it. */
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+/** Items copied before 2026-11-02 described at most this many per listing (the rest on the next one). */
+const DESCRIBE_PER_LIST = 20;
 
 /** One ag-music track as Studio's picker shows it; `mediaId`: the person's item already fetched from it. */
 export interface AgMusicPickerTrack {
   trackId: number; code: string | null; type: AgMusicTrackType; name: string; artists: string[]; categories: string[];
   durationMs: number | null; bpm: number | null; thumbnailUrl: string | null; mediaId: string | null;
+  instrumental: boolean | null;
+  /** Waveform of the main audio, reduced; `null` until ag-music has processed it. */
+  peaks: number[] | null;
+  downloadCount: number;
 }
+
+/** The picker's question: ag-music's filters with one track type, the order and the page. */
+export interface AgMusicPickerQuery extends Omit<AgMusicTrackFilter, 'keyword' | 'types'> {
+  q?: string | undefined; type?: AgMusicTrackType | undefined; sort?: AgMusicSort | undefined; page: number; size: number;
+}
+
+const toFilter = ({ q, type, sort: _sort, page: _page, size: _size, ...rest }: AgMusicPickerQuery): AgMusicTrackFilter =>
+  ({ ...rest, keyword: q, types: type ? [type] : undefined });
 
 const log = new Logger('AgMusic');
 
@@ -80,16 +99,23 @@ export class AgMusicService {
     return this.client;
   }
 
-  async tracks(ownerId: string, accessToken: string, q: { q?: string; type?: AgMusicTrackType; page: number; size: number }) {
+  async tracks(ownerId: string, accessToken: string, q: AgMusicPickerQuery) {
     const api = this.api();
-    const r = await agMusicErrors(() => api.listTracks(accessToken, { keyword: q.q, types: q.type ? [q.type] : undefined, page: q.page, size: q.size }));
+    const r = await agMusicErrors(() => api.listTracks(accessToken, { ...toFilter(q), sort: q.sort, page: q.page, size: q.size }));
     const have = await agMusicItemIds(this.engine.db, ownerId, r.items.map((t) => t.id));
     const items: AgMusicPickerTrack[] = r.items.map((t) => ({
       trackId: t.id, code: t.code ?? null, type: t.type, name: t.name, artists: (t.artists ?? []).map((a) => a.name),
       categories: (t.categories ?? []).map((c) => c.name), durationMs: t.durationMs ?? null, bpm: t.bpm ?? null,
-      thumbnailUrl: t.thumbnailUrl ?? null, mediaId: have.get(t.id) ?? null,
+      thumbnailUrl: t.thumbnailUrl ?? null, mediaId: have.get(t.id) ?? null, instrumental: t.instrumental ?? null,
+      peaks: t.peaks?.length ? t.peaks : null, downloadCount: t.downloadCount ?? 0,
     }));
     return { items, total: r.totalElements, page: r.page, size: r.size };
+  }
+
+  /** How many tracks each choice of the filter sidebar leaves, on the same question (approved, visible to the person). */
+  async facets(accessToken: string, q: Omit<AgMusicPickerQuery, 'page' | 'size'>): Promise<AgMusicFacets> {
+    const api = this.api();
+    return agMusicErrors(() => api.facets(accessToken, toFilter({ ...q, page: 0, size: 0 })));
   }
 
   /** A link to listen to the track before picking it (straight from ag-music's bucket). */
@@ -150,9 +176,41 @@ export class AgMusicService {
     }
   }
 
+  /**
+   * Items of the listing copied from ag-music before their artists and categories were kept: asked of ag-music as the
+   * person and kept (in place in `items` too). ag-music not answering, or a track no longer visible: left as they are.
+   */
+  async describeMissing(ownerId: string, accessToken: string, items: MediaItemView[]): Promise<void> {
+    if (!this.client) return;
+    const api = this.client;
+    const bare = items.filter((i) => i.origin?.system === 'ag-music' && !i.origin.categories).slice(0, DESCRIBE_PER_LIST);
+    await Promise.all(bare.map(async (i) => {
+      const more = await this.describe(api, accessToken, i.origin!.trackId);
+      if (!more) return;
+      i.origin = { ...i.origin!, ...more };
+      await setMediaOrigin(this.engine.db, ownerId, i.id, i.origin);
+    }));
+  }
+
+  /** The track's artists, categories and BPM as the library keeps them; `null` when ag-music cannot say. */
+  private async describe(api: AgMusicClient, accessToken: string, trackId: number): Promise<Pick<MediaOrigin, 'artists' | 'categories' | 'bpm'> | null> {
+    try {
+      const d = await api.track(accessToken, trackId);
+      return {
+        artists: (d.artists ?? []).map((a) => a.name),
+        categories: (d.categories ?? []).map((c) => ({ kind: c.kind, name: c.name })),
+        bpm: d.bpm ?? null,
+      };
+    } catch (e) {
+      log.warn(`could not describe ag-music track ${trackId}: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
   private async copy(api: AgMusicClient, ownerId: string, accessToken: string, trackId: number): Promise<MediaItem> {
     const x = await agMusicErrors(() => api.exportTrack(accessToken, trackId));
     const { name } = this.media.check(x.fileName, x.sizeBytes, 'audio');
+    const more = await this.describe(api, accessToken, trackId);
     const { key } = newMediaKey(ownerId, name);
     const dir = mkdtempSync(join(tmpdir(), 'ag-music-'));
     try {
@@ -162,7 +220,10 @@ export class AgMusicService {
       await this.engine.bucket.putFile(key, file, x.contentType ?? undefined);
       const item = await addMediaItem(this.engine.db, this.engine.bucket, {
         ownerId, key, name,
-        origin: { system: 'ag-music', trackId: x.trackId, fileId: x.fileId, code: x.code, type: x.type, origin: x.origin, copyrightStatus: x.copyrightStatus },
+        origin: {
+          system: 'ag-music', trackId: x.trackId, fileId: x.fileId, code: x.code, type: x.type, origin: x.origin, copyrightStatus: x.copyrightStatus,
+          artists: (x.artists ?? []).map((a) => a.name), ...more,
+        },
       });
       // The item is there whatever ag-music answers: a lost count is better than a copy thrown away
       await api.confirmExport(accessToken, trackId).catch((e: unknown) => log.warn(`ag-music did not count the download of track ${trackId}: ${(e as Error).message}`));

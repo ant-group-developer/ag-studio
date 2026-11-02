@@ -13,11 +13,12 @@ window.matchMedia ??= ((query: string) => ({
 
 const track = (over: Partial<AgMusicTrack>): AgMusicTrack => ({
   trackId: 7, code: "S-7", type: "SONG", name: "Mưa chiều", artists: ["Hà An"], categories: ["Lofi"], durationMs: 185_000, bpm: 92,
-  thumbnailUrl: null, mediaId: null, ...over,
+  thumbnailUrl: null, mediaId: null, peaks: [0.1, 0.9, 0.5, 0.3], downloadCount: 1234, ...over,
 });
 const ws = {
   agMusicStatus: vi.fn(),
   listAgMusicTracks: vi.fn(),
+  agMusicFacets: vi.fn(),
   agMusicListen: vi.fn(),
   fetchFromAgMusic: vi.fn(),
   listMedia: vi.fn(),
@@ -31,8 +32,8 @@ const { MediaLibraryDrawer } = await import("./media-library");
 
 /** The picker's dialog (antd gives the drawer and the modal inside it the same label id in tests). */
 async function openPicker(): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByRole("button", { name: /Từ ag-music/ }));
-  return (await screen.findByText("Chọn nhạc từ ag-music")).closest<HTMLElement>(".ant-modal-content")!;
+  fireEvent.click(await screen.findByRole("button", { name: /Chọn từ AG Music/ }));
+  return (await screen.findByText("Chọn nhạc từ AG Music", { selector: ".ws-mlib__title" })).closest<HTMLElement>(".ant-drawer-content")!;
 }
 
 function mount(use: "audio" | "footage" = "audio") {
@@ -51,6 +52,10 @@ describe("music from ag-music in My library", { timeout: 30_000 }, () => {
     vi.clearAllMocks();
     ws.agMusicStatus.mockResolvedValue({ enabled: true });
     ws.listMedia.mockResolvedValue({ items: [], total: 0, bytes: 0 });
+    ws.agMusicFacets.mockResolvedValue({
+      categories: { GENRE: [{ id: 1, name: "Lofi", count: 2 }, { id: 2, name: "Jazz", count: 0 }] }, artists: [{ id: 3, name: "Hà An", count: 2 }],
+      instrumental: { true: 1, false: 1 }, voiceGenders: {}, releaseStatuses: {}, origins: {}, purposes: { SHORT: 1 },
+    });
     ws.listAgMusicTracks.mockResolvedValue({ items: [track({}), track({ trackId: 8, code: null, type: "ASSET", name: "Gió đồng", mediaId: "m-8" })], total: 2, page: 0, size: 20 });
   });
 
@@ -59,12 +64,16 @@ describe("music from ag-music in My library", { timeout: 30_000 }, () => {
     mount();
     const picker = await openPicker();
     expect(await within(picker).findByText("Mưa chiều")).toBeInTheDocument();
-    expect(picker).toHaveTextContent("Bài chính · Hà An · Lofi · 3:05 · 92 BPM");
+    expect(picker).toHaveTextContent("Bài hát · Hà An · Lofi · 92 BPM");
+    // its length, its downloads and its waveform, as on ag-music
+    expect(picker).toHaveTextContent("3:05");
+    expect(picker).toHaveTextContent("1,234");
+    expect(within(picker).getByRole("button", { name: "Nghe Mưa chiều từ chỗ này" })).toBeInTheDocument();
     // already fetched: said so, no button
     expect(picker).toHaveTextContent("Đã có trong thư viện");
     expect(within(picker).queryByRole("button", { name: "Thêm Gió đồng vào thư viện" })).toBeNull();
 
-    fireEvent.click(within(picker).getByText("Nhạc asset"));
+    fireEvent.click(within(picker).getByText("Kho nhạc giấy phép"));
     await waitFor(() => expect(ws.listAgMusicTracks).toHaveBeenLastCalledWith({ type: "ASSET", page: 0, size: 20 }));
     fireEvent.change(within(picker).getByRole("searchbox", { name: "Tìm theo tên hoặc mã bài" }), { target: { value: "mưa" } });
     // asked once typing pauses, not on the key itself
@@ -76,6 +85,45 @@ describe("music from ag-music in My library", { timeout: 30_000 }, () => {
     await waitFor(() => expect(within(picker).queryByRole("button", { name: "Thêm Mưa chiều vào thư viện" })).toBeNull());
     // the drawer has it picked: one file to add to the project
     expect(screen.getAllByRole("button", { name: "Thêm 1 file vào dự án" })[0]).toBeEnabled();
+  });
+
+  it("filters as ag-music's sidebar does, with its counts, and sorts", async () => {
+    mount();
+    const picker = await openPicker();
+    await within(picker).findByText("Mưa chiều");
+    const genres = await within(picker).findByRole("group", { name: "Thể loại" });
+    // a genre with no track left is not offered
+    expect(within(genres).queryByText("Jazz")).toBeNull();
+    fireEvent.click(within(genres).getByText("Lofi"));
+    await waitFor(() => expect(ws.listAgMusicTracks).toHaveBeenLastCalledWith({ categoryIds: [1], page: 0, size: 20 }));
+    expect(ws.agMusicFacets).toHaveBeenLastCalledWith({ categoryIds: [1] });
+    fireEvent.click(within(await within(picker).findByRole("group", { name: "Lời" })).getByText("Không lời"));
+    await waitFor(() => expect(ws.listAgMusicTracks).toHaveBeenLastCalledWith({ categoryIds: [1], instrumental: true, page: 0, size: 20 }));
+    fireEvent.mouseDown(within(picker).getByRole("combobox", { name: "Sắp xếp" }));
+    fireEvent.click(await screen.findByText("Tải nhiều nhất"));
+    await waitFor(() => expect(ws.listAgMusicTracks).toHaveBeenLastCalledWith({ categoryIds: [1], instrumental: true, sort: "MOST_DOWNLOADED", page: 0, size: 20 }));
+  });
+
+  it("shows in My library the genre, theme... of a track from AG Music, and plays one sound at a time", async () => {
+    const audio = (id: string, origin: object | null) => ({ id, kind: "audio", name: `${id}.mp3`, bytes: 2048, createdAt: id, usedIn: [], previewUrl: `https://r2.test/${id}`, origin });
+    ws.listMedia.mockResolvedValue({ items: [
+      audio("b", { system: "ag-music", trackId: 7, type: "ASSET", artists: ["Hà An"], bpm: 92,
+        categories: [{ kind: "MOOD", name: "Chill" }, { kind: "GENRE", name: "Lofi" }, { kind: "THEME", name: "Mưa" }] }),
+      audio("a", null),
+    ], total: 2, bytes: 4096 });
+    mount();
+    const row = (await screen.findByText("b.mp3")).closest("li")!;
+    expect(row).toHaveTextContent("AG Music · Kho nhạc giấy phép");
+    expect(row).toHaveTextContent("Hà An · 92 BPM · 2 KB");
+    // genre first, as ag-music's sidebar
+    expect([...row.querySelectorAll(".ws-mrow__tag")].map((e) => e.textContent)).toEqual(["Lofi", "Mưa", "Chill"]);
+    expect(within(row).getByText("Lofi")).toHaveAttribute("title", "Thể loại: Lofi");
+
+    const [first, second] = [...document.querySelectorAll<HTMLAudioElement>(".ws-mrow__audio")];
+    Object.defineProperty(first!, "paused", { value: false, configurable: true });
+    const pause = vi.spyOn(first!, "pause").mockImplementation(() => {});
+    fireEvent.play(second!);
+    expect(pause).toHaveBeenCalledOnce();
   });
 
   it("asks for a link to listen only when played", async () => {
@@ -106,6 +154,6 @@ describe("music from ag-music in My library", { timeout: 30_000 }, () => {
     ws.agMusicStatus.mockResolvedValue({ enabled: false });
     mount();
     await waitFor(() => expect(ws.agMusicStatus).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: /Từ ag-music/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Chọn từ AG Music/ })).toBeNull();
   });
 });
