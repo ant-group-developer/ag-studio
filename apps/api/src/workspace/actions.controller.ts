@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, HttpStatus, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpStatus, Optional, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import {
   actionView, decideAction, getAction, listActions, referenceDownloadBlock, requireProject, requireThread, StudioRunError, type ActionView, type ActorRole,
@@ -8,6 +8,7 @@ import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { EngineService, referenceFetcherNames } from '../studio/engine.service';
 import { mapErrors } from '../studio/http-errors';
+import { AgMusicService } from './ag-music.service';
 
 /**
  * Cards of work with a real effect the agent proposed (spec 2026-10-10 agent-workspace §3.5): a thread's cards, and a
@@ -17,7 +18,7 @@ import { mapErrors } from '../studio/http-errors';
 @Controller()
 @UseGuards(RolesGuard)
 export class ActionsController {
-  constructor(private readonly engine: EngineService) {}
+  constructor(private readonly engine: EngineService, @Optional() private readonly agMusic?: AgMusicService) {}
 
   /**
    * `youtubeBlocked`: a pending reference download would fail now (`referenceDownloadBlock`), else null: YouTube blocks
@@ -58,6 +59,10 @@ export class ActionsController {
       if (!a || a.project_id !== projectId) throw new StudioRunError('not_found', `không có thẻ ${actionId}`);
       const role: ActorRole = req.authContext?.isAdmin ? 'owner'
         : (await this.engine.db.get<{ role: ActorRole }>('SELECT role FROM team_members WHERE team_id = ? AND user_id = ?', [project.team_id, req.authContext!.userId]))?.role ?? 'viewer';
+      // A final render or a Premiere export the agent proposed: ag-music's tracks of the project asked as the person confirming
+      if (decision === 'confirm' && (a.kind === 'render_final' || a.kind === 'export_premiere')) {
+        await this.agMusic?.requireUsableInProject(projectId, req.authContext!.accessToken);
+      }
       return actionView(await decideAction(this.engine.db, { actionId, decision, userId: req.authContext!.userId, role }));
     });
   }

@@ -67,9 +67,11 @@ describe("music from ag-music in My library", { timeout: 30_000 }, () => {
     fireEvent.click(within(picker).getByText("Nhạc asset"));
     await waitFor(() => expect(ws.listAgMusicTracks).toHaveBeenLastCalledWith({ type: "ASSET", page: 0, size: 20 }));
     fireEvent.change(within(picker).getByRole("searchbox", { name: "Tìm theo tên hoặc mã bài" }), { target: { value: "mưa" } });
+    // asked once typing pauses, not on the key itself
+    expect(ws.listAgMusicTracks).not.toHaveBeenLastCalledWith({ q: "mưa", type: "ASSET", page: 0, size: 20 });
     await waitFor(() => expect(ws.listAgMusicTracks).toHaveBeenLastCalledWith({ q: "mưa", type: "ASSET", page: 0, size: 20 }));
 
-    fireEvent.click(within(picker).getByRole("button", { name: "Thêm Mưa chiều vào thư viện" }));
+    fireEvent.click(await within(picker).findByRole("button", { name: "Thêm Mưa chiều vào thư viện" }));
     await waitFor(() => expect(ws.fetchFromAgMusic).toHaveBeenCalledWith(7));
     await waitFor(() => expect(within(picker).queryByRole("button", { name: "Thêm Mưa chiều vào thư viện" })).toBeNull());
     // the drawer has it picked: one file to add to the project
@@ -90,6 +92,14 @@ describe("music from ag-music in My library", { timeout: 30_000 }, () => {
     mount();
     await openPicker();
     expect(await screen.findByText(/Bạn chưa có quyền xem bài hát ở ag-music/)).toBeInTheDocument();
+  });
+
+  it("says in the page's language why a track cannot be copied", async () => {
+    ws.fetchFromAgMusic.mockRejectedValue(new StudioHttpError(422, { code: "track_copyright_violation", message: "tiếng Việt từ API" }));
+    mount();
+    const picker = await openPicker();
+    fireEvent.click(await within(picker).findByRole("button", { name: "Thêm Mưa chiều vào thư viện" }));
+    expect(await screen.findByText("Bài vi phạm bản quyền, không dùng được.")).toBeInTheDocument();
   });
 
   it("offers ag-music only for audio, and only when Studio is wired to it", async () => {

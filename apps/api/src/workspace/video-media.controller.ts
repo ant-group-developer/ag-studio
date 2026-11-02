@@ -1,8 +1,9 @@
 import {
   BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, HttpStatus, NotFoundException, Param, PayloadTooLargeException,
-  Post, Req, UnprocessableEntityException, UseGuards,
+  Optional, Post, Req, UnprocessableEntityException, UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AgMusicService } from './ag-music.service';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Request } from 'express';
@@ -130,6 +131,7 @@ export class VideoMediaController {
     private readonly workspace: WorkspaceService,
     private readonly config: ConfigService,
     private readonly links: FileLinkService,
+    @Optional() private readonly agMusic?: AgMusicService,
   ) {}
 
   /**
@@ -185,6 +187,7 @@ export class VideoMediaController {
         throw new ForbiddenException({ code: 'role', message: 'Render bản cuối và xuất Premiere cần vai producer' });
       }
       if (!(await latestVideoRevision(this.engine.db, videoId))) throw new StudioRunError('invalid', 'video chưa có timeline', { code: 'no_timeline' });
+      if (body.kind !== 'render_preview') await this.agMusic?.requireUsableInProject(v.project_id, req.authContext!.accessToken);
       return jobView(await queueRender(this.engine.db, {
         projectId: v.project_id, videoId, kind: body.kind, createdBy: req.authContext!.userId, actorRole: role,
         request: {

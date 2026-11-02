@@ -1,5 +1,5 @@
 import {
-  BadGatewayException, ForbiddenException, HttpException, Injectable, NotFoundException, PayloadTooLargeException, ServiceUnavailableException,
+  BadGatewayException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException, PayloadTooLargeException, ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -8,8 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { addMediaItem, agMusicItemIds, findAgMusicItem, MEDIA_MAX_BYTES, newMediaKey, type MediaItem } from '@ag-studio/engine';
-import { AgMusicClient, AgMusicClientError, type AgMusicTrackType } from '../ag-music/client';
+import { addMediaItem, agMusicItemIds, agMusicTracksOfProject, findAgMusicItem, MEDIA_MAX_BYTES, newMediaKey, type MediaItem } from '@ag-studio/engine';
+import { AgMusicClient, AgMusicClientError, type AgMusicExportStatus, type AgMusicTrackType } from '../ag-music/client';
 import { EngineService } from '../studio/engine.service';
 import { MediaLibraryService } from './media-library.service';
 
@@ -22,14 +22,26 @@ export interface AgMusicPickerTrack {
   durationMs: number | null; bpm: number | null; thumbnailUrl: string | null; mediaId: string | null;
 }
 
-/** ag-music's refusals as Studio's: no access 403, gone 404, not approved 422, down 502. */
+const log = new Logger('AgMusic');
+
+/**
+ * ag-music's refusals as Studio's: no access 403, gone 404, not approved or a copyright violation 422, down 502. A 401
+ * is ag-music not accepting Studio's tokens (issuer, audience): a setup fault, not the person's access, so 502 and logged.
+ */
 export function toAgMusicHttpError(e: unknown): unknown {
   if (!(e instanceof AgMusicClientError)) return e;
-  if (e.status === 401 || e.status === 403) {
+  if (e.status === 401) {
+    log.error(`ag-music refused the token: ${e.message}`);
+    return new BadGatewayException({ code: 'ag_music_unauthorized', message: 'ag-music không nhận phiên đăng nhập của Studio, báo quản trị kiểm tra cấu hình' });
+  }
+  if (e.status === 403) {
     return new ForbiddenException({ code: 'ag_music_forbidden', message: 'Bạn chưa có quyền xem bài hát ở ag-music' });
   }
   if (e.status === 404) return new NotFoundException({ code: 'ag_music_not_found', message: 'Không thấy bài này ở ag-music' });
   if (e.code === 'TrackNotApproved') return new UnprocessableEntityException({ code: 'track_not_approved', message: 'Bài chưa được duyệt ở ag-music' });
+  if (e.code === 'TrackCopyrightViolation') {
+    return new UnprocessableEntityException({ code: 'track_copyright_violation', message: 'Bài vi phạm bản quyền, không dùng được' });
+  }
   if (e.status >= 400 && e.status < 500) return new UnprocessableEntityException({ code: 'ag_music_refused', message: e.message });
   return new BadGatewayException({ code: 'ag_music_unavailable', message: 'ag-music đang không trả lời, thử lại sau' });
 }
@@ -51,6 +63,8 @@ async function agMusicErrors<T>(fn: () => Promise<T>): Promise<T> {
 @Injectable()
 export class AgMusicService {
   private readonly client: AgMusicClient | null;
+  /** Copies running in this process, by person and track: a second click waits for the first instead of copying again. */
+  private readonly copying = new Map<string, Promise<MediaItem>>();
 
   constructor(config: ConfigService, private readonly engine: EngineService, private readonly media: MediaLibraryService) {
     const url = config.get<string>('AG_MUSIC_API_URL');
@@ -87,12 +101,56 @@ export class AgMusicService {
 
   /**
    * The track's main audio as an item of the person's library: the one already fetched from it, or a copy made now
-   * (ag-music checks the person may see it and that it is approved, and counts a download).
+   * (ag-music checks the person may see it, that it is approved and not a copyright violation). The download is counted
+   * once the copy is in the library, so a failed copy or a retry counts nothing more.
    */
   async fetch(ownerId: string, accessToken: string, trackId: number): Promise<MediaItem> {
     const api = this.api();
     const known = await findAgMusicItem(this.engine.db, ownerId, trackId);
     if (known) return known;
+    const key = `${ownerId}:${trackId}`;
+    const running = this.copying.get(key);
+    if (running) return running;
+    const copy = this.copy(api, ownerId, accessToken, trackId).finally(() => this.copying.delete(key));
+    this.copying.set(key, copy);
+    return copy;
+  }
+
+  /**
+   * Before a final render or a Premiere export, asked as the person starting it: the ag-music tracks the project uses must
+   * still be usable there. Removed, no longer approved, or a copyright violation: refused (422 `ag_music_track_unusable`,
+   * naming them). A track the person cannot see on ag-music is not refused (someone else may have picked it), nor is
+   * anything when ag-music cannot be asked (it being down does not stop renders; logged).
+   */
+  async requireUsableInProject(projectId: string, accessToken: string): Promise<void> {
+    if (!this.client) return;
+    const tracks = await agMusicTracksOfProject(this.engine.db, projectId);
+    if (!tracks.length) return;
+    const blocked: { trackId: number; name: string; reason: string }[] = [];
+    for (let i = 0; i < tracks.length; i += 100) {
+      const part = tracks.slice(i, i + 100);
+      let statuses: AgMusicExportStatus[];
+      try {
+        statuses = await this.client.exportStatus(accessToken, part.map((t) => t.trackId));
+      } catch (e) {
+        log.warn(`could not ask ag-music whether project ${projectId}'s tracks are usable: ${(e as Error).message}`);
+        return;
+      }
+      for (const st of statuses) {
+        if (st.usable || !st.reason || st.reason === 'NOT_FOUND') continue;
+        blocked.push({ trackId: st.trackId, name: part.find((t) => t.trackId === st.trackId)?.name ?? String(st.trackId), reason: st.reason });
+      }
+    }
+    if (blocked.length) {
+      throw new UnprocessableEntityException({
+        code: 'ag_music_track_unusable',
+        message: `Nhạc từ ag-music không còn dùng được: ${blocked.map((b) => b.name).join(', ')} (đã gỡ, chưa duyệt hoặc vi phạm bản quyền). Bỏ khỏi dự án hoặc chọn bài khác rồi render lại.`,
+        tracks: blocked,
+      });
+    }
+  }
+
+  private async copy(api: AgMusicClient, ownerId: string, accessToken: string, trackId: number): Promise<MediaItem> {
     const x = await agMusicErrors(() => api.exportTrack(accessToken, trackId));
     const { name } = this.media.check(x.fileName, x.sizeBytes, 'audio');
     const { key } = newMediaKey(ownerId, name);
@@ -102,10 +160,13 @@ export class AgMusicService {
       await download(x.url, file, MEDIA_MAX_BYTES.audio);
       if (statSync(file).size === 0) throw new BadGatewayException({ code: 'ag_music_unavailable', message: 'File tải từ ag-music bị rỗng' });
       await this.engine.bucket.putFile(key, file, x.contentType ?? undefined);
-      return await addMediaItem(this.engine.db, this.engine.bucket, {
+      const item = await addMediaItem(this.engine.db, this.engine.bucket, {
         ownerId, key, name,
         origin: { system: 'ag-music', trackId: x.trackId, fileId: x.fileId, code: x.code, type: x.type, origin: x.origin, copyrightStatus: x.copyrightStatus },
       });
+      // The item is there whatever ag-music answers: a lost count is better than a copy thrown away
+      await api.confirmExport(accessToken, trackId).catch((e: unknown) => log.warn(`ag-music did not count the download of track ${trackId}: ${(e as Error).message}`));
+      return item;
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

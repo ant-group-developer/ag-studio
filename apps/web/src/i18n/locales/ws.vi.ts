@@ -325,8 +325,16 @@ export const wsVi = {
       inLibrary: "Đã có trong thư viện",
       listenFailed: "Chưa nghe thử được.",
       listFailed: "Không tải được danh sách bài của ag-music.",
-      forbidden: "Bạn chưa có quyền xem bài hát ở ag-music. Nhờ quản trị cấp quyền ở ag-account.",
       empty: "Không có bài đã duyệt nào bạn xem được.",
+      error: {
+        ag_music_forbidden: "Bạn chưa có quyền xem bài hát ở ag-music. Nhờ quản trị cấp quyền ở ag-account.",
+        ag_music_unauthorized: "ag-music không nhận phiên đăng nhập của Studio. Báo quản trị kiểm tra cấu hình.",
+        ag_music_unavailable: "ag-music đang không trả lời, thử lại sau.",
+        ag_music_not_found: "Không thấy bài này ở ag-music.",
+        track_not_approved: "Bài chưa được duyệt ở ag-music.",
+        track_copyright_violation: "Bài vi phạm bản quyền, không dùng được.",
+        file_too_large: "File của bài lớn hơn thư viện nhận.",
+      },
     },
   },
   media: {

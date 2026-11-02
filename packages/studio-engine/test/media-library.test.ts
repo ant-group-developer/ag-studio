@@ -81,6 +81,26 @@ describe("media library: items", () => {
     expect(s.bucket.objects.has(big)).toBe(false);
   });
 
+  it("keeps one item per person and ag-music track: a second copy is dropped for the first; after a delete it can come again", async () => {
+    const s = await setup();
+    const origin = { system: "ag-music" as const, trackId: 7, fileId: 70, code: "S-7", type: "SONG", origin: null, copyrightStatus: "CLEAN" };
+    const put = async () => {
+      const { key } = newMediaKey(OWNER, "Mưa chiều.mp3");
+      await s.bucket.put(key, Buffer.from("audio"));
+      return { key, item: await addMediaItem(s.db, s.bucket, { ownerId: OWNER, key, name: "Mưa chiều.mp3", origin }, NOW) };
+    };
+    const first = await put();
+    const second = await put();
+    expect(second.item.id).toBe(first.item.id);
+    expect(s.bucket.objects.has(second.key)).toBe(false);
+    // someone else's copy of the same track is theirs
+    const { key } = newMediaKey(OTHER, "Mưa chiều.mp3");
+    await s.bucket.put(key, Buffer.from("audio"));
+    expect((await addMediaItem(s.db, s.bucket, { ownerId: OTHER, key, name: "x.mp3", origin }, NOW)).id).not.toBe(first.item.id);
+    await s.db.run("UPDATE media_items SET deleted_at = ? WHERE id = ?", [NOW, first.item.id]);
+    expect((await put()).item.id).not.toBe(first.item.id);
+  });
+
   it("lists the owner's items newest first, by kind and name, with the projects using them; renames", async () => {
     const s = await setup();
     const a = await upload(s.db, s.bucket, "sao băng.mp3");

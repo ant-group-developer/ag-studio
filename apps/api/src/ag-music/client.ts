@@ -28,7 +28,7 @@ export interface AgMusicPage<T> { items: T[]; page: number; size: number; totalE
 /** ag-music `GET /tracks/{id}/playback`: a link to listen to the main audio. */
 export interface AgMusicPlayback { trackId: number; audioUrl: string; expiresAt: string; durationMs: number | null }
 
-/** ag-music `POST /tracks/{id}/export`: the main audio of an approved track to copy, with a download link. */
+/** ag-music `POST /tracks/{id}/export`: the main audio of an approved track, not a copyright violation, with a download link. */
 export interface AgMusicExport {
   trackId: number;
   code: string | null;
@@ -45,6 +45,15 @@ export interface AgMusicExport {
   url: string;
   expiresAt: string;
 }
+
+/**
+ * Why a track copied before can no longer be used: removed (in ag-music's trash, a copyright removal too), not visible to
+ * the person asking (or gone for good), not approved, a copyright violation.
+ */
+export type AgMusicExportBlock = 'DELETED' | 'NOT_FOUND' | 'NOT_APPROVED' | 'COPYRIGHT_VIOLATION';
+
+/** ag-music `POST /tracks/export-status`: one per id asked, in the same order. */
+export interface AgMusicExportStatus { trackId: number; usable: boolean; reason: AgMusicExportBlock | null; copyrightStatus: string | null }
 
 export interface AgMusicTrackQuery { keyword?: string; types?: AgMusicTrackType[]; page?: number; size?: number }
 
@@ -78,24 +87,38 @@ export class AgMusicClient {
     return this.request('GET', `/tracks/${trackId}/playback`, accessToken);
   }
 
-  /** Counts a download for the person (not when they own the track). */
+  /** The file to copy; no download counted yet (`confirmExport` once the copy is in the library). */
   exportTrack(accessToken: string, trackId: number): Promise<AgMusicExport> {
     return this.request('POST', `/tracks/${trackId}/export`, accessToken);
   }
 
-  private async request<T>(method: string, path: string, accessToken: string): Promise<T> {
+  /** The copy is in the library: counts one download for the person, once per 30 minutes (not when they own the track). */
+  confirmExport(accessToken: string, trackId: number): Promise<{ counted: boolean }> {
+    return this.request('POST', `/tracks/${trackId}/export/confirm`, accessToken);
+  }
+
+  /** Whether tracks copied before may still be used (up to 100 ids). */
+  exportStatus(accessToken: string, trackIds: number[]): Promise<AgMusicExportStatus[]> {
+    return this.request('POST', '/tracks/export-status', accessToken, { ids: trackIds });
+  }
+
+  private async request<T>(method: string, path: string, accessToken: string, body?: unknown): Promise<T> {
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+        headers: {
+          Authorization: `Bearer ${accessToken}`, Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (e) {
       throw new AgMusicClientError(0, null, `Không gọi được ag-music: ${(e as Error).message}`);
     }
-    const body = (res.headers.get('content-type') ?? '').includes('json') ? await res.json().catch(() => null) : null;
-    const env = body as { success?: boolean; data?: T; error?: { code?: string; detail?: string; title?: string } } | null;
+    const answer = (res.headers.get('content-type') ?? '').includes('json') ? await res.json().catch(() => null) : null;
+    const env = answer as { success?: boolean; data?: T; error?: { code?: string; detail?: string; title?: string } } | null;
     if (!res.ok || env?.success === false) {
       const err = env?.error;
       throw new AgMusicClientError(res.status, err?.code ?? null, err?.detail || err?.title || `ag-music trả HTTP ${res.status}`);

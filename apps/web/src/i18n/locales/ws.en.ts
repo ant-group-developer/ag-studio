@@ -328,8 +328,16 @@ export const wsEn: Messages<typeof wsVi> = {
       inLibrary: "In the library",
       listenFailed: "Could not play it.",
       listFailed: "Could not load ag-music's tracks.",
-      forbidden: "You cannot see tracks on ag-music yet. Ask an admin for access on ag-account.",
       empty: "No approved track you can see.",
+      error: {
+        ag_music_forbidden: "You cannot see tracks on ag-music yet. Ask an admin for access on ag-account.",
+        ag_music_unauthorized: "ag-music does not accept Studio's sign-in. Ask an admin to check the setup.",
+        ag_music_unavailable: "ag-music is not answering, try again later.",
+        ag_music_not_found: "This track is not on ag-music.",
+        track_not_approved: "This track is not approved on ag-music yet.",
+        track_copyright_violation: "This track breaks copyright and cannot be used.",
+        file_too_large: "The track's file is larger than the library takes.",
+      },
     },
   },
   media: {

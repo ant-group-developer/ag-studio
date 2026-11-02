@@ -123,7 +123,13 @@ export async function addMediaItem(db: StudioDb, bucket: StudioBucket, p: { owne
     "INSERT INTO media_items (id, owner_id, kind, key, name, bytes, created_at, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
     [at.mediaId, p.ownerId, at.kind, p.key, name, head.size, now, p.origin ? JSON.stringify(p.origin) : null],
   );
-  return (await getMediaItem(db, at.mediaId))!;
+  const added = await getMediaItem(db, at.mediaId);
+  if (added) return added;
+  // Another request put the same ag-music track in first (one item per person and track): keep that one, drop this copy.
+  const same = p.origin ? await findAgMusicItem(db, p.ownerId, p.origin.trackId) : undefined;
+  if (!same) throw new StudioRunError("conflict", "File này vừa được thêm, tải lại thư viện", { code: "media_conflict" });
+  await bucket.deleteMany([p.key]).catch(() => undefined);
+  return same;
 }
 
 /** The owner's item fetched from ag-music track `trackId` (not deleted), if they picked it before. */
@@ -132,6 +138,16 @@ export async function findAgMusicItem(db: StudioDb, ownerId: string, trackId: nu
     "SELECT * FROM media_items WHERE owner_id = ? AND origin->>'system' = 'ag-music' AND origin->>'trackId' = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
     [ownerId, String(trackId)],
   );
+}
+
+/** The ag-music tracks a project uses (through a source pointing at an item fetched from ag-music, anyone's), by name. */
+export async function agMusicTracksOfProject(db: StudioDb, projectId: string): Promise<{ trackId: number; name: string }[]> {
+  const rows = await db.all<{ track_id: string; name: string }>(
+    `SELECT DISTINCT m.origin->>'trackId' AS track_id, m.name FROM project_sources s JOIN media_items m ON m.id = s.media_id
+     WHERE s.project_id = ? AND m.origin->>'system' = 'ag-music' ORDER BY m.name`,
+    [projectId],
+  );
+  return rows.map((r) => ({ trackId: Number(r.track_id), name: r.name }));
 }
 
 /** Which of these ag-music tracks the owner already has in their library: track id → item id. */

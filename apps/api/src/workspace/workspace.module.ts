@@ -22,8 +22,8 @@ import { ProjectFootageService } from './project-footage.service';
 @Module({
   imports: [StudioModule],
   controllers: [ProjectsController, VideosController, FilesController, ThreadsController, PlaybookController, InputsController, ResearchController, ActionsController, VideoMediaController, VideoLookController,
-    FileStreamController, MediaController],
-  providers: [WorkspaceService, ProjectFootageService, FileLinkService, MediaLibraryService],
+    FileStreamController, MediaController, AgMusicController],
+  providers: [WorkspaceService, ProjectFootageService, FileLinkService, MediaLibraryService, AgMusicService],
   exports: [WorkspaceService, ProjectFootageService, FileLinkService, MediaLibraryService],
 })
 export class WorkspaceModule {}
