@@ -53,7 +53,7 @@ export interface StudioWorkerOptions {
   usage?: { sink: UsageSink; everyMs?: number };
   /** Cuts and draws thumbnails; without it the `thumbnail` jobs wait. */
   thumbnails?: ThumbnailRenderer;
-  /** Studio's Codex on a ChatGPT login (`STUDIO_CODEX_HOME`): with `thumbnails`, takes the `image` jobs (AI thumbnails, channel art). */
+  /** Studio's Codex (`STUDIO_CODEX_HOME`): with `thumbnails`, takes the `image` jobs (AI thumbnails, channel art), one at a time. */
   imager?: CodexImager;
   /** yt-dlp: crawls without an API key, reference videos. */
   ytdlp?: YtDlp;
@@ -108,7 +108,8 @@ export function createStudioWorkerPool(o: StudioWorkerOptions & {
   const jobs = o.jobs ? createJobRunner({
     db: o.db, logger: jobsLog, workspacesRoot: o.jobs.workspacesRoot, dataRoot: o.dataRoot,
     handlers: projectJobHandlers(o), ...(lanes ? { lanes } : {}), ...(o.jobs.pollMs ? { pollMs: o.jobs.pollMs } : {}),
-    kindLimits: { prepare_asset: Math.max(1, o.jobs.prepareLanes ?? 3) },
+    // one picture at a time: Codex refreshes the ChatGPT login's tokens in auth.json, two runs at once could lose it
+    kindLimits: { prepare_asset: Math.max(1, o.jobs.prepareLanes ?? 3), image: 1 },
   }) : null;
   return {
     agent,

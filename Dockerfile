@@ -40,20 +40,26 @@ FROM build AS app
 # yt-dlp (ADR-0001 mục 175–176, 186): crawl YouTube khi không có YOUTUBE_API_KEY, và video mẫu ≤480p để học phong cách
 # dựng sau khi người dùng xác nhận (xoá ngay sau khi đo). Ghim phiên bản; YouTube đổi thường xuyên nên cập nhật theo runbook.
 # YouTube cần JS runtime: worker chỉ yt-dlp tới Node của chính nó (`--js-runtimes node:…`, có từ yt-dlp 2025.11).
+# Codex CLI (plan 2026-11-03 codex-imagegen): thumbnail AI và ảnh kênh bằng tool $imagegen trên tài khoản ChatGPT của
+# STUDIO_CODEX_HOME (trong volume, đăng nhập một lần bằng `codex login --device-auth`, runbook studio-codex-images).
+# Ghim phiên bản: Studio đọc `--json` và thư mục generated_images của nó, đổi phiên bản thì chạy lại test Codex thật.
 ARG YTDLP_VERSION=2026.8.19
+ARG CODEX_VERSION=0.144.5
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg fonts-liberation2 fontconfig ca-certificates python3 python3-pip \
   && rm -rf /var/lib/apt/lists/* \
   && pip3 install --no-cache-dir --break-system-packages "yt-dlp==${YTDLP_VERSION}" \
   && yt-dlp --version \
-  && npm install -g @anthropic-ai/claude-code \
-  && claude --version
+  && npm install -g @anthropic-ai/claude-code "@openai/codex@${CODEX_VERSION}" \
+  && claude --version \
+  && codex --version
 ENV NODE_ENV=production \
     HARNESS_ROOT=/src/ag-studio \
     STUDIO_DATA_ROOT=/data/harness \
     STUDIO_FFMPEG_PATH=/usr/bin/ffmpeg \
     STUDIO_FFPROBE_PATH=/usr/bin/ffprobe \
     YTDLP_PATH=/usr/local/bin/yt-dlp \
+    STUDIO_CODEX_HOME=/data/harness/codex \
     PORT=3100
 VOLUME /data
 EXPOSE 3100

@@ -10,7 +10,8 @@ ADR-0001 (mục 127 trở đi cho Studio, 179–190 cho workspace agent) và `do
 
 ## Cách tìm việc
 - **Chạy trên một máy:** `docs/runbooks/studio-local.md`. **Vận hành một dự án:** `docs/runbooks/studio-project.md`.
-  **Thêm một chi nhánh** (tài khoản Claude, máy farm riêng): `docs/runbooks/branch-team.md`.
+  **Thêm một chi nhánh** (tài khoản Claude, máy farm riêng): `docs/runbooks/branch-team.md`. **Ảnh AI bằng ChatGPT**
+  (đăng nhập Codex của Studio): `docs/runbooks/studio-codex-images.md`.
 - **Việc phát triển:** `docs/superpowers/plans/*.md`, làm theo từng task, mỗi task một commit. Chương trình đang làm:
   `docs/superpowers/specs/2026-10-10-ag-studio-agent-workspace-design.md` và plan cùng ngày.
 - **Việc còn nợ, lỗi đã biết:** `docs/operations/deferred-items.md` (mục "AG Studio" ở đầu file).
@@ -248,7 +249,7 @@ nhưng không code nào đọc.
 - Thumbnail (`workspace/thumbnails.ts`) cắt khung từ bản render và vẽ chữ trên máy Studio (ffmpeg bất đồng bộ, font Arial của
   hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Cùng job đó cắt khung không chữ cho agent xem (tool `render_frames`,
   ≤ 12 khung từ bản render mới nhất, `videos/<id>/renders/frames/r<bản>-<giây>s.jpg`).
-- Ảnh AI (plan 2026-11-03 codex-imagegen, migration `0011`): job `image` gọi `codex exec` với tool `$imagegen` trên tài khoản
+- Ảnh AI (plan 2026-11-03 codex-imagegen, migration `0011`, runbook `studio-codex-images.md`): job `image` (một ảnh một lúc) gọi `codex exec` với tool `$imagegen` trên tài khoản
   ChatGPT của `STUDIO_CODEX_HOME` (`codex-image.ts`: `--ephemeral --ignore-user-config`, sandbox read-only, prompt qua stdin,
   ảnh tìm theo thread id ở `generated_images/`; con không bao giờ thấy `OPENAI_API_KEY`, đăng nhập bằng API key thì từ chối).
   Item `thumbnail_make` có `prompt` = thumbnail AI: khung render là ảnh để sửa, cắt về cỡ thumbnail, chữ vẫn do libass vẽ.

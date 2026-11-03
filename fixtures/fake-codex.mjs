@@ -6,8 +6,8 @@
 //   exec --json … -       reads the prompt on stdin and acts like `$imagegen`: a 1×1 PNG saved at
 //                         $CODEX_HOME/generated_images/<thread id>/exec-<n>.png, JSON events on stdout
 // The prompt picks a case: "FAKE:rate" usage limit (turn.failed), "FAKE:refuse" the agent refuses in words,
-// "FAKE:noimage" answers without a picture, "FAKE:crash" exits 1 with stderr, "FAKE:slow" waits 30 s, "FAKE:twice"
-// saves two pictures (the second is the one kept). Every exec writes its argv and env keys to
+// "FAKE:noimage" answers without a picture, "FAKE:silent" says DONE with no picture (the tool failed, said on stderr),
+// "FAKE:crash" exits 1 with stderr, "FAKE:slow" waits 30 s, "FAKE:twice" saves two pictures (the second is the one kept). Every exec writes its argv and env keys to
 // $CODEX_HOME/last-exec.json so tests can check what Codex was given.
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -60,6 +60,9 @@ if (prompt.includes("FAKE:rate")) {
 }
 if (prompt.includes("FAKE:refuse")) {
   out({ type: "item.completed", item: { id: "item_0", type: "agent_message", text: "I can't create that image because it violates the content policy." } });
+} else if (prompt.includes("FAKE:silent")) {
+  process.stderr.write("2026-11-03T15:52:10.827889Z ERROR codex_core::tools::router: error=unable to read referenced image at `/t/ref.jpg`: bwrap: No permissions to create a new namespace\n");
+  out({ type: "item.completed", item: { id: "item_0", type: "agent_message", text: "DONE" } });
 } else if (prompt.includes("FAKE:noimage")) {
   out({ type: "item.completed", item: { id: "item_0", type: "agent_message", text: "Here is a description instead." } });
 } else {

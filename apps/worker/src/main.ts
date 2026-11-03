@@ -26,7 +26,9 @@
  *   YTDLP_PATH / STUDIO_YTDLP_ARGV  yt-dlp (default `yt-dlp` on PATH): crawls without a key, reference videos
  *   STUDIO_REFERENCE_DOWNLOADS=0    never download reference videos from YouTube (uploaded ones are still watched)
  *   STUDIO_CODEX_HOME   Studio's own CODEX_HOME, logged in to a ChatGPT account (`codex login --device-auth`): AI
- *                       thumbnails and channel art (job `image`, with ffmpeg); none or not on ChatGPT = those jobs wait
+ *                       thumbnails and channel art (job `image`, with ffmpeg); none = those jobs wait. Only one worker sets it
+ *                       (a login is used by one picture at a time). Not logged in yet: the jobs fail saying so, no restart
+ *                       needed once someone logs in
  *   STUDIO_CODEX_PATH   the Codex CLI (default `codex` on PATH)
  *   HARNESS_ROOT        Studio install root (default: this checkout)
  *   STUDIO_FARM_QUEUE_TIMEOUT_MINUTES a farm job no node takes this long is cancelled and its job says so (default 120)
@@ -88,11 +90,12 @@ async function main(): Promise<void> {
   const ytdlp = ytDlp({ argv: ytdlpArgv, ...(ffmpeg ? { ffmpeg } : {}) });
   const ytdlpVersion = await ytdlp.version();
   const referenceDownloads = process.env.STUDIO_REFERENCE_DOWNLOADS !== "0";
-  // Codex's $imagegen on a ChatGPT login (never an API key: Studio does not pay per picture); checked once, below
+  // Codex's $imagegen on a ChatGPT login (never an API key: Studio does not pay per picture). The login is checked again
+  // before every picture, so a worker whose Codex runs takes the jobs and says why one fails (not logged in yet, API key)
   const codexHome = process.env.STUDIO_CODEX_HOME?.trim();
   const codex = codexHome ? codexImager({ argv: [process.env.STUDIO_CODEX_PATH?.trim() || "codex"], codexHome }) : null;
   const codexLogin = codex ? await codex.login() : null;
-  const imager = codexLogin === "chatgpt" ? codex : null;
+  const imager = codexLogin !== null ? codex : null;
   const claudeMaxConcurrent = parseClaudeMaxConcurrent(process.env.STUDIO_CLAUDE_MAX_CONCURRENT);
   const agGo = new AgGoClient({ baseUrl: requireEnv("AG_GO_API_URL"), serviceKey: requireEnv("AG_GO_SERVICE_KEY") });
   // ag-go's own name for itself (its public settings), for job text and the agent's prompt
@@ -174,9 +177,9 @@ async function main(): Promise<void> {
   });
   if (!agent) logger.warn("STUDIO_AGENT_TOKEN_SECRET is not set: agent turns do not run in this worker (jobs still do)");
   if (!ffmpeg) logger.warn("STUDIO_FFMPEG_PATH is not set: timelines, renders and thumbnails wait for a worker that has it");
-  if (codexHome && !imager) {
+  if (codexHome && codexLogin !== "chatgpt") {
     logger.warn(codexLogin === null ? "STUDIO_CODEX_HOME is set but Codex does not run (STUDIO_CODEX_PATH): AI pictures wait for a worker that has it"
-      : `Studio's Codex is ${codexLogin === "api_key" ? "on an API key" : "not logged in"}, not a ChatGPT account: AI pictures wait (codex login --device-auth with CODEX_HOME=STUDIO_CODEX_HOME)`);
+      : `Studio's Codex is ${codexLogin === "api_key" ? "on an API key" : "not logged in"}, not a ChatGPT account: AI pictures fail until someone runs codex login --device-auth with CODEX_HOME=${codexHome}`);
   }
   if (!youtubeKey && !ytdlpVersion) logger.warn(`neither YOUTUBE_API_KEY nor yt-dlp (${ytdlpArgv[0]}): crawls wait for a worker that has one`);
   const ac = new AbortController();

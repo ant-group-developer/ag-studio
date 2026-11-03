@@ -40,15 +40,17 @@ describe("codex image: words and events", () => {
     expect(classifyCodexFailure("You've hit your usage limit. Try again later.").code).toBe("rate_limited");
     expect(classifyCodexFailure("401 Unauthorized: refresh token expired").code).toBe("not_logged_in");
     expect(classifyCodexFailure("Your request was rejected by the safety system").code).toBe("refused");
+    expect(classifyCodexFailure("stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)").code).toBe("network");
     expect(classifyCodexFailure("something odd")).toMatchObject({ code: "other", reason: "Codex: something odd" });
   });
 
   it("tells Codex to call the tool once with the references and nothing else", () => {
     const p = codexImagePrompt({ prompt: "a lake at sunset", references: ["/a/f.jpg"], transparentBackground: false });
     expect(p).toContain("$imagegen tool exactly once");
-    expect(p).toContain('referenced_image_paths: ["/a/f.jpg"], transparent_background: false');
+    expect(p).toContain("num_last_images_to_include: 1 (the picture attached to this message), transparent_background: false");
+    expect(p).not.toContain("/a/f.jpg");
     expect(p).toContain("a lake at sunset");
-    expect(codexImagePrompt({ prompt: "logo", transparentBackground: true })).not.toContain("referenced_image_paths");
+    expect(codexImagePrompt({ prompt: "logo", transparentBackground: true })).not.toContain("num_last_images_to_include");
   });
 
   it("gives the child its CODEX_HOME and never an API key or a Studio secret", () => {
@@ -104,6 +106,7 @@ describe("codexImager (fake)", () => {
     await expect(c.generate({ prompt: "FAKE:rate", out: outPath() })).rejects.toMatchObject({ code: "rate_limited" });
     await expect(c.generate({ prompt: "FAKE:refuse", out: outPath() })).rejects.toMatchObject({ code: "refused" });
     await expect(c.generate({ prompt: "FAKE:noimage", out: outPath() })).rejects.toMatchObject({ code: "no_image", detail: "Here is a description instead." });
+    await expect(c.generate({ prompt: "FAKE:silent", out: outPath() })).rejects.toMatchObject({ code: "no_image", detail: expect.stringMatching(/^unable to read referenced image at .*bwrap/) });
     await expect(c.generate({ prompt: "FAKE:crash", out: outPath() })).rejects.toMatchObject({ code: "other", detail: "Error: fake codex crashed" });
   });
 

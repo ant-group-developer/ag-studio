@@ -31,7 +31,7 @@ export type CodexLogin = "chatgpt" | "api_key" | "none";
 
 /** Why a picture was not made, as a code the job and the agent act on. */
 export type CodexImageFailureCode =
-  | "not_installed" | "not_logged_in" | "api_key_login" | "rate_limited" | "refused" | "no_image" | "timeout" | "cancelled" | "other";
+  | "not_installed" | "not_logged_in" | "api_key_login" | "rate_limited" | "refused" | "network" | "no_image" | "timeout" | "cancelled" | "other";
 
 /** What each code says, in the words the chat and the job show. */
 export const CODEX_IMAGE_FAILURE_REASON: Record<Exclude<CodexImageFailureCode, "other">, string> = {
@@ -40,6 +40,7 @@ export const CODEX_IMAGE_FAILURE_REASON: Record<Exclude<CodexImageFailureCode, "
   api_key_login: "Codex của Studio đang đăng nhập bằng API key, không phải tài khoản ChatGPT; Studio không tạo ảnh tính tiền API",
   rate_limited: "tài khoản ChatGPT đã hết hạn mức tạo ảnh, thử lại sau",
   refused: "ảnh bị từ chối vì chính sách nội dung của OpenAI",
+  network: "máy worker không nối được ChatGPT (mạng, DNS hoặc chứng chỉ TLS), thử lại sau",
   no_image: "Codex trả lời nhưng không tạo ảnh",
   timeout: "tạo ảnh quá 10 phút, đã dừng",
   cancelled: "đã dừng",
@@ -74,6 +75,7 @@ export function classifyCodexFailure(message: string): CodexImageFailure {
     /usage limit|rate[ _-]?limit|too many requests|\b429\b|quota/.test(l) ? "rate_limited"
     : /not logged in|log ?in again|unauthori[sz]ed|\b401\b|refresh token|token (has )?expired|sign in/.test(l) ? "not_logged_in"
     : /safety|moderation|content policy|policy violation|not allowed to generate|rejected/.test(l) ? "refused"
+    : /error sending request|stream disconnected|peer certificate|certificate verify|dns error|failed to lookup|connection (refused|reset)|network is unreachable|timed out/.test(l) ? "network"
     : "other";
   const detail = trimDetail(message);
   return { code, reason: code === "other" ? (detail ? `Codex: ${detail}` : "Codex lỗi, không rõ lý do") : CODEX_IMAGE_FAILURE_REASON[code], detail };
@@ -137,11 +139,16 @@ export interface CodexImageResult {
   usage: CodexRunFacts["usage"];
 }
 
-/** The whole prompt Codex gets: call the tool once with these arguments, nothing else. */
+/**
+ * The whole prompt Codex gets: call the tool once with these arguments, nothing else. The references are the pictures
+ * attached with `-i` (read by the CLI itself), taken as the conversation's last images: with `referenced_image_paths`
+ * the tool reads the files through Codex's sandbox, which cannot start in a Docker container (bwrap has no namespaces),
+ * and the picture is silently not made.
+ */
 export function codexImagePrompt(r: Pick<CodexImageRequest, "prompt" | "references" | "transparentBackground">): string {
   const refs = r.references ?? [];
   const args = [
-    refs.length ? `referenced_image_paths: ${JSON.stringify(refs)}` : null,
+    refs.length ? `num_last_images_to_include: ${refs.length} (the ${refs.length === 1 ? "picture" : `${refs.length} pictures`} attached to this message)` : null,
     `transparent_background: ${r.transparentBackground ? "true" : "false"}`,
   ].filter(Boolean).join(", ");
   return [
@@ -188,6 +195,8 @@ export interface CodexImagerOptions {
 export function codexImager(o: CodexImagerOptions): CodexImager {
   const [first, ...head] = o.argv;
   if (!first) throw new Error("codex argv is empty");
+  // a fresh volume has no folder yet: `codex login` and `login status` need it to be there
+  mkdirSync(o.codexHome, { recursive: true });
   const env = codexChildEnv(o.codexHome);
   const resolved = resolveCommand(first, defaultResolveDeps(process.env.PATH ?? process.env.Path));
   const bin = resolved.cmd;
@@ -268,7 +277,10 @@ export function codexImager(o: CodexImagerOptions): CodexImager {
           if (facts.failure) throw new CodexImageError(classifyCodexFailure(facts.failure));
           if (res.code !== 0) throw new CodexImageError(classifyCodexFailure(res.stderr.trim() || `codex exited ${String(res.code)}`));
           const said = classifyCodexFailure(facts.lastMessage ?? "");
-          throw said.code === "refused" || said.code === "rate_limited" ? new CodexImageError(said) : fail("no_image", trimDetail(facts.lastMessage ?? ""));
+          if (said.code === "refused" || said.code === "rate_limited") throw new CodexImageError(said);
+          // "DONE" with no picture: the tool failed inside Codex, whose own ERROR line says why
+          const why = facts.lastMessage && !/^\s*DONE\.?\s*$/i.test(facts.lastMessage) ? facts.lastMessage : lastErrorLine(res.stderr) ?? facts.lastMessage ?? "";
+          throw fail("no_image", trimDetail(why));
         }
         mkdirSync(dirname(r.out), { recursive: true });
         copyFileSync(picture, r.out);
@@ -279,6 +291,12 @@ export function codexImager(o: CodexImagerOptions): CodexImager {
       }
     },
   };
+}
+
+/** Codex's last ERROR log line (`… ERROR target: message`), its message only. */
+function lastErrorLine(stderr: string): string | null {
+  const line = stderr.split(/\r?\n/).reverse().find((l) => /\bERROR\b/.test(l));
+  return line ? line.replace(/^.*?\bERROR\s+\S+:\s*/, "").replace(/^error=/, "") : null;
 }
 
 /** The last picture Codex saved in a thread's folder (a turn that called the tool twice keeps the second). */
