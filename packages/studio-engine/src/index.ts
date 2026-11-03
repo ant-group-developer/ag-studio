@@ -12,6 +12,7 @@ export { RENDER_MACHINES, renderRequirements, type RenderMachine } from "@harnes
 export * from "./youtube-research.js";
 export * from "./team-skills.js";
 export * from "./thumbnail-render.js";
+export * from "./codex-image.js";
 export * from "./settings.js";
 export * from "./site-name.js";
 export * from "./audit-log.js";
