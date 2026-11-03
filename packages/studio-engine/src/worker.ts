@@ -13,6 +13,7 @@ import type { CutMediaDeps } from "./media-deps.js";
 import { claudeMaxConcurrent } from "./settings.js";
 import type { StudioDb } from "./studio-db.js";
 import type { ThumbnailRenderer } from "./thumbnail-render.js";
+import type { CodexImager } from "./codex-image.js";
 import type { YtDlp } from "./yt-dlp.js";
 import { studioResearchCache } from "./youtube-research.js";
 import { createAgentRunner, type AgentRunner, type AgentRunnerOptions } from "./agent/runner.js";
@@ -28,6 +29,7 @@ import { researchHandler } from "./workspace/research.js";
 import { styleWatchHandler } from "./workspace/style-watch.js";
 import { startUsageSender, type UsageSink } from "./workspace/usage-send.js";
 import { thumbnailHandler } from "./workspace/thumbnails.js";
+import { imageHandler } from "./workspace/images.js";
 import { musicBeatsHandler } from "./workspace/music-beats.js";
 import { YoutubeCrawler } from "./workspace/youtube-crawl.js";
 
@@ -51,6 +53,8 @@ export interface StudioWorkerOptions {
   usage?: { sink: UsageSink; everyMs?: number };
   /** Cuts and draws thumbnails; without it the `thumbnail` jobs wait. */
   thumbnails?: ThumbnailRenderer;
+  /** Studio's Codex on a ChatGPT login (`STUDIO_CODEX_HOME`): with `thumbnails`, takes the `image` jobs (AI thumbnails, channel art). */
+  imager?: CodexImager;
   /** yt-dlp: crawls without an API key, reference videos. */
   ytdlp?: YtDlp;
   /** False: reference videos are never downloaded, neither here nor by the farm's machines (`STUDIO_REFERENCE_DOWNLOADS=0`). */
@@ -153,6 +157,8 @@ export function projectJobHandlers(o: StudioWorkerOptions): Partial<Record<JobKi
     handlers.music_beats = musicBeatsHandler({ db: o.db, bucket: o.bucket, farm: o.farm, ...farmWait });
   }
   if (o.thumbnails) handlers.thumbnail = thumbnailHandler({ db: o.db, bucket: o.bucket, renderer: o.thumbnails });
+  // pictures by Codex's $imagegen: the frame or picture still cut and cropped with this worker's ffmpeg
+  if (o.thumbnails && o.imager) handlers.image = imageHandler({ db: o.db, bucket: o.bucket, renderer: o.thumbnails, imager: o.imager });
   // reference videos: uploaded ones (style_from_files), and YouTube ones a person agreed to download (a
   // reference_download card: watched, measured, deleted) unless downloads are turned off: fetched by a farm machine
   // taking studio.reference_fetch when one is online (YouTube blocks the server, not the office), else this worker's yt-dlp

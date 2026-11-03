@@ -25,6 +25,7 @@ import { projectLookView, setProjectLook, videoLookToTimeline, videoLookView } f
 import { musicBeatsStatus, queueMusicBeats } from "../workspace/music-beats.js";
 import { queueRender } from "../workspace/renders.js";
 import { MAX_RENDER_FRAMES, queueRenderFrames, queueThumbnails } from "../workspace/thumbnails.js";
+import { CHANNEL_ART_KINDS, CHANNEL_ART_MAX_REFERENCES, queueChannelArt } from "../workspace/images.js";
 import { buildVideoIndex } from "../workspace/video-index.js";
 import { requireVideoThread } from "./handoff.js";
 import type { AgentTool, AgentToolContext, ToolAnswer } from "./tools.js";
@@ -246,10 +247,12 @@ export const TIMELINE_TOOLS: AgentTool[] = [
   }),
   tool({
     name: "thumbnail_make",
-    description: "Làm 1–3 thumbnail cho video: cắt khung từ bản render mới nhất (bản cuối nếu có, không thì bản xem trước) ở giây `at_seconds` và vẽ `text` theo branding (vị trí, chữ hoa, màu). Ghi videos/<id>/thumbnails/NN.jpg và README.md; mở ảnh bằng Read để xem lại. Lấy ý tưởng từ youtube-kit.md.",
+    description: "Làm 1–3 thumbnail cho video: cắt khung từ bản render mới nhất (bản cuối nếu có, không thì bản xem trước) ở giây `at_seconds` và vẽ `text` theo branding (vị trí, chữ hoa, màu). Có `prompt` (tiếng Anh, tả cách sửa ảnh: ánh sáng, màu, không khí, góc nhìn) thì là thumbnail AI: khung đó được ChatGPT sửa lại (giữ đúng cảnh thật, không chữ, chừa chỗ cho chữ) rồi Studio mới vẽ `text` lên; mỗi ảnh 1–4 phút và tốn hạn mức ChatGPT của nhóm, nên chỉ dùng khi người dùng muốn ảnh AI. Ghi videos/<id>/thumbnails/NN.jpg và README.md; mở ảnh bằng Read để xem lại. Lấy ý tưởng từ youtube-kit.md.",
     input: z.object({
       video_id: z.string().min(1).optional(),
-      items: z.array(z.object({ text: z.string().trim().min(1).max(60), at_seconds: z.number().min(0).optional() }).strict()).min(1).max(3),
+      items: z.array(z.object({
+        text: z.string().trim().min(1).max(60), at_seconds: z.number().min(0).optional(), prompt: z.string().trim().min(1).max(1500).optional(),
+      }).strict()).min(1).max(3),
       position: z.enum(["top", "center", "bottom", "left", "right"]).optional(),
       wait_s: waitS,
     }).strict(),
@@ -261,6 +264,25 @@ export const TIMELINE_TOOLS: AgentTool[] = [
         threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
       }, ctx.now());
       return waitFor(ctx, job.id, a.wait_s ?? 30);
+    },
+  }),
+  tool({
+    name: "channel_art_make",
+    description: "Tạo một ảnh kênh bằng ChatGPT: `logo` (PNG, `transparent` cho nền trong suốt), `banner` (2560×1440, chữ và hình chính nằm giữa), `avatar` (800×800, tròn) hoặc `art` (ảnh khác). `prompt` tiếng Anh theo channel/branding.md (màu, phong cách, tên kênh nếu cần chữ); `references`: tối đa 3 ảnh trong dự án để sửa hoặc theo (vd. logo đã có cho banner, ảnh ở context/). Mỗi ảnh 1–4 phút, tốn hạn mức ChatGPT của nhóm. Ghi channel/art/<kind>-NN.(png|jpg) và README.md; mở bằng Read để xem.",
+    input: z.object({
+      kind: z.enum(CHANNEL_ART_KINDS),
+      prompt: z.string().trim().min(1).max(1500),
+      references: z.array(z.string().min(1)).max(CHANNEL_ART_MAX_REFERENCES).optional(),
+      transparent: z.boolean().optional(),
+      wait_s: waitS,
+    }).strict(),
+    role: "editor",
+    run: async (ctx, a) => {
+      const job = await queueChannelArt(ctx.db, {
+        projectId: ctx.project.id, workspaceDir: ctx.workspaceDir, kind: a.kind, prompt: a.prompt, ...(a.references ? { references: a.references } : {}),
+        ...(a.transparent !== undefined ? { transparent: a.transparent } : {}), threadId: ctx.thread.id, continueAgent: true, createdBy: ctx.claims.sub, actorRole: ctx.role,
+      }, ctx.now());
+      return waitFor(ctx, job.id, a.wait_s ?? 0);
     },
   }),
   tool({

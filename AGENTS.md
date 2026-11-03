@@ -248,6 +248,12 @@ nhưng không code nào đọc.
 - Thumbnail (`workspace/thumbnails.ts`) cắt khung từ bản render và vẽ chữ trên máy Studio (ffmpeg bất đồng bộ, font Arial của
   hệ thống qua `STUDIO_FONTS_DIR`, không ship font). Cùng job đó cắt khung không chữ cho agent xem (tool `render_frames`,
   ≤ 12 khung từ bản render mới nhất, `videos/<id>/renders/frames/r<bản>-<giây>s.jpg`).
+- Ảnh AI (plan 2026-11-03 codex-imagegen, migration `0011`): job `image` gọi `codex exec` với tool `$imagegen` trên tài khoản
+  ChatGPT của `STUDIO_CODEX_HOME` (`codex-image.ts`: `--ephemeral --ignore-user-config`, sandbox read-only, prompt qua stdin,
+  ảnh tìm theo thread id ở `generated_images/`; con không bao giờ thấy `OPENAI_API_KEY`, đăng nhập bằng API key thì từ chối).
+  Item `thumbnail_make` có `prompt` = thumbnail AI: khung render là ảnh để sửa, cắt về cỡ thumbnail, chữ vẫn do libass vẽ.
+  Tool `channel_art_make`: logo/ảnh (PNG, nền trong suốt được), banner 2560×1440, avatar 800×800 vào `channel/art/`.
+  Mỗi ảnh một dòng `llm_calls` (source `codex-image`). Test: `fixtures/fake-codex.mjs`; Codex thật chỉ khi `HARNESS_REAL_CODEX_TEST=1`.
 - Bản xem trước và bản cuối được máy render tự kiểm (`inspectRender`, `packages/core/src/media/render/inspect.ts`; payload
   `inspect: true`, cần `studio_render_min` 2): đứng hình, màn đen, im lặng, độ to từng đoạn và tờ ghép khung hình (1 khung/10 s,
   lưới 5×4). Studio chép `inspect.json` + `sheet-NN.jpg` vào `videos/<id>/renders/<tên ghi chú>/`, ghi chú render và tin báo

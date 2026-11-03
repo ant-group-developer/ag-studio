@@ -85,5 +85,6 @@ export * from "./workspace/video-look.js";
 export * from "./workspace/music-beats.js";
 export * from "./agent/timeline-tools.js";
 export * from "./workspace/thumbnails.js";
+export * from "./workspace/images.js";
 export * from "./workspace/style-watch.js";
 export * from "./workspace/reference-fetch.js";

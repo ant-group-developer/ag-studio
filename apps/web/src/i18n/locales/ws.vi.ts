@@ -879,6 +879,7 @@ export const wsVi = {
     timeline_apply_ops: "sửa timeline",
     render_preview: "render bản xem thử",
     thumbnail_make: "làm thumbnail",
+    channel_art_make: "tạo ảnh kênh",
     render_frames: "xem khung hình bản render",
     music_list: "xem nhạc dùng được",
     music_set: "gán nhạc nền",

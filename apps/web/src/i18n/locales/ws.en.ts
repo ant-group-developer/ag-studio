@@ -882,6 +882,7 @@ export const wsEn: Messages<typeof wsVi> = {
     timeline_apply_ops: "editing the timeline",
     render_preview: "rendering a preview",
     thumbnail_make: "making thumbnails",
+    channel_art_make: "making channel art",
     render_frames: "looking at frames of the render",
     music_list: "looking at the music",
     music_set: "setting the background music",
