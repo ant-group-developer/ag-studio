@@ -82,40 +82,119 @@ export function peakLimit(m: LoudnormMeasured): number | null {
 }
 const DUCK_RATIO = "6";
 
-function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) => number, narrationIndex: (line_id: string) => number, evenGainDb?: ReadonlyMap<number, number>): { parts: string[]; label: string } {
+/** The footage's own sound as a bed with no voice: this far down. */
+const SOURCE_BED_DB = -12;
+/** Under a tts voice the footage's sound plays at its own level between lines and this far down under each one. A
+ * fixed volume line, not a sidechain like the music's: the dip is as deep however loud the voice reads, and the
+ * Premiere export draws the same points as keyframes. */
+export const SOURCE_DUCK_DB = -12;
+/** It is down by a line's first word and back up this long after its last. */
+const SOURCE_DUCK_ATTACK = 0.05;
+const SOURCE_DUCK_RELEASE = 0.5;
+/** ffmpeg 9 parses a sum of 60 dips in one expression and fails on 100: one `volume` per this many. */
+const SOURCE_DUCKS_PER_EXPR = 40;
+
+/** Where the footage is down under a tts voice: the lines, those closer than a dip and a rise merged into one. */
+function sourceDuckWindows(narration: readonly { start: number; end: number }[]): { start: number; end: number }[] {
+  const windows: { start: number; end: number }[] = [];
+  for (const n of [...narration].sort((a, b) => a.start - b.start)) {
+    const last = windows.at(-1);
+    if (last && n.start - SOURCE_DUCK_ATTACK <= last.end + SOURCE_DUCK_RELEASE) last.end = Math.max(last.end, n.end);
+    else windows.push({ start: n.start, end: n.end });
+  }
+  return windows;
+}
+
+/**
+ * The footage's gain (dB) along the episode under a tts voice, as ffmpeg expressions of `t` for `volume` filters in a
+ * row: each a sum of one term per dip, `SOURCE_DUCKS_PER_EXPR` dips at most. Sums, not `envelopeDbExpr`'s nested
+ * `if`s, which stop parsing near a hundred points. The dips do not overlap (`sourceDuckWindows`), so the gains add up
+ * to the volume line `sourceDuckPoints` draws. `[]` with no narration.
+ */
+export function sourceDuckExprs(narration: readonly { start: number; end: number }[]): string[] {
+  const terms = sourceDuckWindows(narration).map((w) =>
+    `${fmt(SOURCE_DUCK_DB)}*clip((t-${fmt(w.start - SOURCE_DUCK_ATTACK)})/${fmt(SOURCE_DUCK_ATTACK)},0,1)*clip((${fmt(w.end + SOURCE_DUCK_RELEASE)}-t)/${fmt(SOURCE_DUCK_RELEASE)},0,1)`);
+  const exprs: string[] = [];
+  for (let k = 0; k < terms.length; k += SOURCE_DUCKS_PER_EXPR) exprs.push(terms.slice(k, k + SOURCE_DUCKS_PER_EXPR).join("+"));
+  return exprs;
+}
+
+/**
+ * The same volume line as points (the Premiere export's keyframes): 0 dB between lines, `SOURCE_DUCK_DB` under each,
+ * down by a line's first word, back up `SOURCE_DUCK_RELEASE` after its last. `[]` with no narration.
+ */
+export function sourceDuckPoints(narration: readonly { start: number; end: number }[]): { at: number; gain_db: number }[] {
+  return sourceDuckWindows(narration).flatMap((w) => [
+    { at: round3(Math.max(0, w.start - SOURCE_DUCK_ATTACK)), gain_db: 0 },
+    { at: round3(w.start), gain_db: SOURCE_DUCK_DB },
+    { at: round3(w.end), gain_db: SOURCE_DUCK_DB },
+    { at: round3(w.end + SOURCE_DUCK_RELEASE), gain_db: 0 },
+  ]);
+}
+
+/**
+ * The voice layer as `[voice]`. `key`: what the music ducks under when that is not `[voice]` itself -- with a tts voice
+ * over the footage's own sound, the music dips under the narration only, not under every noisy street shot.
+ */
+function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) => number, narrationIndex: (line_id: string) => number, evenGainDb?: ReadonlyMap<number, number>): { parts: string[]; label: string; key?: string } {
   const parts: string[] = [];
   const total = fmt(composition.total_seconds);
 
   if (composition.voice === "tts") {
+    // the footage keeps its sound under the narration, unless every segment is silent (muted, or a file with none)
+    const withSource = composition.segments.some((s) => s.has_audio);
+    const narrated = withSource ? "narration" : "voice";
     if (composition.narration.length === 0) {
       // Already spans exactly `total_seconds` -- no pad/trim needed.
-      parts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${total}[voice]`);
-      return { parts, label: "voice" };
+      parts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${total}[${narrated}]`);
+    } else {
+      const labels: string[] = [];
+      composition.narration.forEach((n, idx) => {
+        const i = narrationIndex(n.line_id);
+        const ms = Math.round(n.start * 1000);
+        const label = `n_${idx}`;
+        // a 10 ms fade-in: a wav that opens on a sample far from zero (a cut one) would click where the line starts
+        parts.push(`[${i}:a]afade=t=in:d=0.01,adelay=${ms}|${ms}[${label}]`);
+        labels.push(`[${label}]`);
+      });
+      // `amix ... duration=longest` ends at the last narration line, not `total_seconds` -- with a trailing
+      // silent gap (or narration that runs past the last video segment being clamped) that fell short of the
+      // episode's full length, the music's fade-out (anchored at `total_seconds - fade_out`) would never play
+      // and the final `amix=duration=first` below would truncate everything to this short voice layer, making
+      // the tail of the episode silent (fix round 1, Critical 2). `apad` extends with silence when short;
+      // `atrim` clamps if narration somehow ran long.
+      parts.push(`${labels.join("")}amix=inputs=${labels.length}:normalize=0:duration=longest[voice_mixed]`);
+      parts.push(`[voice_mixed]apad,atrim=0:${total}[${narrated}]`);
     }
-    const labels: string[] = [];
-    composition.narration.forEach((n, idx) => {
-      const i = narrationIndex(n.line_id);
-      const ms = Math.round(n.start * 1000);
-      const label = `n_${idx}`;
-      // a 10 ms fade-in: a wav that opens on a sample far from zero (a cut one) would click where the line starts
-      parts.push(`[${i}:a]afade=t=in:d=0.01,adelay=${ms}|${ms}[${label}]`);
-      labels.push(`[${label}]`);
-    });
-    // `amix ... duration=longest` ends at the last narration line, not `total_seconds` -- with a trailing
-    // silent gap (or narration that runs past the last video segment being clamped) that fell short of the
-    // episode's full length, the music's fade-out (anchored at `total_seconds - fade_out`) would never play
-    // and the final `amix=duration=first` below would truncate everything to this short voice layer, making
-    // the tail of the episode silent (fix round 1, Critical 2). `apad` extends with silence when short;
-    // `atrim` clamps if narration somehow ran long.
-    parts.push(`${labels.join("")}amix=inputs=${labels.length}:normalize=0:duration=longest[voice_mixed]`);
-    parts.push(`[voice_mixed]apad,atrim=0:${total}[voice]`);
-    return { parts, label: "voice" };
+    if (!withSource) return { parts, label: "voice" };
+    // the footage's sound at its own level between lines, down under each one (`sourceDuckExprs`)
+    parts.push(...sourceSound(composition, mezzIndex, evenGainDb));
+    const exprs = sourceDuckExprs(composition.narration);
+    const duck = exprs.length ? `,asetpts=PTS-STARTPTS${exprs.map((e) => `,volume=volume='pow(10,(${e})/20)':eval=frame`).join("")}` : "";
+    parts.push(`[voice_concat]apad,atrim=0:${total}${duck}[source_d]`);
+    parts.push("[narration]asplit=2[narration_mix][voice_key]");
+    parts.push("[narration_mix][source_d]amix=inputs=2:normalize=0:duration=first[voice]");
+    return { parts, label: "voice", key: "voice_key" };
   }
 
-  // "original" or "none": every segment's own audio, trimmed (or padded with silence, when its source ran
-  // short) to its body length (no tail), 20ms edge fades, concatenated in segment order. Mezzanine audio is trimmed exactly to `end - start` per segment, so the
-  // concat's total should already equal `total_seconds`; `apad,atrim` here is defensive (same reasoning as
-  // the `tts` branch above) against per-segment rounding drift accumulating over many segments.
+  parts.push(...sourceSound(composition, mezzIndex, evenGainDb));
+  if (composition.voice === "none") {
+    parts.push(`[voice_concat]apad,atrim=0:${total}[voice_padded]`);
+    parts.push(`[voice_padded]volume=${SOURCE_BED_DB}dB[voice]`);
+  } else {
+    parts.push(`[voice_concat]apad,atrim=0:${total}[voice]`);
+  }
+  return { parts, label: "voice" };
+}
+
+/**
+ * Every segment's own audio as `[voice_concat]`, trimmed (or padded with silence, when its source ran short) to its
+ * body length (no tail), 20ms edge fades, concatenated in segment order. Mezzanine audio is trimmed exactly to
+ * `end - start` per segment, so the concat's total should already equal `total_seconds`; the callers' `apad,atrim` is
+ * defensive (same reasoning as the narration's) against per-segment rounding drift accumulating over many segments.
+ */
+function sourceSound(composition: Composition, mezzIndex: (order: number) => number, evenGainDb?: ReadonlyMap<number, number>): string[] {
+  const parts: string[] = [];
   const segs = [...composition.segments].sort((a, b) => a.order - b.order);
   const labels: string[] = [];
   segs.forEach((seg, idx) => {
@@ -129,14 +208,7 @@ function buildVoiceGraph(composition: Composition, mezzIndex: (order: number) =>
     labels.push(`[${label}]`);
   });
   parts.push(`${labels.join("")}concat=n=${labels.length}:v=0:a=1[voice_concat]`);
-
-  if (composition.voice === "none") {
-    parts.push(`[voice_concat]apad,atrim=0:${total}[voice_padded]`);
-    parts.push("[voice_padded]volume=-12dB[voice]");
-  } else {
-    parts.push(`[voice_concat]apad,atrim=0:${total}[voice]`);
-  }
-  return { parts, label: "voice" };
+  return parts;
 }
 
 /** Builds the audio-only filtergraph feeding `[aout]`: voice layer, optional ducked music, loudnorm. */
@@ -170,14 +242,18 @@ export function audioGraph(p: AudioGraphInput): { filter: string; out: string } 
     // `duck.enabled: false` (the timeline's `music.ducking` off): the music keeps its gain over the voice. Ducked
     // under the footage's own sound, a quiet track (-30 dB) all but vanished on every noisy street shot.
     if (composition.voice !== "none" && music.duck.enabled !== false) {
-      parts.push("[voice]asplit=2[voice_mix][voice_sc]");
-      parts.push(`[music][voice_sc]sidechaincompress=threshold=${DUCK_THRESHOLD}:ratio=${DUCK_RATIO}:attack=${music.duck.attack_ms}:release=${music.duck.release_ms}:makeup=1[music_d]`);
-      parts.push("[voice_mix][music_d]amix=inputs=2:normalize=0:duration=first[mix]");
+      // a tts voice over the footage's sound hands the narration alone as the key (`buildVoiceGraph`)
+      const [mixIn, key] = voice.key ? [voice.label, voice.key] : ["voice_mix", "voice_sc"];
+      if (!voice.key) parts.push("[voice]asplit=2[voice_mix][voice_sc]");
+      parts.push(`[music][${key}]sidechaincompress=threshold=${DUCK_THRESHOLD}:ratio=${DUCK_RATIO}:attack=${music.duck.attack_ms}:release=${music.duck.release_ms}:makeup=1[music_d]`);
+      parts.push(`[${mixIn}][music_d]amix=inputs=2:normalize=0:duration=first[mix]`);
     } else {
+      if (voice.key) parts.push(`[${voice.key}]anullsink`);
       parts.push("[voice][music]amix=inputs=2:normalize=0:duration=first[mix]");
     }
     mixLabel = "mix";
   } else {
+    if (voice.key) parts.push(`[${voice.key}]anullsink`);
     parts.push("[voice]anull[mix]");
     mixLabel = "mix";
   }

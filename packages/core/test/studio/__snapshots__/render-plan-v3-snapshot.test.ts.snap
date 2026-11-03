@@ -23,7 +23,7 @@ exports[`timelineToComposition on v3 > a muted single clip, no music 1`] = `
    "out": 8.5,
    "start": 0,
    "end": 8.5,
-   "fit": "scale_pad",
+   "fit": "scale_crop",
    "has_audio": false,
    "transition_out": {
     "kind": "cut",
