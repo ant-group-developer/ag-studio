@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CompositionSchema, newId, type Composition } from "@harness/contracts";
-import { audioGraph, envelopeDbExpr, peakLimit, type AudioGraphInput, type LoudnormMeasured } from "../../../src/media/render/audio-graph.js";
+import { audioGraph, envelopeDbExpr, peakLimit, sourceDuckExprs, sourceDuckPoints, type AudioGraphInput, type LoudnormMeasured } from "../../../src/media/render/audio-graph.js";
 
 const SRC_A = "src_01JAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -90,10 +90,35 @@ describe("audioGraph", () => {
     // `amix ... duration=longest` ends at the last narration line (9s), well short of total_seconds (15) --
     // without padding the music fade-out (anchored at total-fade_out) never plays and the episode tail goes
     // silent once the final amix clamps to `duration=first` (fix round 1, Critical 2).
-    expect(filter).toContain("apad,atrim=0:15[voice]");
-    expect(filter).toContain("[voice]asplit=2[voice_mix][voice_sc]");
-    expect(filter).toContain("sidechaincompress=threshold=0.031:ratio=6:attack=150:release=600:makeup=1");
+    expect(filter).toContain("[voice_mixed]apad,atrim=0:15[narration]");
+    // the footage's own sound plays at its level between lines and dips under each (it was dropped: a voice muted the videos)
+    expect(filter).toContain(`[s_0][s_1]concat=n=2:v=0:a=1[voice_concat];[voice_concat]apad,atrim=0:15,asetpts=PTS-STARTPTS,volume=volume='pow(10,(${sourceDuckExprs(composition.narration)[0]})/20)':eval=frame[source_d]`);
+    expect(filter).toContain("[narration]asplit=2[narration_mix][voice_key];[narration_mix][source_d]amix=inputs=2:normalize=0:duration=first[voice]");
+    // the music ducks under the narration alone, not under the street sound
+    expect(filter).toContain("[music][voice_key]sidechaincompress=threshold=0.031:ratio=6:attack=150:release=600:makeup=1[music_d];[voice][music_d]amix");
     expect(filter).toContain("[5:a]atrim=0:15,afade=t=in:d=1,afade=t=out:st=12:d=3,volume=-18dB[music]");
+  });
+
+  it("voice: tts over silent footage -> the narration alone, as before", () => {
+    const silent = (o: number, s: number, e: number) => ({ ...segment(o, s, e), has_audio: false });
+    const composition = baseComposition({
+      voice: "tts", total_seconds: 15, segments: [silent(0, 0, 5), silent(1, 5, 10)],
+      narration: [{ line_id: "L001", wav: "/abs/voice/L001.wav", start: 0.3, end: 2 }],
+      music: musicFixture({ cues: [{ start: 0, end: 15, gain_db: -18 }] }),
+    });
+    const { filter } = run({ composition, narrationIndex: () => 3, musicIndex: 5 });
+    expect(filter).toContain("[voice_mixed]apad,atrim=0:15[voice]");
+    expect(filter).not.toContain("concat");
+    expect(filter).toContain("[voice]asplit=2[voice_mix][voice_sc]");
+  });
+
+  it("voice: tts over the footage with no ducking music -> the unused key is sunk", () => {
+    const composition = baseComposition({ voice: "tts", total_seconds: 10, narration: [{ line_id: "L001", wav: "/abs/voice/L001.wav", start: 0, end: 2 }] });
+    expect(run({ composition, narrationIndex: () => 3 }).filter).toContain("[voice_key]anullsink;[voice]anull[mix]");
+    const music = musicFixture({ cues: [{ start: 0, end: 10, gain_db: -18 }] });
+    const off = run({ composition: { ...composition, music: { ...music, duck: { ...music.duck, enabled: false } } }, narrationIndex: () => 3, musicIndex: 5 }).filter;
+    expect(off).toContain("[voice_key]anullsink;[voice][music]amix");
+    expect(off).not.toContain("[music][voice_key]sidechaincompress");
   });
 
   it("duck.enabled: false -> the music is mixed at its own gain, no sidechaincompress", () => {
@@ -166,8 +191,8 @@ describe("audioGraph", () => {
     const evened = run({ composition, evenGainDb: new Map([[0, -2.5], [1, 4]]) }).filter;
     expect(evened).toContain("apad=whole_dur=5,volume=3.5dB,afade");
     expect(evened).toContain("apad=whole_dur=5,volume=4dB,afade");
-    // a tts episode does not play the footage's sound at all
-    expect(run({ composition: { ...composition, voice: "tts" } }).filter).not.toContain("volume=6dB");
+    // a tts episode keeps the footage's sound, at its own gain, under the bed's
+    expect(run({ composition: { ...composition, voice: "tts" } }).filter).toContain("apad=whole_dur=5,volume=6dB,afade=t=in");
   });
 
   it("feedback-vps §4.3: a music volume line is a per-frame volume of t, linear between points", () => {
@@ -214,5 +239,22 @@ describe("audioGraph", () => {
     const mezzIdx = new Map([[0, 0], [1, 1]]);
     const { filter } = run({ composition, mezzIndex: (order) => mezzIdx.get(order)!, musicIndex: 5 });
     expect(filter).toContain("aloop=loop=-1:size=2e9,atrim=0:10");
+  });
+});
+
+describe("sourceDuckPoints", () => {
+  it("0 dB between lines, -12 dB under each from its first word, lines too close for a rise merged into one dip", () => {
+    expect(sourceDuckPoints([])).toEqual([]);
+    expect(sourceDuckPoints([{ start: 6, end: 9 }, { start: 0.3, end: 2 }, { start: 2.4, end: 3 }])).toEqual([
+      { at: 0.25, gain_db: 0 }, { at: 0.3, gain_db: -12 }, { at: 3, gain_db: -12 }, { at: 3.5, gain_db: 0 },
+      { at: 5.95, gain_db: 0 }, { at: 6, gain_db: -12 }, { at: 9, gain_db: -12 }, { at: 9.5, gain_db: 0 },
+    ]);
+    // the render's line: flat sums, a term per dip (nested ifs stop parsing near a hundred points)
+    expect(sourceDuckExprs([])).toEqual([]);
+    expect(sourceDuckExprs([{ start: 6, end: 9 }, { start: 0.3, end: 2 }, { start: 2.4, end: 3 }]))
+      .toEqual(["-12*clip((t-0.25)/0.05,0,1)*clip((3.5-t)/0.5,0,1)+-12*clip((t-5.95)/0.05,0,1)*clip((9.5-t)/0.5,0,1)"]);
+    // ffmpeg fails on a sum of 100 dips: 40 per volume filter
+    const many = sourceDuckExprs(Array.from({ length: 150 }, (_, k) => ({ start: 1 + 4 * k, end: 3 + 4 * k })));
+    expect(many.map((e) => e.split("+-12*").length)).toEqual([40, 40, 40, 30]);
   });
 });

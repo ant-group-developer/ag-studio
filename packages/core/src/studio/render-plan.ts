@@ -160,7 +160,8 @@ export function timelineToComposition(t: AnyTimeline, opts: { silentAssets?: Rea
       out: r3(c.source_out),
       start: c.start,
       end: c.end,
-      fit: "scale_pad" as const,
+      // a portrait canvas is filled (a landscape shot cropped to its middle), not letterboxed top and bottom
+      fit: t.canvas.height > t.canvas.width ? ("scale_crop" as const) : ("scale_pad" as const),
       // a clip muted on its own (cut 1.1.0) is silent; every render worker reads this per segment
       has_audio: hasAudio && !c.muted && !opts.silentAssets?.has(c.asset_id),
       ...(c.gain_db ? { gain_db: c.gain_db } : {}),

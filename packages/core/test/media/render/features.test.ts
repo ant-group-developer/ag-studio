@@ -74,6 +74,14 @@ describe("compositionFeatureLevel", () => {
     expect(timelineToComposition(timeline(null)).color_even).toBeUndefined();
   });
 
+  it("is 10 for a tts voice over the footage's own sound", () => {
+    const c = timelineToComposition(timeline(null));
+    const line = { line_id: "L001", wav: "voice/L001.wav", start: 0, end: 1 };
+    expect(compositionFeatureLevel({ ...c, voice: "tts", narration: [line] })).toBe(10);
+    expect(compositionFeatureLevel({ ...c, voice: "tts", narration: [line], segments: c.segments.map((s) => ({ ...s, has_audio: false })) })).toBe(0);
+    expect(compositionFeatureLevel({ ...c, voice: "original" })).toBe(0);
+  });
+
   it("never asks for more than this build renders", () => {
     expect(compositionFeatureLevel(timelineToComposition(timeline({ track: "library:m.mp3", gain_db: -30, ducking: false })))).toBeLessThanOrEqual(RENDER_FEATURE_LEVEL);
   });
