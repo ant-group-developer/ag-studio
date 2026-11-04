@@ -9,8 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  AudioImportError, downloadUrlFor, fetchAudioUrl, isPrivateAddress, prepareVoice,
+  AudioImportError, downloadUrlFor, fetchAudioUrl, isPrivateAddress, pausesOf, prepareVoice, voiceCutAt,
 } from "../src/index.js";
+import { spawnSync } from "node:child_process";
 import { ffprobeDuration, hasFfmpeg, makeVideo, makeWav } from "../../../tests/media.js";
 
 const TOOLS = { ffmpeg: process.env.FFMPEG_PATH ?? "ffmpeg", ffprobe: process.env.FFPROBE_PATH ?? "ffprobe" };
@@ -79,13 +80,56 @@ describe("fetchAudioUrl", () => {
   });
 });
 
+describe("voiceCutAt", () => {
+  it("keeps a sample short enough whole", () => {
+    expect(voiceCutAt(12, [{ start: 6, end: 7 }])).toBeNull();
+    expect(voiceCutAt(4, [])).toBeNull();
+  });
+
+  it("cuts a long sample in the middle of its last pause before 12 s, never inside a word", () => {
+    // prod 03/11: speech ran 18.79–20.56 s and the old hard cut at 20 s split "day"
+    const pauses = [{ start: 0.75, end: 1.25 }, { start: 6.77, end: 7.11 }, { start: 11.7, end: 12.26 }, { start: 13.57, end: 14.1 }];
+    expect(voiceCutAt(80.8, pauses)).toBeCloseTo(11.98, 2);
+    expect(voiceCutAt(80.8, pauses.slice(0, 2))).toBeCloseTo(6.94, 2);
+  });
+
+  it("ignores a pause too early to leave enough voice, and with none cuts at 12 s", () => {
+    expect(voiceCutAt(30, [{ start: 2, end: 3 }])).toBe(12);
+    expect(voiceCutAt(30, [])).toBe(12);
+  });
+});
+
+describe("pausesOf", () => {
+  it("reads silencedetect's lines; a pause still open at the end closes there", () => {
+    const stderr = [
+      "[silencedetect @ 0x1] silence_start: -0.002", "[silencedetect @ 0x1] silence_end: 0.458 | silence_duration: 0.46",
+      "[silencedetect @ 0x1] silence_start: 11.7", "[silencedetect @ 0x1] silence_end: 12.26 | silence_duration: 0.56",
+      "[silencedetect @ 0x1] silence_start: 12.8",
+    ].join("\n");
+    expect(pausesOf(stderr, 13)).toEqual([{ start: 0, end: 0.458 }, { start: 11.7, end: 12.26 }, { start: 12.8, end: 13 }]);
+  });
+});
+
 describe.skipIf(!hasFfmpeg())("audio files (needs ffmpeg + ffprobe)", () => {
-  it("a voice sample becomes 24 kHz mono WAV, cut to its first 20 s", async () => {
+  it("a long voice sample becomes 24 kHz mono WAV, cut in the middle of its pause", async () => {
+    const dir = tmp();
+    // a tone with one second of silence at 8–9 s
+    const r = spawnSync(TOOLS.ffmpeg, ["-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=30", "-af", "volume=enable='between(t,8,9)':volume=0", "-c:a", "pcm_s16le", join(dir, "long.wav")]);
+    expect(r.status).toBe(0);
+    const out = await prepareVoice(TOOLS, join(dir, "long.wav"), join(dir, "voice.wav"));
+    expect(out.duration_s).toBeGreaterThan(8);
+    expect(out.duration_s).toBeLessThan(9);
+    expect(ffprobeDuration(join(dir, "voice.wav"))).toBeCloseTo(out.duration_s, 1);
+  });
+
+  it("a long sample with no pause is cut at 12 s; a short one is kept whole", async () => {
     const dir = tmp();
     makeWav(join(dir, "long.wav"), 30);
-    const out = await prepareVoice(TOOLS, join(dir, "long.wav"), join(dir, "voice.wav"));
-    expect(out.duration_s).toBeCloseTo(20, 0);
-    expect(ffprobeDuration(join(dir, "voice.wav"))).toBeCloseTo(20, 0);
+    makeWav(join(dir, "short.wav"), 7);
+    expect((await prepareVoice(TOOLS, join(dir, "long.wav"), join(dir, "a.wav"))).duration_s).toBe(12);
+    expect(ffprobeDuration(join(dir, "a.wav"))).toBeCloseTo(12, 1);
+    expect((await prepareVoice(TOOLS, join(dir, "short.wav"), join(dir, "b.wav"))).duration_s).toBeCloseTo(7, 1);
+    expect(ffprobeDuration(join(dir, "b.wav"))).toBeCloseTo(7, 1);
   });
 
   it("refuses a sample with no sound or shorter than 3 s", async () => {

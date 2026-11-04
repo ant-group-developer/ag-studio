@@ -51,7 +51,7 @@ Tài liệu (PDF, markdown, CSV…), ảnh và audio: **Tải lên** ở mục T
       body: `Thẻ đầu tiên của tab **Nguồn**. Giọng và nhạc không bao giờ lấy từ {{site}}.
 
 **Giọng đọc** (vai nhà sản xuất):
-- **Tải giọng mẫu** (3–20 giây) hoặc **Chọn file đã tải**, rồi khai nguồn gốc giọng (giọng máy, giọng của tôi, có bản quyền). Chỉ dùng giọng bạn có quyền dùng.
+- **Tải giọng mẫu** (3–12 giây; file dài hơn được cắt ở một chỗ ngắt trước giây 12) hoặc **Chọn file đã tải**, rồi khai nguồn gốc giọng (giọng máy, giọng của tôi, có bản quyền). Chỉ dùng giọng bạn có quyền dùng.
 - **Không lời dẫn**: lời thành phụ đề trên hình.
 
 **Nhạc nền** (vai biên tập viên):

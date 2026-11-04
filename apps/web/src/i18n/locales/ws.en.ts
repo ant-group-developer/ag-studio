@@ -1403,7 +1403,7 @@ export const wsEn: Messages<typeof wsVi> = {
     useAsVoice: "Voice",
     useAsMusic: "Music",
     voiceTitle: "Use this file as the narration voice",
-    voiceLead: "Studio reads every video's narration in a voice like this sample (its first 3–20 seconds). Where does the voice come from?",
+    voiceLead: "Studio reads every video's narration in a voice like this sample (its first 3–12 seconds, cut at a pause: type the words of that part only). Where does the voice come from?",
     origin: "Origin of the voice",
     origins: {
       synthetic: "A machine voice",

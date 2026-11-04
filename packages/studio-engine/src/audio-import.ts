@@ -21,9 +21,21 @@ export type AudioKind = "voice" | "music";
 
 /** Music up to 300 MB: a 10-minute WAV track is ~110 MB (prod 23/10: three refused at the old 100 MB). */
 export const AUDIO_MAX_BYTES: Record<AudioKind, number> = { voice: 20 * 1024 * 1024, music: 300 * 1024 * 1024 };
-/** OmniVoice clones from a few seconds; a longer sample only slows every line down. */
+/**
+ * OmniVoice clones from 3–10 s: a longer sample only slows every line down and clones worse. A longer file is cut at
+ * a pause no later than `VOICE_MAX_SECONDS` (`voiceCutAt`): cut inside a word, the sample's last sound leaks into
+ * the start of every line it reads (prod 03/11: a hard cut at 20 s through "Today is my da-" read as "it's my day"
+ * before several lines).
+ */
 export const VOICE_MIN_SECONDS = 3;
-export const VOICE_MAX_SECONDS = 20;
+export const VOICE_MAX_SECONDS = 12;
+/** A pause earlier than this is not cut at: the sample would keep too little voice. */
+export const VOICE_MIN_CUT_SECONDS = 5;
+/** What a pause is: quieter than this, at least this long. */
+const PAUSE_NOISE_DB = -35;
+const PAUSE_MIN_SECONDS = 0.25;
+/** The end of a cut sample fades out over this. */
+const VOICE_FADE_SECONDS = 0.05;
 export const MUSIC_MIN_SECONDS = 5;
 export const MUSIC_DEFAULTS = { gain_db: -18, ducking: true } as const;
 
@@ -150,11 +162,52 @@ async function transcode(ffmpeg: string, args: string[], what: string, timeoutMs
   if (r.timedOut || r.code !== 0) throw new AudioImportError("audio_invalid", `không chuyển được ${what}: ${r.stderr.slice(-200)}`);
 }
 
-/** A voice sample as OmniVoice takes it: mono 24 kHz 16-bit WAV, its first `VOICE_MAX_SECONDS`. */
+export interface Pause { start: number; end: number }
+
+/** The pauses ffmpeg's `silencedetect` printed; one still open at the end of the file ends at `duration`. */
+export function pausesOf(stderr: string, duration: number): Pause[] {
+  const out: Pause[] = [];
+  let open: number | null = null;
+  for (const m of stderr.matchAll(/silence_(start|end): (-?[0-9.]+)/g)) {
+    const at = Number(m[2]);
+    if (m[1] === "start") open = Math.max(0, at);
+    else if (open !== null) { out.push({ start: open, end: at }); open = null; }
+  }
+  if (open !== null) out.push({ start: open, end: duration });
+  return out;
+}
+
+/**
+ * Where a voice sample of `duration` seconds is cut: nowhere (null) when it is short enough; else in the middle of
+ * the last pause that begins between `VOICE_MIN_CUT_SECONDS` and `VOICE_MAX_SECONDS` (the voice there has ended,
+ * the cut never splits a word); with no such pause, at `VOICE_MAX_SECONDS`.
+ */
+export function voiceCutAt(duration: number, pauses: Pause[]): number | null {
+  if (duration <= VOICE_MAX_SECONDS) return null;
+  const fits = pauses.filter((p) => p.start >= VOICE_MIN_CUT_SECONDS && p.start < VOICE_MAX_SECONDS);
+  const last = fits.at(-1);
+  if (!last) return VOICE_MAX_SECONDS;
+  return Math.round(Math.min((last.start + last.end) / 2, VOICE_MAX_SECONDS) * 1000) / 1000;
+}
+
+/**
+ * A voice sample as OmniVoice takes it: mono 24 kHz 16-bit WAV, cut at a pause when longer than `VOICE_MAX_SECONDS`
+ * (`voiceCutAt`) with a short fade out.
+ */
 export async function prepareVoice(t: AudioTools, src: string, dest: string): Promise<{ duration_s: number }> {
   const duration = await probeAudio(t.ffprobe, src, VOICE_MIN_SECONDS);
-  await transcode(t.ffmpeg, ["-i", src, "-vn", "-map", "0:a:0", "-t", String(VOICE_MAX_SECONDS), "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", dest], "giọng mẫu");
-  return { duration_s: Math.min(duration, VOICE_MAX_SECONDS) };
+  let cut: number | null = null;
+  if (duration > VOICE_MAX_SECONDS) {
+    const r = await runTool(t.ffmpeg, [
+      "-hide_banner", "-nostats", "-t", String(VOICE_MAX_SECONDS + 1), "-i", src, "-vn", "-map", "0:a:0",
+      "-af", `silencedetect=n=${PAUSE_NOISE_DB}dB:d=${PAUSE_MIN_SECONDS}`, "-f", "null", "-",
+    ], { timeoutMs: TRANSCODE_TIMEOUT_MS });
+    if (r.timedOut || r.code !== 0) throw new AudioImportError("audio_invalid", `không đọc được giọng mẫu: ${r.stderr.slice(-200)}`);
+    cut = voiceCutAt(duration, pausesOf(r.stderr, VOICE_MAX_SECONDS + 1));
+  }
+  const trim = cut === null ? [] : ["-t", String(cut), "-af", `afade=t=out:st=${Math.max(0, cut - VOICE_FADE_SECONDS)}:d=${VOICE_FADE_SECONDS}`];
+  await transcode(t.ffmpeg, ["-i", src, "-vn", "-map", "0:a:0", ...trim, "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", dest], "giọng mẫu");
+  return { duration_s: cut ?? duration };
 }
 
 /** Background music as AAC (one format for every source; the render reads it as any other `library:` track). */
