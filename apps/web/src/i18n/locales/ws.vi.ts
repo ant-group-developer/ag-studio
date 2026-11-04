@@ -1401,7 +1401,7 @@ export const wsVi = {
     useAsVoice: "Giọng đọc",
     useAsMusic: "Nhạc nền",
     voiceTitle: "Dùng file này làm giọng đọc",
-    voiceLead: "Studio đọc lời dẫn của mọi video bằng giọng giống mẫu này (3–20 giây đầu). Giọng này từ đâu?",
+    voiceLead: "Studio đọc lời dẫn của mọi video bằng giọng giống mẫu này (3–12 giây đầu, cắt ở chỗ ngắt: lời mẫu chỉ ghi phần đó). Giọng này từ đâu?",
     origin: "Nguồn gốc giọng",
     origins: {
       synthetic: "Giọng máy",

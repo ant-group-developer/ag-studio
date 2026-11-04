@@ -51,7 +51,7 @@ Documents (PDF, markdown, CSV…), images and audio: **Upload** in the Documents
       body: `The first card of the **Inputs** tab. Voice and music never come from {{site}}.
 
 **Voice** (producer role):
-- **Upload a voice sample** (3–20 seconds) or **Pick an uploaded file**, then say where the voice comes from (synthetic, my own, licensed). Only use a voice you have the right to use.
+- **Upload a voice sample** (3–12 seconds; a longer file is cut at a pause before 12 s) or **Pick an uploaded file**, then say where the voice comes from (synthetic, my own, licensed). Only use a voice you have the right to use.
 - **No narration**: the words become on-screen captions.
 
 **Background music** (editor role):

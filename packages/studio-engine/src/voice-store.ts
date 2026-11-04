@@ -9,8 +9,12 @@ import { join } from "node:path";
 import type { StudioTtsPayload } from "@ag-farm/protocol";
 import type { StudioDb } from "./studio-db.js";
 
-/** What reads a line: the farm's `studio.tts` (OmniVoice), word timings aligned with WhisperX. */
-export const VOICE_ENGINE = "farm:studio.tts@omnivoice+align";
+/**
+ * What reads a line: the farm's `studio.tts` (OmniVoice), word timings aligned with WhisperX. A change in how the farm
+ * reads changes it, so every line is read again: `@32` since render worker 0.14.10 reads with 32 steps, not 10 (lines
+ * read with 10 slurred and swallowed words). Deploy that worker first: a line read by an older one would keep this key.
+ */
+export const VOICE_ENGINE = "farm:studio.tts@omnivoice@32+align";
 
 export interface VoiceLine { key: string; duration_s: number; words: { word: string; start: number; end: number }[]; language: string; path: string }
 
