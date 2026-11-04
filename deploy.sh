@@ -10,7 +10,12 @@ if [[ ! -f .env ]]; then
   echo "Thieu .env (sao chep .env.example roi dien)." >&2
   exit 1
 fi
-farm_dir=$(grep -E '^AG_FARM_DIR=' .env | cut -d= -f2- || true)
+# .env sua tren Windows co CRLF: \r dinh vao moi gia tri (ca docker compose doc), nen bo di truoc.
+if grep -qU $'\r' .env; then
+  echo "Canh bao: .env co ket thuc dong CRLF, doi sang LF." >&2
+  sed -i 's/\r$//' .env
+fi
+farm_dir=$(grep -E '^AG_FARM_DIR=' .env | cut -d= -f2- | tr -d '\r' || true)
 if [[ ! -f "${farm_dir:-../ag-farm}/package.json" ]]; then
   echo "Khong thay checkout ag-farm o ${farm_dir:-../ag-farm} (AG_FARM_DIR)." >&2
   exit 1
