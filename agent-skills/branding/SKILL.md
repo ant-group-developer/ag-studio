@@ -83,5 +83,8 @@ thể đổi riêng bằng `color_match` trong kế hoạch dựng.
 - **Thumbnail**: khung hình nên chọn, cảm xúc, bảng màu (chữ, viền, nhấn), điều nên/không nên.
 - **Chữ trên video**: khi nào hiện (tên địa danh, tiêu đề phần…), tối đa bao nhiêu ký tự một dòng.
 
+Người dùng muốn logo, banner hay avatar thì tạo bằng tool `channel_art_make` (prompt tiếng Anh theo bảng màu và phong cách vừa ghi;
+banner lấy logo đã có làm `references`), rồi mở ảnh bằng Read xem lại trước khi báo.
+
 Sau khi ghi: kiểm file bằng tool `validate_file` (nếu có) rồi sửa đến khi hết lỗi; tóm tắt cho người dùng và đưa 3 tiêu đề
 mẫu để họ cảm nhận.

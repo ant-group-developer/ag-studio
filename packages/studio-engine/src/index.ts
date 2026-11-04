@@ -12,6 +12,7 @@ export { RENDER_MACHINES, renderRequirements, type RenderMachine } from "@harnes
 export * from "./youtube-research.js";
 export * from "./team-skills.js";
 export * from "./thumbnail-render.js";
+export * from "./codex-image.js";
 export * from "./settings.js";
 export * from "./site-name.js";
 export * from "./audit-log.js";
@@ -84,5 +85,6 @@ export * from "./workspace/video-look.js";
 export * from "./workspace/music-beats.js";
 export * from "./agent/timeline-tools.js";
 export * from "./workspace/thumbnails.js";
+export * from "./workspace/images.js";
 export * from "./workspace/style-watch.js";
 export * from "./workspace/reference-fetch.js";

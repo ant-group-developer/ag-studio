@@ -8,6 +8,8 @@ description: Viết gói YouTube của một video videos/<id>/youtube-kit.md �
 Căn cứ: `videos/<id>/brief.md`, kế hoạch dựng/timeline của video (cảnh thật có trong video), `channel/branding.md` (công
 thức tiêu đề, từ cấm, hashtag của kênh, quy tắc thumbnail), `research/report.md` (mẫu tiêu đề đang chạy tốt).
 **Chỉ hứa điều video thật sự có**: tiêu đề và thumbnail không được nói cảnh mà timeline không có.
+Người dùng muốn thumbnail đẹp hơn khung gốc thì `thumbnail_make` với `prompt` (tiếng Anh: ánh sáng, màu, không khí) làm thumbnail AI
+từ chính khung đó; mỗi ảnh 1–4 phút, tốn hạn mức ChatGPT của nhóm, nên hỏi trước, đừng tự làm cả 3 ý tưởng bằng AI.
 Kênh chưa có `channel/branding.md` (hoặc còn nháp, có lỗi): vẫn viết được — theo `CLAUDE.md` và `research/report.md`; nói
 rõ trong chat là kênh chưa có branding nên tiêu đề/thumbnail chưa theo công thức của kênh, và gợi ý làm Branding ở luồng
 Kênh. Đừng tự viết branding trong luồng video.
