@@ -8,6 +8,7 @@ import type {
   ErrorGroup, FarmErrorGroup, JobCount, RenderKindStats, RenderNodeStats, SlowRender, StuckJob, VideoFlagSeverity, VideoQualityRow,
 } from "../../api/diagnostics-types";
 import { useAiTranslation } from "../common/assistant-name";
+import { PAGE_TABLE_STICKY } from "../../helpers/sticky-table-header";
 import { DailyBars } from "../stats/DailyBars";
 import "../stats/stats.css";
 import "./diagnostics.css";
@@ -122,7 +123,7 @@ function OverviewTab({ data, loading, num, when, dayLabel, from, to }: {
     for (let d = startOfDay(from); d < to; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) days.push({ day: ymd(d), value: byDay.get(ymd(d)) ?? 0 });
     return days;
   }, [data, from.getTime(), to.getTime()]);
-  if (!data) return <Table loading={loading} dataSource={[]} />;
+  if (!data) return <Table sticky={PAGE_TABLE_STICKY} loading={loading} dataSource={[]} />;
   const jobs = sumJobs(data.jobs);
   const failed = sumJobs(data.jobs, undefined, "failed");
   const prevJobs = sumJobs(data.previousJobs);
@@ -168,11 +169,11 @@ function OverviewTab({ data, loading, num, when, dayLabel, from, to }: {
         <div className="ws-stats__charthead"><h2>{t("ws.diag.overview.byDay")}</h2></div>
         <DailyBars data={series} format={(v) => num.format(v)} label={t("ws.diag.overview.jobsFailed")} dayLabel={dayLabel} />
       </section>
-      <Table size="small" rowKey="kind" columns={columns} dataSource={rows} pagination={false} locale={{ emptyText: <Empty description={t("ws.diag.noData")} /> }} />
+      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="kind" columns={columns} dataSource={rows} pagination={false} locale={{ emptyText: <Empty description={t("ws.diag.noData")} /> }} />
       {data.stuck.length ? (
         <section>
           <h2 className="ws-diag__h2">{t("ws.diag.overview.stuckTitle")}</h2>
-          <Table size="small" rowKey="id" columns={stuckColumns} dataSource={data.stuck} pagination={false} />
+          <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="id" columns={stuckColumns} dataSource={data.stuck} pagination={false} />
         </section>
       ) : null}
       {data.accounts.length ? (
@@ -213,7 +214,7 @@ function ErrorsTab({ data, loading, when }: {
         {data ? <span className="ws-hint">{t("ws.diag.errors.total", { count: data.total, groups: data.groups.length })}</span> : null}
       </div>
       {data?.truncated ? <Alert type="info" showIcon message={t("ws.diag.errors.truncated")} /> : null}
-      <Table size="small" rowKey="key" loading={loading} columns={columns} dataSource={groups} pagination={{ pageSize: 50, hideOnSinglePage: true }}
+      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="key" loading={loading} columns={columns} dataSource={groups} pagination={{ pageSize: 50, hideOnSinglePage: true }}
         locale={{ emptyText: <Empty description={t("ws.diag.noData")} /> }}
         expandable={{ expandedRowRender: (g) => (
           <ul className="ws-diag__examples" aria-label={t("ws.diag.errors.examples")}>
@@ -279,16 +280,16 @@ function RendersTab({ data, loading, when }: {
   ];
   return (
     <div className="ws-diag__tab">
-      <Table size="small" rowKey="kind" loading={loading} columns={kindColumns} dataSource={(data?.kinds ?? []).filter((k) => k.total || prev(k.kind)?.total)} pagination={false}
+      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="kind" loading={loading} columns={kindColumns} dataSource={(data?.kinds ?? []).filter((k) => k.total || prev(k.kind)?.total)} pagination={false}
         locale={{ emptyText: <Empty description={t("ws.diag.noData")} /> }} />
       <section><h2 className="ws-diag__h2">{t("ws.diag.renders.nodes")}</h2>
-        <Table size="small" rowKey="nodeId" columns={nodeColumns} dataSource={data?.nodes ?? []} pagination={false} /></section>
+        <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="nodeId" columns={nodeColumns} dataSource={data?.nodes ?? []} pagination={false} /></section>
       <section><h2 className="ws-diag__h2">{t("ws.diag.renders.farm")}</h2>
         {data?.farmError ? <Alert type="warning" showIcon message={t("ws.diag.renders.farmDown", { message: data.farmError })} /> : null}
         {data?.farm?.truncated ? <Alert type="info" showIcon message={t("ws.diag.renders.farmTruncated")} /> : null}
-        <Table size="small" rowKey={(g) => `${g.type}|${g.code}|${g.signature}`} columns={farmColumns} dataSource={data?.farm?.errors ?? []} pagination={{ pageSize: 20, hideOnSinglePage: true }} /></section>
+        <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey={(g) => `${g.type}|${g.code}|${g.signature}`} columns={farmColumns} dataSource={data?.farm?.errors ?? []} pagination={{ pageSize: 20, hideOnSinglePage: true }} /></section>
       <section><h2 className="ws-diag__h2">{t("ws.diag.renders.slowest")}</h2>
-        <Table size="small" rowKey="id" columns={slowColumns} dataSource={data?.slowest ?? []} pagination={false} /></section>
+        <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="id" columns={slowColumns} dataSource={data?.slowest ?? []} pagination={false} /></section>
     </div>
   );
 }
@@ -330,7 +331,7 @@ function VideosTab({ data, loading }: { data: Awaited<ReturnType<ReturnType<type
           {flag ? <Button size="small" type="link" onClick={() => setFlag(null)}>{t("ws.diag.videos.clear")}</Button> : null}
         </div>
       ) : null}
-      <Table size="small" rowKey="videoId" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 50, hideOnSinglePage: true }}
+      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="videoId" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 50, hideOnSinglePage: true }}
         locale={{ emptyText: <Empty description={t("ws.diag.noData")} /> }} />
     </div>
   );
