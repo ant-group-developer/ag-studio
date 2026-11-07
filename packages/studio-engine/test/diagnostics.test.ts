@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createProject, createThread, createVideo, diagnosticsErrors, diagnosticsOverview, errorEventRecorder, errorSignature, groupErrors, previousPeriod, quantile,
-  diagnosticsRenders, farmJobsSummary, sweepErrorEvents, type FarmJobLike, type StudioDb,
+  diagnosticsRenders, farmJobsSummary, periodDayRange, sweepErrorEvents, type FarmJobLike, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -187,5 +187,13 @@ describe("render statistics", () => {
     expect(s.byType).toEqual([{ type: "studio.render", status: "completed", n: 2 }, { type: "studio.render", status: "failed", n: 2 }]);
     expect(s.retried).toEqual({ "studio.render": 1 });
     expect(s.errors).toEqual([expect.objectContaining({ code: "worker_error", signature: "Part N PUT failed: HTTP 502", count: 2, nodes: ["n1", "n2"] })]);
+  });
+});
+
+describe("days of a period", () => {
+  it("in the viewer's zone, the last day before the exclusive end; JSON keys stay in a signature", () => {
+    expect(periodDayRange({ from: "2026-10-08T17:00:00.000Z", to: "2026-10-23T17:00:00.000Z", tzOffsetMinutes: 420 })).toEqual({ first: "2026-10-09", last: "2026-10-23" });
+    expect(errorSignature('Sign request failed: HTTP 404 - {"data":null,"error":{"code":"not_found","message":"the job is not in this production any more"}}'))
+      .toBe('Sign request failed: HTTP 404 - {"data":null,"error":{"code":"not_found","message":"…"}}');
   });
 });

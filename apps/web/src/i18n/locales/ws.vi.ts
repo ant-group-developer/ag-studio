@@ -787,7 +787,7 @@ export const wsVi = {
       sources: { job: "Job", turn: "Lượt agent", action: "Thẻ xác nhận", http: "API", tool: "Tool của agent", log: "Log máy chủ" },
     },
     renders: {
-      kind: "Loại", total: "Tổng", done: "Xong", failed: "Lỗi", wall: "Thời gian p50 / p90", wait: "Chờ máy p50", speed: "Tốc độ p50",
+      kind: "Loại", total: "Tổng", done: "Xong", failed: "Lỗi", wall: "Thời gian p50 / p90", wallVsVideo: "Thời gian render / độ dài video", wait: "Chờ máy p50", speed: "Tốc độ p50",
       speedHint: "giây video làm được mỗi giây (trên 1: nhanh hơn thời gian thực)", retried: "Thử lại", heights: "Độ phân giải",
       nodes: "Theo máy", node: "Máy", jobs: "Job", finals: "Bản cuối", finalWall: "Bản cuối p50", slowest: "Lâu nhất", farm: "Lỗi phía farm",
       farmDown: "Không đọc được farm: {{message}}", code: "Mã", nodesOf: "Máy", farmTruncated: "Farm có nhiều job hơn 5000: chỉ đọc 5000 job đầu.",

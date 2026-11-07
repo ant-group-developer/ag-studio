@@ -209,7 +209,7 @@ const SIGNATURE_LENGTH = 160;
 /**
  * The shape of an error message, so the same failure with other ids, numbers, paths or an HTML error page groups as
  * one: whitespace collapsed, an HTML page cut to `<html>`, uuids `<id>`, long hex `<hex>`, numbers `N` (an HTTP status
- * stays), quoted strings `"…"`, cut to 160 characters.
+ * stays), quoted strings of 25 characters or more `"…"` (JSON keys stay), cut to 160 characters.
  */
 export function errorSignature(message: string): string {
   let s = message.replace(/\s+/g, " ").trim();
@@ -218,7 +218,7 @@ export function errorSignature(message: string): string {
   s = s
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>")
     .replace(/\b(?:0x)?(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/gi, "<hex>")
-    .replace(/"[^"]{0,200}"/g, '"…"')
+    .replace(/"[^"]{25,200}"/g, '"…"')
     .replace(/(?<!HTTP |HTTP\/|status |code )\b\d+(?:[.,]\d+)?\b/gi, "N");
   return s.length > SIGNATURE_LENGTH ? `${s.slice(0, SIGNATURE_LENGTH - 1)}…` : s;
 }
@@ -309,6 +309,12 @@ export async function diagnosticsErrors(db: StudioDb, p: DiagnosticsPeriod): Pro
 
 /** Days between two ISO times, for the API's range check. */
 export function periodDays(p: DiagnosticsPeriod): number { return (Date.parse(p.to) - Date.parse(p.from)) / DAY_MS; }
+
+/** The first and last day of a period in the viewer's zone (`to` is exclusive), `YYYY-MM-DD`. */
+export function periodDayRange(p: DiagnosticsPeriod): { first: string; last: string } {
+  const off = (p.tzOffsetMinutes ?? 0) * 60_000;
+  return { first: new Date(Date.parse(p.from) + off).toISOString().slice(0, 10), last: new Date(Date.parse(p.to) - 1 + off).toISOString().slice(0, 10) };
+}
 export { seconds as secondsBetween, round as roundTo };
 
 // ---------------------------------------------------------------------------------------------------------------

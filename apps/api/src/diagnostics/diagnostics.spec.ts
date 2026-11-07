@@ -81,9 +81,9 @@ describe('DiagnosticsController export', () => {
       };
       const json = res();
       await ctl.export({ from: '2026-11-01T00:00:00Z', to: '2026-11-07T00:00:00Z' }, req('auth0|admin'), json as never);
-      expect(json.out.headers['Content-Disposition']).toBe('attachment; filename="chan-doan-2026-11-01-2026-11-07.json"');
+      expect(json.out.headers['Content-Disposition']).toBe('attachment; filename="chan-doan-2026-11-01-2026-11-06.json"');
       const bundle = JSON.parse(json.out.body);
-      expect(bundle.report).toContain('# Chẩn đoán Studio 2026-11-01 → 2026-11-07');
+      expect(bundle.report).toContain('# Chẩn đoán Studio 2026-11-01 → 2026-11-06');
       expect(Object.keys(bundle)).toEqual(expect.arrayContaining(['overview', 'errors', 'renders', 'videos']));
       expect(bundle.chats).toBeUndefined();
       const md = res();

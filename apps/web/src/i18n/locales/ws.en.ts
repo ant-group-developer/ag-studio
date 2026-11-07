@@ -790,7 +790,7 @@ export const wsEn: Messages<typeof wsVi> = {
       sources: { job: "Job", turn: "Agent turn", action: "Card", http: "API", tool: "Agent tool", log: "Server log" },
     },
     renders: {
-      kind: "Kind", total: "Total", done: "Done", failed: "Failed", wall: "Time p50 / p90", wait: "Wait p50", speed: "Speed p50",
+      kind: "Kind", total: "Total", done: "Done", failed: "Failed", wall: "Time p50 / p90", wallVsVideo: "Render time / video length", wait: "Wait p50", speed: "Speed p50",
       speedHint: "seconds of video made per second (above 1: faster than real time)", retried: "Retried", heights: "Resolution",
       nodes: "By machine", node: "Machine", jobs: "Jobs", finals: "Finals", finalWall: "Final p50", slowest: "Slowest", farm: "Farm errors",
       farmDown: "Farm out of reach: {{message}}", code: "Code", nodesOf: "Machines", farmTruncated: "More than 5000 farm jobs: only the first 5000 are read.",

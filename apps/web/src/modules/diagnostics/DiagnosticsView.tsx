@@ -197,7 +197,7 @@ function ErrorsTab({ data, loading, when }: {
   const sourceLabel = (s: string) => (s === "all" ? t("ws.diag.errors.all") : t(`ws.diag.errors.sources.${sourceGroup(s)}`, { defaultValue: s }));
   const columns: TableColumnsType<ErrorGroup> = [
     { key: "source", title: t("ws.diag.errors.source"), width: 120, render: (_, g) => <Tag>{g.source.startsWith("log:") ? g.source.slice(4) : sourceLabel(g.source)}</Tag> },
-    { key: "signature", title: t("ws.diag.errors.signature"), render: (_, g) => (
+    { key: "signature", title: t("ws.diag.errors.signature"), width: 420, render: (_, g) => (
       <span className="ws-diag__sig">{g.trend === "new" ? <Tag color="red">{t("ws.diag.errors.new")}</Tag> : null}{g.signature}</span>
     ) },
     { key: "kinds", title: t("ws.diag.errors.kinds"), width: 160, render: (_, g) => <span className="ws-hint">{g.kinds.slice(0, 3).join(", ")}{g.kinds.length > 3 ? "…" : ""}</span> },
@@ -214,7 +214,7 @@ function ErrorsTab({ data, loading, when }: {
         {data ? <span className="ws-hint">{t("ws.diag.errors.total", { count: data.total, groups: data.groups.length })}</span> : null}
       </div>
       {data?.truncated ? <Alert type="info" showIcon message={t("ws.diag.errors.truncated")} /> : null}
-      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="key" loading={loading} columns={columns} dataSource={groups} pagination={{ pageSize: 50, hideOnSinglePage: true }}
+      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="key" loading={loading} scroll={{ x: 1000 }} columns={columns} dataSource={groups} pagination={{ pageSize: 50, hideOnSinglePage: true }}
         locale={{ emptyText: <Empty description={t("ws.diag.noData")} /> }}
         expandable={{ expandedRowRender: (g) => (
           <ul className="ws-diag__examples" aria-label={t("ws.diag.errors.examples")}>
@@ -266,7 +266,7 @@ function RendersTab({ data, loading, when }: {
   const farmColumns: TableColumnsType<FarmErrorGroup> = [
     { key: "type", title: t("ws.diag.renders.kind"), dataIndex: "type" },
     { key: "code", title: t("ws.diag.renders.code"), render: (_, g) => <Tag>{g.code}</Tag> },
-    { key: "sig", title: t("ws.diag.errors.signature"), render: (_, g) => <Tooltip title={<pre className="ws-diag__tip">{g.example}</pre>}><span className="ws-diag__sig">{g.signature}</span></Tooltip> },
+    { key: "sig", title: t("ws.diag.errors.signature"), width: 360, render: (_, g) => <Tooltip title={<pre className="ws-diag__tip">{g.example}</pre>}><span className="ws-diag__sig">{g.signature}</span></Tooltip> },
     { key: "count", title: t("ws.diag.errors.count"), align: "right", dataIndex: "count" },
     { key: "nodes", title: t("ws.diag.renders.nodesOf"), render: (_, g) => <span className="ws-hint">{g.nodes.join(", ")}</span> },
     { key: "last", title: t("ws.diag.errors.last"), render: (_, g) => when(g.lastAt) },
@@ -275,19 +275,19 @@ function RendersTab({ data, loading, when }: {
     { key: "video", title: t("ws.diag.videos.video"), render: (_, r) => (r.videoId ? <Link to={`/p/${r.projectId}/v/${r.videoId}`}>{r.videoTitle ?? r.videoId}</Link> : r.projectName) },
     { key: "kind", title: t("ws.diag.renders.kind"), render: (_, r) => <>{kindLabel(r.kind)} {r.height ? <Tag>{r.height}p</Tag> : null}</> },
     { key: "node", title: t("ws.diag.renders.node"), render: (_, r) => data?.nodes.find((n) => n.nodeId === r.nodeId)?.name ?? r.nodeId ?? "—" },
-    { key: "wall", title: t("ws.diag.renders.wall"), align: "right", render: (_, r) => `${mins(r.wallSeconds)}${r.videoSeconds ? ` / ${mins(r.videoSeconds)}` : ""}` },
+    { key: "wall", title: t("ws.diag.renders.wallVsVideo"), align: "right", render: (_, r) => `${mins(r.wallSeconds)}${r.videoSeconds ? ` / ${mins(r.videoSeconds)}` : ""}` },
     { key: "at", title: t("ws.diag.errors.last"), render: (_, r) => when(r.finishedAt) },
   ];
   return (
     <div className="ws-diag__tab">
-      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="kind" loading={loading} columns={kindColumns} dataSource={(data?.kinds ?? []).filter((k) => k.total || prev(k.kind)?.total)} pagination={false}
+      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="kind" loading={loading} scroll={{ x: 900 }} columns={kindColumns} dataSource={(data?.kinds ?? []).filter((k) => k.total || prev(k.kind)?.total)} pagination={false}
         locale={{ emptyText: <Empty description={t("ws.diag.noData")} /> }} />
       <section><h2 className="ws-diag__h2">{t("ws.diag.renders.nodes")}</h2>
         <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="nodeId" columns={nodeColumns} dataSource={data?.nodes ?? []} pagination={false} /></section>
       <section><h2 className="ws-diag__h2">{t("ws.diag.renders.farm")}</h2>
         {data?.farmError ? <Alert type="warning" showIcon message={t("ws.diag.renders.farmDown", { message: data.farmError })} /> : null}
         {data?.farm?.truncated ? <Alert type="info" showIcon message={t("ws.diag.renders.farmTruncated")} /> : null}
-        <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey={(g) => `${g.type}|${g.code}|${g.signature}`} columns={farmColumns} dataSource={data?.farm?.errors ?? []} pagination={{ pageSize: 20, hideOnSinglePage: true }} /></section>
+        <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey={(g) => `${g.type}|${g.code}|${g.signature}`} scroll={{ x: 900 }} columns={farmColumns} dataSource={data?.farm?.errors ?? []} pagination={{ pageSize: 20, hideOnSinglePage: true }} /></section>
       <section><h2 className="ws-diag__h2">{t("ws.diag.renders.slowest")}</h2>
         <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="id" columns={slowColumns} dataSource={data?.slowest ?? []} pagination={false} /></section>
     </div>
@@ -300,7 +300,7 @@ function VideosTab({ data, loading }: { data: Awaited<ReturnType<ReturnType<type
   const flagLabel = (code: string) => t(`ws.diag.flag.${code}`, { defaultValue: code });
   const rows = (data?.rows ?? []).filter((r) => !flag || r.flags.some((f) => f.code === flag));
   const columns: TableColumnsType<VideoQualityRow> = [
-    { key: "video", title: t("ws.diag.videos.video"), render: (_, r) => (
+    { key: "video", title: t("ws.diag.videos.video"), width: 260, render: (_, r) => (
       <span className="ws-diag__video"><Link to={`/p/${r.projectId}/v/${r.videoId}`}>{r.videoTitle}</Link><span className="ws-hint">{r.projectName}</span></span>
     ) },
     { key: "render", title: t("ws.diag.videos.render"), width: 110, render: (_, r) => <>{r.kind === "render_final" ? t("ws.diag.videos.final") : t("ws.diag.videos.preview")} {r.height ? <Tag>{r.height}p</Tag> : null}</> },
@@ -331,7 +331,7 @@ function VideosTab({ data, loading }: { data: Awaited<ReturnType<ReturnType<type
           {flag ? <Button size="small" type="link" onClick={() => setFlag(null)}>{t("ws.diag.videos.clear")}</Button> : null}
         </div>
       ) : null}
-      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="videoId" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 50, hideOnSinglePage: true }}
+      <Table sticky={PAGE_TABLE_STICKY} size="small" rowKey="videoId" loading={loading} scroll={{ x: 1100 }} columns={columns} dataSource={rows} pagination={{ pageSize: 50, hideOnSinglePage: true }}
         locale={{ emptyText: <Empty description={t("ws.diag.noData")} /> }} />
     </div>
   );

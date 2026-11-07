@@ -2,7 +2,7 @@
  * The admin's diagnostics of a period as one file to keep or hand to Claude (plan 2026-11-07 prod-diagnostics P5):
  * every section's data, a Markdown summary in Vietnamese, and, when asked, the chats of the videos measured.
  */
-import type { DiagnosticsErrors, DiagnosticsOverview, DiagnosticsPeriod, DiagnosticsRenders, FarmJobsSummary } from "./diagnostics.js";
+import { periodDayRange, type DiagnosticsErrors, type DiagnosticsOverview, type DiagnosticsPeriod, type DiagnosticsRenders, type FarmJobsSummary } from "./diagnostics.js";
 import type { StudioDb } from "./studio-db.js";
 import type { VideoQuality } from "./video-quality.js";
 
@@ -54,7 +54,8 @@ export function flagLabel(code: string): string { return FLAG_LABELS[code] ?? co
 export function diagnosticsReportMarkdown(b: DiagnosticsBundle): string {
   const L: string[] = [];
   const { overview: o, errors: e, renders: r, videos: v } = b;
-  L.push(`# Chẩn đoán Studio ${day(b.period.from)} → ${day(b.period.to)}`, "", `Tạo lúc ${b.generatedAt}. So với kỳ trước cùng độ dài.`, "");
+  const days = periodDayRange(b.period);
+  L.push(`# Chẩn đoán Studio ${days.first} → ${days.last}`, "", `Tạo lúc ${b.generatedAt}. So với kỳ trước cùng độ dài.`, "");
 
   L.push("## Tổng quan", "", "| Loại job | Tổng | Lỗi | Tỉ lệ lỗi | Kỳ trước (lỗi/tổng) |", "|---|---:|---:|---:|---:|");
   const kinds = [...new Set([...o.jobs, ...o.previousJobs].map((j) => j.kind))].sort();

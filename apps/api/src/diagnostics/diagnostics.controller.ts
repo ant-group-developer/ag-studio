@@ -2,7 +2,7 @@ import { BadRequestException, Controller, Get, Query, Req, Res } from '@nestjs/c
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
-  DIAGNOSTICS_MAX_DAYS, diagnosticsErrors, diagnosticsReportMarkdown, videoChats, type DiagnosticsBundle, diagnosticsOverview, diagnosticsRenders, farmJobsSummary, periodDays, videoQuality, type DiagnosticsPeriod, type FarmJobsSummary,
+  DIAGNOSTICS_MAX_DAYS, diagnosticsErrors, diagnosticsReportMarkdown, videoChats, type DiagnosticsBundle, diagnosticsOverview, diagnosticsRenders, farmJobsSummary, periodDayRange, periodDays, videoQuality, type DiagnosticsPeriod, type FarmJobsSummary,
 } from '@ag-studio/engine';
 import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from '../studio/engine.service';
@@ -106,7 +106,8 @@ export class DiagnosticsController {
       ...(chats === '1' ? { chats: await videoChats(this.engine.db, videos.rows.map((v) => v.videoId), p) } : {}),
     };
     const report = diagnosticsReportMarkdown(bundle);
-    const name = `chan-doan-${p.from.slice(0, 10)}-${p.to.slice(0, 10)}`;
+    const days = periodDayRange(p);
+    const name = `chan-doan-${days.first}-${days.last}`;
     if (format === 'md') {
       res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${name}.md"`);
