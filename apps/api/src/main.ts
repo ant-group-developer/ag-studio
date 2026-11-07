@@ -22,11 +22,12 @@ async function bootstrap() {
   );
   app.useGlobalInterceptors(new ApiResponseInterceptor(app.get(Reflector)));
   const siteName = app.get(SiteNameService);
-  // a 5xx is also kept for the admin's diagnostics (error_events, migration 0012)
-  const errors = errorEventRecorder({ db: app.get(StudioDbService).db, service: 'studio-api' });
+  // a 5xx is also kept for the admin's diagnostics (error_events, migration 0012), once the database is open
+  const errors = errorEventRecorder({ service: 'studio-api' });
   app.useGlobalFilters(new ApiExceptionFilter(() => siteName.current(), errors));
   const port = process.env['PORT'] ?? 3100;
   await app.listen(port);
+  errors.attach(app.get(StudioDbService).db);
   console.log(`AG Studio API listening on port ${port}`);
 }
 
