@@ -68,3 +68,31 @@ describe('DiagnosticsController renders', () => {
     }
   });
 });
+
+describe('DiagnosticsController export', () => {
+  it('one file: JSON with the Markdown summary, or the summary alone; chats only when asked', async () => {
+    const s = await realStudio();
+    try {
+      const engine = { ...s.engine, core: s.engine.core, db: s.engine.db, farmNodes: async () => ({ nodes: [] }), farmJobsSince: async () => ({ jobs: [], truncated: false }) } as unknown as EngineService;
+      const ctl = new DiagnosticsController(engine, new StudioAdminService(accounts, s.db), { root: '/nowhere' } as WorkspaceService);
+      const res = () => {
+        const out = { headers: {} as Record<string, string>, body: '' };
+        return { out, setHeader: (k: string, v: string) => { out.headers[k] = v; }, send: (b: string) => { out.body = b; } };
+      };
+      const json = res();
+      await ctl.export({ from: '2026-11-01T00:00:00Z', to: '2026-11-07T00:00:00Z' }, req('auth0|admin'), json as never);
+      expect(json.out.headers['Content-Disposition']).toBe('attachment; filename="chan-doan-2026-11-01-2026-11-07.json"');
+      const bundle = JSON.parse(json.out.body);
+      expect(bundle.report).toContain('# Chẩn đoán Studio 2026-11-01 → 2026-11-07');
+      expect(Object.keys(bundle)).toEqual(expect.arrayContaining(['overview', 'errors', 'renders', 'videos']));
+      expect(bundle.chats).toBeUndefined();
+      const md = res();
+      await ctl.export({ from: '2026-11-01T00:00:00Z', to: '2026-11-07T00:00:00Z', format: 'md', chats: '1' }, req('auth0|admin'), md as never);
+      expect(md.out.headers['Content-Type']).toBe('text/markdown; charset=utf-8');
+      expect(md.out.body).toContain('## Chất lượng video (0 video)');
+      await expect(ctl.export({}, req('auth0|owner'), res() as never)).rejects.toMatchObject({ status: 403 });
+    } finally {
+      await s.close();
+    }
+  });
+});

@@ -20,6 +20,7 @@ export * from "./claude-stats.js";
 export * from "./diagnostics.js";
 export * from "./error-events.js";
 export * from "./video-quality.js";
+export * from "./diagnostics-report.js";
 export * from "./claude-turns.js";
 export * from "./claude-slots.js";
 export * from "./claude-accounts.js";

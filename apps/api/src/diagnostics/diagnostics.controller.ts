@@ -1,8 +1,8 @@
-import { BadRequestException, Controller, Get, Query, Req } from '@nestjs/common';
-import type { Request } from 'express';
+import { BadRequestException, Controller, Get, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { z } from 'zod';
 import {
-  DIAGNOSTICS_MAX_DAYS, diagnosticsErrors, diagnosticsOverview, diagnosticsRenders, farmJobsSummary, periodDays, videoQuality, type DiagnosticsPeriod, type FarmJobsSummary,
+  DIAGNOSTICS_MAX_DAYS, diagnosticsErrors, diagnosticsReportMarkdown, videoChats, type DiagnosticsBundle, diagnosticsOverview, diagnosticsRenders, farmJobsSummary, periodDays, videoQuality, type DiagnosticsPeriod, type FarmJobsSummary,
 } from '@ag-studio/engine';
 import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from '../studio/engine.service';
@@ -15,6 +15,12 @@ const PeriodQuerySchema = z.object({
   to: z.string().datetime({ offset: true }).optional(),
   /** Minutes east of UTC of the viewer, for the days of the series. */
   tz: z.coerce.number().int().min(-14 * 60).max(14 * 60).optional(),
+}).strict();
+const ExportQuerySchema = PeriodQuerySchema.extend({
+  /** `md`: the summary alone; `json` (default): every section's data with the summary in `report`. */
+  format: z.enum(['json', 'md']).default('json'),
+  /** `1`: also the chats of the videos measured (people's messages: only when asked). */
+  chats: z.enum(['0', '1']).default('0'),
 }).strict();
 
 /**
@@ -29,9 +35,9 @@ export class DiagnosticsController {
     private readonly workspace: WorkspaceService,
   ) {}
 
-  protected async period(raw: unknown, req: Request): Promise<DiagnosticsPeriod> {
+  protected async period(raw: unknown, req: Request, schema: z.ZodType<z.infer<typeof PeriodQuerySchema>> = PeriodQuerySchema): Promise<DiagnosticsPeriod> {
     await this.admin.requireAdmin(req);
-    const q = parseBody(PeriodQuerySchema, raw);
+    const q = parseBody(schema, raw);
     const to = q.to ? new Date(q.to) : new Date(this.engine.core.clock.now());
     const from = q.from ? new Date(q.from) : new Date(to.getTime() - 14 * DAY_MS);
     const p: DiagnosticsPeriod = { from: from.toISOString(), to: to.toISOString(), ...(q.tz !== undefined ? { tzOffsetMinutes: q.tz } : {}) };
@@ -81,6 +87,35 @@ export class DiagnosticsController {
   async videos(@Query() raw: unknown, @Req() req: Request) {
     const p = await this.period(raw, req);
     return { ...p, ...(await videoQuality(this.engine.db, p, { workspacesRoot: this.workspace.root })) };
+  }
+
+  /**
+   * Every section of the period in one file to keep or give to Claude: JSON with the Markdown summary in `report`
+   * (`format=md`: the summary alone), the chats of the videos measured with `chats=1`.
+   */
+  @Get('export')
+  async export(@Query() raw: unknown, @Req() req: Request, @Res() res: Response): Promise<void> {
+    const q = parseBody(ExportQuerySchema, raw);
+    const { format, chats, ...period } = q;
+    const p = await this.period(period, req);
+    const [overview, errors, renders, videos] = [
+      await this.overview(period, req), await this.errors(period, req), await this.renders(period, req), await this.videos(period, req),
+    ];
+    const bundle: DiagnosticsBundle = {
+      period: p, generatedAt: new Date(this.engine.core.clock.now()).toISOString(), overview, errors, renders, videos,
+      ...(chats === '1' ? { chats: await videoChats(this.engine.db, videos.rows.map((v) => v.videoId), p) } : {}),
+    };
+    const report = diagnosticsReportMarkdown(bundle);
+    const name = `chan-doan-${p.from.slice(0, 10)}-${p.to.slice(0, 10)}`;
+    if (format === 'md') {
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${name}.md"`);
+      res.send(report);
+      return;
+    }
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}.json"`);
+    res.send(JSON.stringify({ report, ...bundle }, null, 2));
   }
 
   @Get('errors')

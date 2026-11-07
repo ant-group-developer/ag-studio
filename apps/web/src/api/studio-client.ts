@@ -1,7 +1,8 @@
 import { useAuthToken } from "../auth/use-auth-token";
 import type { Activity, YoutubeBlock } from "./workspace-client";
 
-import { buildQuery, putToBucket, request, StudioHttpError, uploadType, type OnProgress, type UploadLink } from "./http";
+import { buildQuery, putToBucket, request, requestBlob, StudioHttpError, uploadType, type OnProgress, type UploadLink } from "./http";
+import type { DiagnosticsErrors, DiagnosticsOverview, DiagnosticsQuery, DiagnosticsRenders, DiagnosticsVideos } from "./diagnostics-types";
 
 export { StudioHttpError };
 
@@ -291,6 +292,25 @@ export function createStudioClient(getAccessToken: () => Promise<string>) {
     },
     listAuditActors(teamId?: string): Promise<{ actors: UserSummary[] }> {
       return request(getAccessToken, "GET", `/api/audit/actors${buildQuery({ teamId })}`);
+    },
+
+    /** The admin's diagnostics of a period (plan 2026-11-07): counts, grouped errors, renders, the videos made. */
+    getDiagnosticsOverview(q: DiagnosticsQuery): Promise<DiagnosticsOverview> {
+      return request(getAccessToken, "GET", `/api/studio/diagnostics/overview${buildQuery({ ...q })}`);
+    },
+    getDiagnosticsErrors(q: DiagnosticsQuery): Promise<DiagnosticsErrors> {
+      return request(getAccessToken, "GET", `/api/studio/diagnostics/errors${buildQuery({ ...q })}`);
+    },
+    getDiagnosticsRenders(q: DiagnosticsQuery): Promise<DiagnosticsRenders> {
+      return request(getAccessToken, "GET", `/api/studio/diagnostics/renders${buildQuery({ ...q })}`);
+    },
+    getDiagnosticsVideos(q: DiagnosticsQuery): Promise<DiagnosticsVideos> {
+      return request(getAccessToken, "GET", `/api/studio/diagnostics/videos${buildQuery({ ...q })}`);
+    },
+    /** The whole period as one file: `json` (data + summary) or `md` (the summary), the videos' chats with `chats`. */
+    exportDiagnostics(q: DiagnosticsQuery & { format: "json" | "md"; chats?: boolean }): Promise<Blob> {
+      const { chats, ...rest } = q;
+      return requestBlob(getAccessToken, `/api/studio/diagnostics/export${buildQuery({ ...rest, chats: chats ? "1" : "0" })}`);
     },
 
     /** Claude chat statistics over a period, grouped by team, project, video or person (same viewers as the log). */
