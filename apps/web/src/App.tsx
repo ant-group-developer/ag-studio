@@ -14,6 +14,7 @@ const TeamDetailPage = lazy(() => import("./pages/TeamDetailPage").then((m) => (
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const ClaudeAccountsPage = lazy(() => import("./pages/ClaudeAccountsPage").then((m) => ({ default: m.ClaudeAccountsPage })));
 const AuditPage = lazy(() => import("./pages/AuditPage").then((m) => ({ default: m.AuditPage })));
+const DiagnosticsPage = lazy(() => import("./pages/DiagnosticsPage").then((m) => ({ default: m.DiagnosticsPage })));
 const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
 const MusicLibraryPage = lazy(() => import("./pages/MusicLibraryPage").then((m) => ({ default: m.MusicLibraryPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
@@ -46,6 +47,7 @@ export function App() {
                     <Route path="/claude-accounts" element={<ClaudeAccountsPage />} />
                     <Route path="/audit" element={<AuditPage />} />
                     <Route path="/stats" element={<StatsPage />} />
+                    <Route path="/diagnostics" element={<DiagnosticsPage />} />
                     <Route path="/music" element={<MusicLibraryPage />} />
                     <Route path="/teams" element={<TeamsPage />} />
                     <Route path="/teams/:teamId" element={<TeamDetailPage />} />

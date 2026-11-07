@@ -177,6 +177,16 @@ describe('ApiExceptionFilter', () => {
     expect(statusOf(new AgGoClientError(403, { message: 'no folder access' }))).toBe(403);
   });
 
+  it('keeps a 5xx for the diagnostics, not a 4xx', () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const record = vi.fn(async () => undefined);
+    filter = new ApiExceptionFilter(undefined, { record });
+    runFilter(new HttpException('nope', HttpStatus.NOT_FOUND));
+    expect(record).not.toHaveBeenCalled();
+    runFilter(new Error('db down'), 'req-501');
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ service: 'studio-api', level: 'error', requestId: 'req-501', message: expect.stringContaining('500 INTERNAL_SERVER_ERROR: db down') }));
+  });
+
   it('logs every 5xx with its request id', () => {
     const spy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     runFilter(new Error('something broke'), 'req-500');

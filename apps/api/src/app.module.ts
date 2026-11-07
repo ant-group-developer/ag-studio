@@ -14,6 +14,7 @@ import { AgentToolsModule } from './agent-tools/agent-tools.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { SiteNameModule } from './ag-go/site-name.service';
 import { AuditModule } from './audit/audit.module';
+import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { AuditModule } from './audit/audit.module';
     WorkspaceModule,
     AgentToolsModule,
     AuditModule,
+    DiagnosticsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: Auth0Guard },

@@ -29,7 +29,7 @@ describe("ManageMenu", () => {
     open({ canReview: true, isAdmin: true });
     await screen.findByRole("link", { name: "Tài khoản Claude" });
     expect(links()).toEqual([
-      ["Thống kê", "/stats"], ["Nhật ký", "/audit"], ["Hàng đợi", "/queue"], ["Tài khoản Claude", "/claude-accounts"], ["Kho nhạc", "/music"],
+      ["Thống kê", "/stats"], ["Nhật ký", "/audit"], ["Hàng đợi", "/queue"], ["Tài khoản Claude", "/claude-accounts"], ["Chẩn đoán", "/diagnostics"], ["Kho nhạc", "/music"],
     ]);
   });
 

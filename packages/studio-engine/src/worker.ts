@@ -67,8 +67,10 @@ export interface StudioWorkerOptions {
   siteName?: () => string;
 }
 
-export function studioLogger(bindings: Record<string, unknown> = {}): HarnessLogger {
-  return createLogger({ redactor: new Redactor(() => []), sink: (l) => process.stderr.write(l + "\n"), bindings: { service: "studio-worker", ...bindings } });
+/** `onLine`: also given every line written (the worker keeps its warnings and errors in `error_events`). */
+export function studioLogger(bindings: Record<string, unknown> = {}, onLine?: (line: string) => void): HarnessLogger {
+  const sink = (l: string) => { process.stderr.write(l + "\n"); onLine?.(l); };
+  return createLogger({ redactor: new Redactor(() => []), sink, bindings: { service: "studio-worker", ...bindings } });
 }
 
 export interface StudioWorkerPool {

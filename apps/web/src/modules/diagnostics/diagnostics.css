@@ -1,0 +1,17 @@
+/* The admin's diagnostics of a period (/diagnostics) */
+.ws-diag__spacer { flex: 1; }
+.ws-diag__tab { display: flex; flex-direction: column; gap: 16px; }
+.ws-diag__h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.ws-diag__sig { font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.ws-diag__list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.ws-diag__examples { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.ws-diag__examples pre, .ws-diag__tip { margin: 4px 0 0; max-height: 200px; overflow: auto; padding: 6px 8px; border-radius: 6px; background: var(--ws-nav-bg);
+  font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-diag__tip { background: transparent; color: inherit; max-width: 480px; }
+.ws-diag__gone summary { cursor: pointer; color: var(--ws-muted); font-size: 13px; margin-bottom: 6px; }
+.ws-diag__video { display: flex; flex-direction: column; min-width: 0; }
+.ws-diag__flags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ws-diag__flagbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ws-diag__dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: var(--ws-faint); }
+.ws-diag__dot--error { background: var(--ws-bad-fg); }
+.ws-diag__dot--warning { background: #d48806; }

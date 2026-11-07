@@ -10,6 +10,7 @@
  * - Files a browser uploaded to the bucket (`uploads/…`) Studio never took, past `RAW_UPLOAD_HOURS`.
  * - Scratch folders a crashed worker left: `<dataRoot>/job-runs/<job>` of jobs no longer running and
  *   `<dataRoot>/agent-runs/<message>` of turns no longer running, past `SCRATCH_HOURS`.
+ * - Rows of the activity log and of `error_events`, past `auditDays`.
  * - Files people deleted from a project (`<workspace>/.trash/…`), past `workspaceDays`.
  */
 import { existsSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
@@ -18,6 +19,7 @@ import { RAW_UPLOADS_PREFIX, type StudioBucket } from "./bucket.js";
 import type { StudioDb } from "./studio-db.js";
 import { voicePath } from "./voice-store.js";
 import { sweepAuditLog } from "./audit-log.js";
+import { sweepErrorEvents } from "./error-events.js";
 import { BEATS_SUFFIX } from "./workspace/music-beats.js";
 
 export interface RetentionConfig {
@@ -32,7 +34,7 @@ export interface RetentionConfig {
 }
 export const DEFAULT_RETENTION: RetentionConfig = { workspaceDays: 14, voiceDays: 90, audioGraceDays: 7, auditDays: 90 };
 
-export interface CleanupReport { voiceLines: number; audioObjects: number; mediaObjects: number; rawUploads: number; scratch: number; trash: number; auditRows: number }
+export interface CleanupReport { voiceLines: number; audioObjects: number; mediaObjects: number; rawUploads: number; scratch: number; trash: number; auditRows: number; errorEvents: number }
 
 /** A scratch folder older than this whose job or turn is not running was left by a crash. */
 export const SCRATCH_HOURS = 6;
@@ -162,5 +164,6 @@ export async function sweepStudioData(
     scratch: await sweepScratch(d.db, d.dataRoot, o.now.getTime() - SCRATCH_HOURS * 3_600_000),
     trash: d.workspacesRoot ? sweepTrash(d.workspacesRoot, at(r.workspaceDays)) : 0,
     auditRows: await sweepAuditLog(d.db, new Date(at(r.auditDays)).toISOString()),
+    errorEvents: await sweepErrorEvents(d.db, new Date(at(r.auditDays)).toISOString()),
   };
 }
