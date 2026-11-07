@@ -17,6 +17,7 @@ export * from "./settings.js";
 export * from "./site-name.js";
 export * from "./audit-log.js";
 export * from "./claude-stats.js";
+export * from "./diagnostics.js";
 export * from "./claude-turns.js";
 export * from "./claude-slots.js";
 export * from "./claude-accounts.js";
