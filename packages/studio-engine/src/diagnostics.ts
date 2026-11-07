@@ -310,3 +310,149 @@ export async function diagnosticsErrors(db: StudioDb, p: DiagnosticsPeriod): Pro
 /** Days between two ISO times, for the API's range check. */
 export function periodDays(p: DiagnosticsPeriod): number { return (Date.parse(p.to) - Date.parse(p.from)) / DAY_MS; }
 export { seconds as secondsBetween, round as roundTo };
+
+// ---------------------------------------------------------------------------------------------------------------
+// Renders
+
+export const RENDER_JOB_KINDS = ["render_preview", "render_final", "export_premiere"] as const;
+
+export interface RenderKindStats {
+  kind: string;
+  total: number;
+  done: number;
+  failed: number;
+  cancelled: number;
+  /** Seconds from start to finish of the jobs done: median and 90th percentile. */
+  wallP50: number | null;
+  wallP90: number | null;
+  /** Seconds queued before a machine took them, median. */
+  waitP50: number | null;
+  /** Seconds of video made per second of work, median (above 1: faster than real time). */
+  speedP50: number | null;
+  /** Jobs that took more than one try. */
+  retried: number;
+  /** Jobs done by frame height: `1080`, `2160`… */
+  byHeight: Record<string, number>;
+}
+
+export interface RenderNodeStats {
+  nodeId: string;
+  /** Filled by the API from the farm's machine list. */
+  name: string | null;
+  jobs: number;
+  done: number;
+  failed: number;
+  speedP50: number | null;
+  finals: number;
+  finalWallP50: number | null;
+}
+
+export interface SlowRender {
+  id: string; kind: string; projectId: string; projectName: string | null; videoId: string | null; videoTitle: string | null; nodeId: string | null;
+  wallSeconds: number; videoSeconds: number | null; height: number | null; finishedAt: string;
+}
+
+export interface DiagnosticsRenders { kinds: RenderKindStats[]; previousKinds: RenderKindStats[]; nodes: RenderNodeStats[]; slowest: SlowRender[] }
+
+interface RenderRow {
+  id: string; kind: string; status: string; project_id: string; project_name: string | null; video_id: string | null; video_title: string | null; node_id: string | null;
+  attempts: number; created_at: string; started_at: string | null; finished_at: string | null; duration: number | null; height: number | null;
+}
+
+async function renderRows(db: StudioDb, p: DiagnosticsPeriod): Promise<RenderRow[]> {
+  return db.all<RenderRow>(
+    `SELECT j.id, j.kind, j.status, j.project_id, pr.name AS project_name, j.video_id, v.title AS video_title, j.node_id, j.attempts,
+            j.created_at, j.started_at, j.finished_at, (j.result->>'duration_s')::float8 AS duration, (j.result->>'height')::int AS height
+       FROM project_jobs j LEFT JOIN projects pr ON pr.id = j.project_id LEFT JOIN videos v ON v.id = j.video_id
+      WHERE j.kind IN (${RENDER_JOB_KINDS.map(() => "?").join(", ")}) AND j.created_at >= ? AND j.created_at < ?
+      ORDER BY j.created_at LIMIT 20000`,
+    [...RENDER_JOB_KINDS, p.from, p.to],
+  );
+}
+
+const median = (xs: number[]) => { const q = quantile(xs, 0.5); return q === null ? null : round(q, 2); };
+const wallOf = (r: RenderRow) => { const w = seconds(r.started_at, r.finished_at); return w !== null && w > 0 ? w : null; };
+const speedsOf = (rows: RenderRow[]) => rows.flatMap((r) => { const w = wallOf(r); return w && r.duration ? [r.duration / w] : []; });
+
+function kindStats(rows: RenderRow[]): RenderKindStats[] {
+  return RENDER_JOB_KINDS.map((kind) => {
+    const of = rows.filter((r) => r.kind === kind);
+    const done = of.filter((r) => r.status === "done");
+    const walls = done.map(wallOf).filter((x): x is number => x !== null);
+    const waits = of.map((r) => seconds(r.created_at, r.started_at)).filter((x): x is number => x !== null && x >= 0);
+    const byHeight: Record<string, number> = {};
+    for (const r of done) if (r.height) byHeight[String(r.height)] = (byHeight[String(r.height)] ?? 0) + 1;
+    const p90 = quantile(walls, 0.9);
+    return {
+      kind, total: of.length, done: done.length, failed: of.filter((r) => r.status === "failed").length, cancelled: of.filter((r) => r.status === "cancelled").length,
+      wallP50: median(walls), wallP90: p90 === null ? null : round(p90, 2), waitP50: median(waits), speedP50: median(speedsOf(done)),
+      retried: of.filter((r) => r.attempts > 1).length, byHeight,
+    };
+  });
+}
+
+export async function diagnosticsRenders(db: StudioDb, p: DiagnosticsPeriod): Promise<DiagnosticsRenders> {
+  const rows = await renderRows(db, p);
+  const nodes = new Map<string, RenderRow[]>();
+  for (const r of rows) if (r.node_id) (nodes.get(r.node_id) ?? nodes.set(r.node_id, []).get(r.node_id)!).push(r);
+  const nodeStats: RenderNodeStats[] = [...nodes.entries()].map(([nodeId, of]) => {
+    const done = of.filter((r) => r.status === "done");
+    const finals = done.filter((r) => r.kind === "render_final");
+    return {
+      nodeId, name: null, jobs: of.length, done: done.length, failed: of.filter((r) => r.status === "failed").length, speedP50: median(speedsOf(done)),
+      finals: finals.length, finalWallP50: median(finals.map(wallOf).filter((x): x is number => x !== null)),
+    };
+  }).sort((a, b) => b.jobs - a.jobs);
+  const slowest = rows.filter((r) => r.status === "done" && r.finished_at && wallOf(r) !== null)
+    .sort((a, b) => wallOf(b)! - wallOf(a)!).slice(0, 10)
+    .map((r) => ({
+      id: r.id, kind: r.kind, projectId: r.project_id, projectName: r.project_name, videoId: r.video_id, videoTitle: r.video_title, nodeId: r.node_id,
+      wallSeconds: Math.round(wallOf(r)!), videoSeconds: r.duration, height: r.height, finishedAt: r.finished_at!,
+    }));
+  return { kinds: kindStats(rows), previousKinds: kindStats(await renderRows(db, previousPeriod(p))), nodes: nodeStats, slowest };
+}
+
+/** A farm job as the owner API lists it (`JobView`), the fields read here. */
+export interface FarmJobLike {
+  id: string; type: string; status: string; attempt_count: number; node_id: string | null; created_at: string; finished_at: string | null;
+  error: { code: string; message: string; retryable: boolean } | null;
+}
+
+export interface FarmErrorGroup { type: string; code: string; signature: string; count: number; lastAt: string; example: string; nodes: string[] }
+export interface FarmJobsSummary {
+  /** Jobs of the period by type and status. */
+  byType: { type: string; status: string; n: number }[];
+  /** Jobs that took more than one try, by type. */
+  retried: Record<string, number>;
+  errors: FarmErrorGroup[];
+}
+
+/** The farm's jobs created in the period: counts, retries and failures grouped by code and message shape. */
+export function farmJobsSummary(jobs: readonly FarmJobLike[], p: DiagnosticsPeriod): FarmJobsSummary {
+  const inPeriod = jobs.filter((j) => Date.parse(j.created_at) >= Date.parse(p.from) && Date.parse(j.created_at) < Date.parse(p.to));
+  const counts = new Map<string, { type: string; status: string; n: number }>();
+  const retried: Record<string, number> = {};
+  const errors = new Map<string, FarmErrorGroup & { nodeSet: Set<string> }>();
+  for (const j of inPeriod) {
+    const c = counts.get(`${j.type}|${j.status}`) ?? counts.set(`${j.type}|${j.status}`, { type: j.type, status: j.status, n: 0 }).get(`${j.type}|${j.status}`)!;
+    c.n++;
+    if (j.attempt_count > 1) retried[j.type] = (retried[j.type] ?? 0) + 1;
+    if (j.status !== "failed" || !j.error) continue;
+    const signature = errorSignature(j.error.message);
+    const ek = `${j.type}|${j.error.code}|${signature}`;
+    const at = j.finished_at ?? j.created_at;
+    let g = errors.get(ek);
+    if (!g) {
+      g = { type: j.type, code: j.error.code, signature, count: 0, lastAt: at, example: j.error.message.slice(0, 500), nodes: [], nodeSet: new Set() };
+      errors.set(ek, g);
+    }
+    g.count++;
+    if (at > g.lastAt) g.lastAt = at;
+    if (j.node_id) g.nodeSet.add(j.node_id);
+  }
+  return {
+    byType: [...counts.values()].sort((a, b) => a.type.localeCompare(b.type) || a.status.localeCompare(b.status)),
+    retried,
+    errors: [...errors.values()].map(({ nodeSet, ...g }) => ({ ...g, nodes: [...nodeSet].sort() })).sort((a, b) => b.count - a.count),
+  };
+}

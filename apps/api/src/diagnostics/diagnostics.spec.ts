@@ -44,3 +44,25 @@ describe('DiagnosticsController (real database)', () => {
     await expect(ctl.errors({ when: 'today' }, req('auth0|admin'))).rejects.toMatchObject({ status: 400 });
   });
 });
+
+describe('DiagnosticsController renders', () => {
+  it('names machines from the farm and sums its jobs; a farm out of reach is said, not thrown', async () => {
+    const s = await realStudio();
+    try {
+      const at = new Date(Date.now() - 3_600_000).toISOString();
+      const engine = {
+        ...s.engine, core: s.engine.core, db: s.engine.db,
+        farmNodes: async () => ({ nodes: [{ id: 'n1', name: 'AG-189' }] }),
+        farmJobsSince: async () => ({ jobs: [{ id: 'f1', type: 'studio.render', status: 'failed', attempt_count: 1, node_id: 'n1', created_at: at, finished_at: at, error: { code: 'lease_expired', message: 'Lease expired', retryable: false } }], truncated: false }),
+      } as unknown as EngineService;
+      const ctl = new DiagnosticsController(engine, new StudioAdminService(accounts, s.db));
+      const out = await ctl.renders({}, req('auth0|admin'));
+      expect(out.farmError).toBeNull();
+      expect(out.farm?.errors).toEqual([expect.objectContaining({ code: 'lease_expired', count: 1, nodes: ['AG-189'] })]);
+      const down = new DiagnosticsController({ ...engine, farmNodes: async () => { throw new Error('farm down'); } } as unknown as EngineService, new StudioAdminService(accounts, s.db));
+      expect(await down.renders({}, req('auth0|admin'))).toMatchObject({ farm: null, farmError: 'farm down' });
+    } finally {
+      await s.close();
+    }
+  });
+});

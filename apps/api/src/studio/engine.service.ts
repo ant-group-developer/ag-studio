@@ -15,6 +15,8 @@ const FARM_NODES_TTL_MS = 3000;
 
 /** The farm's machines as the owner API lists them (`GET /v1/owner/nodes`). */
 export type FarmNodes = Awaited<ReturnType<FarmOwnerClient['listNodes']>>;
+/** Jobs as the owner API lists them (`GET /v1/owner/jobs`). */
+export type FarmJobs = Awaited<ReturnType<FarmOwnerClient['listJobs']>>['jobs'];
 
 /**
  * Names of the farm machines online now that fetch reference videos (`studio.reference_fetch`) for a team of `pool`
@@ -74,6 +76,23 @@ export class EngineService implements OnModuleInit {
     this.nodes = { at: now, value };
     value.catch(() => { if (this.nodes?.value === value) this.nodes = null; });
     return value;
+  }
+
+  /**
+   * The farm's jobs of Studio updated since `fromIso`, at most `max`: the owner API lists by `updated_at` from the
+   * start with no date filter, so the first page starts from a cursor at `fromIso` (the hub's cursor is
+   * base64url `{u: updated_at, i: id}`). `truncated`: there were more.
+   */
+  async farmJobsSince(fromIso: string, max = 5000): Promise<{ jobs: FarmJobs; truncated: boolean }> {
+    const farm = this.must(this._farm);
+    const jobs: FarmJobs = [];
+    let after: string | null = Buffer.from(JSON.stringify({ u: fromIso, i: '00000000-0000-0000-0000-000000000000' }), 'utf8').toString('base64url');
+    while (after && jobs.length < max) {
+      const page = await farm.listJobs({ limit: 500, after });
+      jobs.push(...page.jobs);
+      after = page.next_cursor;
+    }
+    return { jobs: jobs.slice(0, max), truncated: !!after || jobs.length > max };
   }
 
   private must<T>(v: T | undefined): T {

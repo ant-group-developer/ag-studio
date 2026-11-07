@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createProject, createThread, createVideo, diagnosticsErrors, diagnosticsOverview, errorEventRecorder, errorSignature, groupErrors, previousPeriod, quantile,
-  sweepErrorEvents, type StudioDb,
+  diagnosticsRenders, farmJobsSummary, sweepErrorEvents, type FarmJobLike, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -149,5 +149,43 @@ describe("error events (stdout errors kept in the database)", () => {
     const rec = errorEventRecorder({ db, service: "studio-api", onError: (e) => errors.push(e) });
     await expect(rec.record({ service: "studio-api", level: "error", message: "x" })).resolves.toBeUndefined();
     expect(errors).toHaveLength(1);
+  });
+});
+
+describe("render statistics", () => {
+  it("by kind and machine: wall time, speed against real time, waits, retries, frame heights, the slowest", async () => {
+    const s = await setup();
+    const render = async (kind: string, status: string, node: string, startMin: number, wallMin: number, duration: number, height = 1080, attempts = 1) => {
+      const start = new Date(Date.parse("2026-11-01T10:00:00.000Z") + startMin * 60_000);
+      const id = await job(s.db, { project: s.p.id, video: s.v.id, kind, status, at: new Date(start.getTime() - 60_000).toISOString(), started: start.toISOString() });
+      await s.db.run("UPDATE project_jobs SET finished_at = ?, node_id = ?, attempts = ?, result = ?::jsonb WHERE id = ?",
+        [new Date(start.getTime() + wallMin * 60_000).toISOString(), node, attempts, JSON.stringify({ duration_s: duration, height }), id]);
+    };
+    await render("render_final", "done", "n1", 0, 30, 1200, 2160);
+    await render("render_final", "done", "n2", 0, 60, 1200, 1080, 2);
+    await render("render_preview", "done", "n1", 0, 10, 1200);
+    await render("render_preview", "failed", "n2", 0, 1, 0);
+    const r = await diagnosticsRenders(s.db, PERIOD);
+    const final = r.kinds.find((k) => k.kind === "render_final")!;
+    expect(final).toMatchObject({ total: 2, done: 2, failed: 0, wallP50: 2700, waitP50: 60, speedP50: 0.5, retried: 1, byHeight: { "1080": 1, "2160": 1 } });
+    expect(r.kinds.find((k) => k.kind === "render_preview")).toMatchObject({ total: 2, done: 1, failed: 1, speedP50: 2 });
+    expect(r.nodes.map((n) => [n.nodeId, n.jobs, n.failed, n.finals, n.finalWallP50])).toEqual([["n1", 2, 0, 1, 1800], ["n2", 2, 1, 1, 3600]]);
+    expect(r.slowest[0]).toMatchObject({ kind: "render_final", nodeId: "n2", wallSeconds: 3600, videoTitle: "Tràng An" });
+    expect(r.previousKinds.every((k) => k.total === 0)).toBe(true);
+  });
+
+  it("sums the farm's jobs of the period: by type, retries, failures by code and shape", () => {
+    const j = (o: Partial<FarmJobLike>): FarmJobLike => ({
+      id: randomUUID(), type: "studio.render", status: "completed", attempt_count: 1, node_id: "n1", created_at: "2026-11-01T00:00:00.000Z", finished_at: null, error: null, ...o,
+    });
+    const s = farmJobsSummary([
+      j({}), j({ attempt_count: 2 }),
+      j({ status: "failed", node_id: "n2", error: { code: "worker_error", message: "Part 3 PUT failed: HTTP 502", retryable: true } }),
+      j({ status: "failed", error: { code: "worker_error", message: "Part 9 PUT failed: HTTP 502", retryable: true } }),
+      j({ status: "failed", created_at: "2026-10-01T00:00:00.000Z", error: { code: "x", message: "old", retryable: false } }),
+    ], PERIOD);
+    expect(s.byType).toEqual([{ type: "studio.render", status: "completed", n: 2 }, { type: "studio.render", status: "failed", n: 2 }]);
+    expect(s.retried).toEqual({ "studio.render": 1 });
+    expect(s.errors).toEqual([expect.objectContaining({ code: "worker_error", signature: "Part N PUT failed: HTTP 502", count: 2, nodes: ["n1", "n2"] })]);
   });
 });
