@@ -172,6 +172,8 @@ export interface ErrorOccurrence {
   videoId: string | null;
   /** The job, thread, card or request it belongs to. */
   ref: string | null;
+  /** A log line said this many times within a minute (`error_events.repeats`); absent: once. */
+  repeats?: number;
 }
 
 export interface ErrorGroup {
@@ -221,7 +223,7 @@ export function errorSignature(message: string): string {
   return s.length > SIGNATURE_LENGTH ? `${s.slice(0, SIGNATURE_LENGTH - 1)}…` : s;
 }
 
-interface OccurrenceRow { source: string; kind: string | null; message: string; at: string; project_id: string | null; project_name: string | null; video_id: string | null; ref: string | null }
+interface OccurrenceRow { repeats?: number; source: string; kind: string | null; message: string; at: string; project_id: string | null; project_name: string | null; video_id: string | null; ref: string | null }
 
 /** Every error of the period, newest first, at most `ERROR_ROWS_LIMIT` per source. */
 export async function errorOccurrences(db: StudioDb, p: DiagnosticsPeriod): Promise<{ rows: ErrorOccurrence[]; truncated: boolean }> {
@@ -241,7 +243,10 @@ export async function errorOccurrences(db: StudioDb, p: DiagnosticsPeriod): Prom
             COALESCE(l.request_id, l.thread_id, l.id) AS ref
        FROM audit_log l LEFT JOIN projects pr ON pr.id = l.project_id
       WHERE l.outcome = 'error' AND l.kind IN ('http', 'tool') AND l.at >= ? AND l.at < ?`,
-    ...extraErrorQueries,
+    // errors that would only be in a container's log (migration 0012)
+    `SELECT 'log:' || e.service AS source, e.level AS kind, e.message, e.at, e.project_id, pr.name AS project_name, e.video_id, COALESCE(e.request_id, e.id) AS ref, e.repeats
+       FROM error_events e LEFT JOIN projects pr ON pr.id = e.project_id
+      WHERE e.at >= ? AND e.at < ?`,
   ];
   const rows: ErrorOccurrence[] = [];
   let truncated = false;
@@ -251,17 +256,13 @@ export async function errorOccurrences(db: StudioDb, p: DiagnosticsPeriod): Prom
     for (const r of part) {
       rows.push({
         source: r.source as DiagnosticErrorSource, kind: r.kind ?? "", message: r.message, at: r.at, projectId: r.project_id, projectName: r.project_name,
-        videoId: r.video_id, ref: r.ref,
+        videoId: r.video_id, ref: r.ref, ...(r.repeats && r.repeats > 1 ? { repeats: r.repeats } : {}),
       });
     }
   }
   rows.sort((a, b) => b.at.localeCompare(a.at));
   return { rows, truncated };
 }
-
-/** More error sources (the `error_events` of migration 0012 register theirs here). */
-const extraErrorQueries: string[] = [];
-export function registerErrorQuery(sql: string): void { if (!extraErrorQueries.includes(sql)) extraErrorQueries.push(sql); }
 
 /** Groups occurrences by source and signature, most frequent first, marked against the period before. */
 export function groupErrors(current: readonly ErrorOccurrence[], previous: readonly ErrorOccurrence[]): Pick<DiagnosticsErrors, "groups" | "gone"> {
@@ -270,8 +271,8 @@ export function groupErrors(current: readonly ErrorOccurrence[], previous: reado
   for (const o of previous) {
     const k = keyOf(o);
     const hit = before.get(k);
-    if (hit) hit.n++;
-    else before.set(k, { o, n: 1 });
+    if (hit) hit.n += o.repeats ?? 1;
+    else before.set(k, { o, n: o.repeats ?? 1 });
   }
   const groups = new Map<string, ErrorGroup & { projectSet: Set<string>; kindSet: Set<string> }>();
   for (const o of current) {
@@ -285,7 +286,7 @@ export function groupErrors(current: readonly ErrorOccurrence[], previous: reado
       };
       groups.set(k, g);
     }
-    g.count++;
+    g.count += o.repeats ?? 1;
     if (o.projectId) g.projectSet.add(o.projectId);
     if (o.kind) g.kindSet.add(o.kind);
     if (o.at < g.firstAt) g.firstAt = o.at;
@@ -303,7 +304,7 @@ export function groupErrors(current: readonly ErrorOccurrence[], previous: reado
 export async function diagnosticsErrors(db: StudioDb, p: DiagnosticsPeriod): Promise<DiagnosticsErrors> {
   const now = await errorOccurrences(db, p);
   const before = await errorOccurrences(db, previousPeriod(p));
-  return { ...groupErrors(now.rows, before.rows), total: now.rows.length, truncated: now.truncated };
+  return { ...groupErrors(now.rows, before.rows), total: now.rows.reduce((n, o) => n + (o.repeats ?? 1), 0), truncated: now.truncated };
 }
 
 /** Days between two ISO times, for the API's range check. */

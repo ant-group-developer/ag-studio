@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createProject, createThread, createVideo, diagnosticsErrors, diagnosticsOverview, errorSignature, groupErrors, previousPeriod, quantile, type StudioDb,
+  createProject, createThread, createVideo, diagnosticsErrors, diagnosticsOverview, errorEventRecorder, errorSignature, groupErrors, previousPeriod, quantile,
+  sweepErrorEvents, type StudioDb,
 } from "../src/index.js";
 import { world } from "./helpers.js";
 
@@ -106,5 +107,47 @@ describe("diagnostics of a period", () => {
     ]);
     expect(e.groups[0]!.examples[0]).toMatchObject({ projectName: "Du lịch", videoId: s.v.id });
     expect(e.gone).toEqual([{ key: "job|old trouble", source: "job", signature: "old trouble", previousCount: 1 }]);
+  });
+});
+
+describe("error events (stdout errors kept in the database)", () => {
+  it("records a worker's warn and error lines, folds repeats within a minute, and the diagnostics count them", async () => {
+    const s = await setup();
+    let t = Date.parse("2026-11-02T10:00:00.000Z");
+    const rec = errorEventRecorder({ service: "studio-worker", now: () => t });
+    rec.fromLogLine(JSON.stringify({ level: "warn", time: "2026-11-02T09:00:00.000Z", service: "studio-worker", msg: "dropped before attach" }));
+    rec.attach(s.db);
+    const line = (msg: string, extra: object = {}) => JSON.stringify({ level: "error", time: new Date(t).toISOString(), service: "studio-worker", owner: "w1", msg, ...extra });
+    rec.fromLogLine(JSON.stringify({ level: "info", time: new Date(t).toISOString(), msg: "fine" }));
+    rec.fromLogLine(line("farm poll failed", { error: "fetch failed 12", projectId: s.p.id }));
+    await new Promise((r) => setTimeout(r, 50));
+    t += 30_000;
+    rec.fromLogLine(line("farm poll failed", { error: "fetch failed 13", projectId: s.p.id }));
+    await new Promise((r) => setTimeout(r, 50));
+    t += 120_000;
+    await rec.record({ service: "studio-api", level: "error", message: "GET /api/x -> 500 INTERNAL: boom", requestId: "req-12345678" });
+    const rows = await s.db.all<{ service: string; message: string; repeats: number; project_id: string | null; context: Record<string, unknown> }>(
+      "SELECT service, message, repeats, project_id, context FROM error_events ORDER BY at",
+    );
+    expect(rows.map((r) => [r.service, r.message, r.repeats])).toEqual([
+      ["studio-worker", "farm poll failed: fetch failed 12", 2],
+      ["studio-api", "GET /api/x -> 500 INTERNAL: boom", 1],
+    ]);
+    expect(rows[0]).toMatchObject({ project_id: s.p.id, context: { error: "fetch failed 12", projectId: s.p.id } });
+    const e = await diagnosticsErrors(s.db, PERIOD);
+    expect(e.total).toBe(3);
+    expect(e.groups.map((g) => [g.source, g.signature, g.count])).toEqual([
+      ["log:studio-worker", "farm poll failed: fetch failed N", 2],
+      ["log:studio-api", "GET /api/x -> N INTERNAL: boom", 1],
+    ]);
+    expect(await sweepErrorEvents(s.db, "2026-11-02T10:01:00.000Z")).toBe(1);
+  });
+
+  it("never throws when the database fails", async () => {
+    const errors: unknown[] = [];
+    const db = { run: async () => { throw new Error("down"); } } as unknown as StudioDb;
+    const rec = errorEventRecorder({ db, service: "studio-api", onError: (e) => errors.push(e) });
+    await expect(rec.record({ service: "studio-api", level: "error", message: "x" })).resolves.toBeUndefined();
+    expect(errors).toHaveLength(1);
   });
 });

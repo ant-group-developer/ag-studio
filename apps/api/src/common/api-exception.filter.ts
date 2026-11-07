@@ -10,7 +10,7 @@ import type { Request, Response } from 'express';
 import { ApiErrorDto } from './dto/api-error.dto';
 import { ApiResponseDto } from './dto/api-response.dto';
 import { AgGoClientError } from '../ag-go/client';
-import { DEFAULT_SITE_NAME } from '@ag-studio/engine';
+import { DEFAULT_SITE_NAME, type ErrorEventRecorder } from '@ag-studio/engine';
 
 type ErrorPayload = Record<string, unknown>;
 
@@ -21,8 +21,14 @@ const META_FIELDS = new Set(['message', 'code', 'error', 'statusCode', 'fieldErr
 export class ApiExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(ApiExceptionFilter.name);
 
-  /** `siteName`: what people call ag-go (its own setting), the prefix of its errors. */
-  constructor(private readonly siteName: () => string = () => DEFAULT_SITE_NAME) {}
+  /**
+   * `siteName`: what people call ag-go (its own setting), the prefix of its errors. `recorder`: where a 5xx is also
+   * kept for the admin's diagnostics (`error_events`); absent: only the log.
+   */
+  constructor(
+    private readonly siteName: () => string = () => DEFAULT_SITE_NAME,
+    private readonly recorder?: Pick<ErrorEventRecorder, 'record'>,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
@@ -36,6 +42,15 @@ export class ApiExceptionFilter implements ExceptionFilter {
     if (status >= 500) {
       const detail = exception instanceof Error ? (exception.stack ?? exception.message) : String(exception);
       this.logger.error(`${request.method} ${request.originalUrl} -> ${status} ${error.code} [${requestId}]: ${detail}`);
+      // the route's pattern (`/api/studio/projects/:projectId`), so one failure of many projects groups as one
+      const route = (request.route as { path?: string } | undefined)?.path ?? (request.originalUrl ?? '').split('?')[0];
+      const said = exception instanceof Error ? exception.message : String(exception);
+      const params = (request.params ?? {}) as Record<string, string | undefined>;
+      void this.recorder?.record({
+        service: 'studio-api', level: 'error', message: `${request.method} ${route} -> ${status} ${error.code}: ${said}`,
+        context: { url: request.originalUrl, stack: exception instanceof Error ? exception.stack?.split('\n').slice(0, 8).join('\n') : undefined },
+        projectId: params.projectId ?? null, videoId: params.videoId ?? null, requestId: requestId || null,
+      });
     }
 
     response.status(status).json(new ApiResponseDto(null, requestId, false, error));

@@ -58,7 +58,7 @@ import { join, resolve } from "node:path";
 import { AgGoClient } from "@ag-studio/ag-go-client";
 import {
   agentTools, claudeCap, codexImager, createSiteNameCache, createStudioEngineCore, createStudioWorkerPool, DEFAULT_RETENTION, fetchAgGoSiteName, FarmOwnerClient, ffmpegThumbnailRenderer, ffprobeBeside,
-  httpDownload, mcpToolNames, migrateStudioDb, parseClaudeMaxConcurrent, S3Bucket, secretKey, studioDbFromEnv, studioLogger, ytDlp, type CutMediaDeps,
+  errorEventRecorder, httpDownload, mcpToolNames, migrateStudioDb, parseClaudeMaxConcurrent, S3Bucket, secretKey, studioDbFromEnv, studioLogger, ytDlp, type CutMediaDeps,
 } from "@ag-studio/engine";
 import { HARNESS_ROOT } from "@harness/core";
 
@@ -80,10 +80,13 @@ async function main(): Promise<void> {
   const owner = process.env.WORKER_OWNER ?? `${hostname()}-${process.pid}`;
   const ffmpeg = process.env.STUDIO_FFMPEG_PATH;
   createStudioEngineCore({ dataRoot, harnessRoot });
-  const logger = studioLogger({ owner });
+  const events = errorEventRecorder({ service: "studio-worker" });
+  const logger = studioLogger({ owner }, events.fromLogLine);
   const db = studioDbFromEnv(process.env, (e) => logger.warn(`Postgres pool: ${e.message}`));
   // the same migrations the API runs; whichever starts first applies them
   for (const name of await migrateStudioDb(db)) logger.info("applied migration", { name });
+  // warnings and errors from here on are kept for the admin's diagnostics (error_events, migration 0012)
+  events.attach(db);
   const youtubeKey = process.env.YOUTUBE_API_KEY?.trim();
   // yt-dlp: STUDIO_YTDLP_ARGV (JSON array, tests) else YTDLP_PATH else `yt-dlp` on PATH; checked once, below
   const ytdlpArgv = process.env.STUDIO_YTDLP_ARGV ? (JSON.parse(process.env.STUDIO_YTDLP_ARGV) as string[]) : [process.env.YTDLP_PATH?.trim() || "yt-dlp"];
