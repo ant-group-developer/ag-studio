@@ -2,10 +2,11 @@ import { BadRequestException, Controller, Get, Query, Req } from '@nestjs/common
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  DIAGNOSTICS_MAX_DAYS, diagnosticsErrors, diagnosticsOverview, diagnosticsRenders, farmJobsSummary, periodDays, type DiagnosticsPeriod, type FarmJobsSummary,
+  DIAGNOSTICS_MAX_DAYS, diagnosticsErrors, diagnosticsOverview, diagnosticsRenders, farmJobsSummary, periodDays, videoQuality, type DiagnosticsPeriod, type FarmJobsSummary,
 } from '@ag-studio/engine';
 import { StudioAdminService } from '../auth/studio-admin.service';
 import { EngineService } from '../studio/engine.service';
+import { WorkspaceService } from '../workspace/workspace.service';
 import { parseBody } from '../workspace/zod-body';
 
 const DAY_MS = 86_400_000;
@@ -25,6 +26,7 @@ export class DiagnosticsController {
   constructor(
     private readonly engine: EngineService,
     private readonly admin: StudioAdminService,
+    private readonly workspace: WorkspaceService,
   ) {}
 
   protected async period(raw: unknown, req: Request): Promise<DiagnosticsPeriod> {
@@ -68,6 +70,17 @@ export class DiagnosticsController {
       ...p, ...stats, nodes: stats.nodes.map((n) => ({ ...n, name: name(n.nodeId) })),
       farm: farm && { ...farm, errors: farm.errors.map((g) => ({ ...g, nodes: g.nodes.map((id) => name(id) ?? id) })) }, farmError,
     };
+  }
+
+  /**
+   * How the videos rendered in the period are made (one row each: its latest final, else its latest preview): the cut,
+   * the voice, the render worker's check of the file, the asks after the first render; flags and how many videos
+   * have each. At most 300 videos, the newest.
+   */
+  @Get('videos')
+  async videos(@Query() raw: unknown, @Req() req: Request) {
+    const p = await this.period(raw, req);
+    return { ...p, ...(await videoQuality(this.engine.db, p, { workspacesRoot: this.workspace.root })) };
   }
 
   @Get('errors')

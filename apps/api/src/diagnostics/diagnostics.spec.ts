@@ -7,6 +7,7 @@ import { insertTeam, realStudio, type RealStudio } from '../test/real-studio';
 import type { AccountApiService } from '../auth/account-api.service';
 import { StudioAdminService } from '../auth/studio-admin.service';
 import type { EngineService } from '../studio/engine.service';
+import type { WorkspaceService } from '../workspace/workspace.service';
 import { DiagnosticsController } from './diagnostics.controller';
 
 const req = (userId: string) => ({ authContext: { userId, accessToken: 't' } }) as unknown as Request;
@@ -18,7 +19,7 @@ describe('DiagnosticsController (real database)', () => {
   beforeEach(async () => {
     s = await realStudio();
     await insertTeam(s.db, 'team-1', 'auth0|owner');
-    ctl = new DiagnosticsController(s.engine as EngineService, new StudioAdminService(accounts, s.db));
+    ctl = new DiagnosticsController(s.engine as EngineService, new StudioAdminService(accounts, s.db), { root: '/nowhere' } as WorkspaceService);
     const p = await createProject(s.engine.db, 'team-1', { name: 'Kênh', description: '', language: 'vi', aspect: '16:9' }, 'auth0|owner');
     const at = new Date(Date.now() - 3_600_000).toISOString();
     await s.engine.db.run(
@@ -34,6 +35,7 @@ describe('DiagnosticsController (real database)', () => {
     expect(Date.parse(o.to) - Date.parse(o.from)).toBe(14 * 86_400_000);
     expect(o.jobs).toEqual([{ kind: 'fit', status: 'failed', n: 1 }]);
     const e = await ctl.errors({}, req('auth0|admin'));
+    expect(await ctl.videos({}, req('auth0|admin'))).toMatchObject({ rows: [], summary: { videos: 0 }, truncated: false });
     expect(e.groups.map((g) => [g.signature, g.count, g.trend])).toEqual([['boom N', 1, 'new']]);
   });
 
@@ -55,11 +57,11 @@ describe('DiagnosticsController renders', () => {
         farmNodes: async () => ({ nodes: [{ id: 'n1', name: 'AG-189' }] }),
         farmJobsSince: async () => ({ jobs: [{ id: 'f1', type: 'studio.render', status: 'failed', attempt_count: 1, node_id: 'n1', created_at: at, finished_at: at, error: { code: 'lease_expired', message: 'Lease expired', retryable: false } }], truncated: false }),
       } as unknown as EngineService;
-      const ctl = new DiagnosticsController(engine, new StudioAdminService(accounts, s.db));
+      const ctl = new DiagnosticsController(engine, new StudioAdminService(accounts, s.db), { root: '/nowhere' } as WorkspaceService);
       const out = await ctl.renders({}, req('auth0|admin'));
       expect(out.farmError).toBeNull();
       expect(out.farm?.errors).toEqual([expect.objectContaining({ code: 'lease_expired', count: 1, nodes: ['AG-189'] })]);
-      const down = new DiagnosticsController({ ...engine, farmNodes: async () => { throw new Error('farm down'); } } as unknown as EngineService, new StudioAdminService(accounts, s.db));
+      const down = new DiagnosticsController({ ...engine, farmNodes: async () => { throw new Error('farm down'); } } as unknown as EngineService, new StudioAdminService(accounts, s.db), { root: '/nowhere' } as WorkspaceService);
       expect(await down.renders({}, req('auth0|admin'))).toMatchObject({ farm: null, farmError: 'farm down' });
     } finally {
       await s.close();
